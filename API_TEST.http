@@ -1,0 +1,14 @@
+### Login
+POST http://127.0.0.1:8000/api/login
+Accept: application/json
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "password"
+}
+
+### Dashboard
+GET http://127.0.0.1:8000/api/dashboard
+Accept: application/json
+Authorization: Bearer PASTE_TOKEN_HERE

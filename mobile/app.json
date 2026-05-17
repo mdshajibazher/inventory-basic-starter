@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Basic Inventory",
+    "slug": "basic-inventory",
+    "scheme": "inventory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ]
+  }
+}
