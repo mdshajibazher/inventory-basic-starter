@@ -2,29 +2,119 @@ export type User = {
   id: number;
   name: string;
   email: string;
+  role_id?: number | null;
+  role?: Role | null;
+  permissions?: string[];
+};
+
+export type Permission = {
+  id: number;
+  name: string;
+  guard_name?: string;
+};
+
+export type Role = {
+  id: number;
+  name: string;
+  description?: string | null;
+  guard_name?: string | null;
+  is_active?: boolean | number | null;
+  permissions?: Permission[];
 };
 
 export type Category = {
   id: number;
   name: string;
+  image?: string | null;
   parent_id?: number | null;
   is_active?: boolean | number | null;
+  parent_category_name?: string | null;
   parent?: Pick<Category, 'id' | 'name'> | null;
   children?: Category[];
 };
 
+export type Brand = {
+  id: number;
+  title: string;
+  image?: string | null;
+  is_active?: boolean | number | null;
+};
+
+export type Unit = {
+  id: number;
+  unit_code: string;
+  unit_name: string;
+  base_unit?: number | null;
+  base_unit_name?: string | null;
+  operator?: string | null;
+  operation_value?: number | string | null;
+  is_active?: boolean | number | null;
+  base?: Pick<Unit, 'id' | 'unit_name'> | null;
+  related_units?: Unit[];
+};
+
+export type PaginationMeta = {
+  current_page: number;
+  from: number | null;
+  last_page: number;
+  per_page: number;
+  to: number | null;
+  total: number;
+};
+
+export type PaginatedResponse<T> = {
+  data: T[];
+  meta?: PaginationMeta;
+  links?: unknown;
+};
+
 export type Product = {
   id: number;
-  category_id: number;
   name: string;
+  code: string;
   sku: string;
-  barcode?: string | null;
+  type: string;
+  barcode_symbology: string;
+  brand_id?: number | null;
+  category_id: number;
+  unit_id?: number | null;
+  purchase_unit_id?: number | null;
+  sale_unit_id?: number | null;
+  cost: string | number;
   purchase_price: string | number;
+  price: string | number;
   selling_price: string | number;
+  qty: number;
   quantity: number;
+  alert_quantity?: number | null;
   low_stock_limit: number;
+  tax_id?: number | null;
+  tax_method?: number | null;
+  image?: string | null;
+  image_url?: string | null;
+  featured?: boolean | number | null;
+  product_details?: string | null;
   description?: string | null;
+  promotion?: boolean | number | null;
+  promotion_price?: string | number | null;
+  starting_date?: string | null;
+  last_date?: string | null;
+  is_variant?: boolean | number | null;
+  is_batch?: boolean | number | null;
+  is_diffPrice?: boolean | number | null;
+  is_active?: boolean | number | null;
+  brand?: Brand;
   category?: Category;
+  unit?: Unit;
+  purchase_unit?: Unit;
+  sale_unit?: Unit;
+  tax?: Tax;
+};
+
+export type Tax = {
+  id: number;
+  name: string;
+  rate: number;
 };
 
 export type StockMovement = {

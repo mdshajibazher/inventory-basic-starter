@@ -32,7 +32,7 @@ class AuthController extends Controller
             'message' => 'Login successful.',
             'data' => [
                 'token' => $token,
-                'user' => $user,
+                'user' => $this->userPayload($user),
             ],
         ]);
     }
@@ -40,7 +40,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         return response()->json([
-            'data' => $request->user(),
+            'data' => $this->userPayload($request->user()),
         ]);
     }
 
@@ -51,5 +51,21 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Logout successful.',
         ]);
+    }
+
+    private function userPayload(\App\Models\User $user): array
+    {
+        $user->loadMissing('roles:id,name');
+        $role = $user->roles->first();
+
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role_id' => $role?->id ?? $user->role_id,
+            'role' => $role,
+            'roles' => $user->getRoleNames()->values()->all(),
+            'permissions' => $user->permissionNames(),
+        ];
     }
 }

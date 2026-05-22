@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import {
   Button,
@@ -13,46 +13,48 @@ import {
   Text,
   TextInput,
 } from 'react-native-paper';
-import { ImageUploadField, type PickedImage } from '@/src/components/ImageUploadField';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
-import type { Category, PaginationMeta } from '@/src/types';
+import type { PaginationMeta, Unit } from '@/src/types';
 
-type CategoryForm = {
-  name: string;
-  image: string | null;
-  imageFile: PickedImage | null;
-  removeImage: boolean;
-  parentId: number | null;
+type UnitForm = {
+  unitCode: string;
+  unitName: string;
+  baseUnit: number | null;
+  operator: string | null;
+  operationValue: string;
   isActive: boolean;
 };
 
-const emptyForm: CategoryForm = {
-  name: '',
-  image: null,
-  imageFile: null,
-  removeImage: false,
-  parentId: null,
+const emptyForm: UnitForm = {
+  unitCode: '',
+  unitName: '',
+  baseUnit: null,
+  operator: '*',
+  operationValue: '1',
   isActive: true,
 };
 
 const perPage = 15;
+const operatorOptions = ['*', '/'];
 
-function categoryToForm(category: Category): CategoryForm {
+function unitToForm(unit: Unit): UnitForm {
   return {
-    name: category.name,
-    image: category.image ?? null,
-    imageFile: null,
-    removeImage: false,
-    parentId: category.parent_id ?? null,
-    isActive: Boolean(category.is_active),
+    unitCode: unit.unit_code,
+    unitName: unit.unit_name,
+    baseUnit: unit.base_unit ?? null,
+    operator: unit.operator ?? null,
+    operationValue: unit.operation_value === null || unit.operation_value === undefined
+      ? ''
+      : String(unit.operation_value),
+    isActive: Boolean(unit.is_active),
   };
 }
 
-export default function CategoriesScreen() {
+export default function UnitsScreen() {
   const { hasPermission } = useAuth();
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -60,19 +62,15 @@ export default function CategoriesScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [parentMenuVisible, setParentMenuVisible] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
-  const [form, setForm] = useState<CategoryForm>(emptyForm);
+  const [baseMenuVisible, setBaseMenuVisible] = useState(false);
+  const [operatorMenuVisible, setOperatorMenuVisible] = useState(false);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [form, setForm] = useState<UnitForm>(emptyForm);
   const requestIdRef = useRef(0);
 
-  const parentOptions = useMemo(
-    () => categories.filter((category) => category.id !== editingCategory?.id),
-    [categories, editingCategory?.id]
-  );
-
-  const selectedParent = useMemo(
-    () => categories.find((category) => category.id === form.parentId),
-    [categories, form.parentId]
+  const selectedBase = useMemo(
+    () => units.find((unit) => unit.id === form.baseUnit),
+    [units, form.baseUnit]
   );
 
   const load = useCallback(async (nextPage = page) => {
@@ -80,10 +78,10 @@ export default function CategoriesScreen() {
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const response = await api.categories({ page: nextPage, perPage, search: debouncedSearch });
+      const response = await api.units({ page: nextPage, perPage, search: debouncedSearch });
       if (requestId !== requestIdRef.current) return;
 
-      setCategories(response.data as Category[]);
+      setUnits(response.data as Unit[]);
       setPagination(response.meta ?? null);
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
@@ -109,53 +107,72 @@ export default function CategoriesScreen() {
     return () => clearTimeout(timeout);
   }, [search]);
 
-  function updateForm<K extends keyof CategoryForm>(key: K, value: CategoryForm[K]) {
+  function updateForm<K extends keyof UnitForm>(key: K, value: UnitForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function updateBaseUnit(baseUnit: number | null) {
+    setForm((current) => ({
+      ...current,
+      baseUnit,
+      operator: baseUnit ? current.operator ?? '*' : '*',
+      operationValue: baseUnit ? current.operationValue || '1' : '1',
+    }));
+  }
+
   function openCreateModal() {
-    setEditingCategory(null);
+    setEditingUnit(null);
     setForm(emptyForm);
     setModalVisible(true);
   }
 
-  function openEditModal(category: Category) {
-    setEditingCategory(category);
-    setForm(categoryToForm(category));
+  function openEditModal(unit: Unit) {
+    setEditingUnit(unit);
+    setForm(unitToForm(unit));
     setModalVisible(true);
   }
 
   function closeModal() {
     setModalVisible(false);
-    setParentMenuVisible(false);
-    setEditingCategory(null);
+    setBaseMenuVisible(false);
+    setOperatorMenuVisible(false);
+    setEditingUnit(null);
     setForm(emptyForm);
   }
 
-  async function saveCategory() {
-    if (!form.name.trim()) {
-      Alert.alert('Missing name', 'Category name is required.');
+  async function saveUnit() {
+    if (!form.unitCode.trim() || !form.unitName.trim()) {
+      Alert.alert('Missing fields', 'Unit code and unit name are required.');
+      return;
+    }
+
+    const hasBaseUnit = form.baseUnit !== null;
+    const operationValue = form.operationValue.trim();
+
+    if (hasBaseUnit && (!form.operator || !operationValue)) {
+      Alert.alert('Missing conversion', 'Operator and operation value are required.');
       return;
     }
 
     const payload = {
-      name: form.name.trim(),
-      image: form.imageFile,
-      remove_image: form.removeImage,
-      parent_id: form.parentId,
+      unit_code: form.unitCode.trim(),
+      unit_name: form.unitName.trim(),
+      base_unit: form.baseUnit,
+      operator: hasBaseUnit ? form.operator : '*',
+      operation_value: hasBaseUnit ? Number(operationValue) : 1,
       is_active: form.isActive,
     };
 
     setSaving(true);
     try {
-      if (editingCategory) {
-        await api.updateCategory(editingCategory.id, payload);
+      if (editingUnit) {
+        await api.updateUnit(editingUnit.id, payload);
       } else {
-        await api.createCategory(payload);
+        await api.createUnit(payload);
       }
 
       closeModal();
-      if (editingCategory) {
+      if (editingUnit) {
         await load(page);
       } else if (page === 1) {
         await load(1);
@@ -169,23 +186,23 @@ export default function CategoriesScreen() {
     }
   }
 
-  function confirmDelete(category: Category) {
-    Alert.alert('Delete category?', `Delete ${category.name}?`, [
+  function confirmDelete(unit: Unit) {
+    Alert.alert('Delete unit?', `Delete ${unit.unit_name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          void deleteCategory(category);
+          void deleteUnit(unit);
         },
       },
     ]);
   }
 
-  async function deleteCategory(category: Category) {
+  async function deleteUnit(unit: Unit) {
     setSaving(true);
     try {
-      await api.deleteCategory(category.id);
+      await api.deleteUnit(unit.id);
       await load(page);
     } catch (error) {
       Alert.alert('Delete failed', error instanceof Error ? error.message : 'Try again.');
@@ -194,7 +211,7 @@ export default function CategoriesScreen() {
     }
   }
 
-  if (!hasPermission('category')) {
+  if (!hasPermission('unit')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -202,9 +219,9 @@ export default function CategoriesScreen() {
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text variant="headlineSmall">Categories</Text>
+          <Text variant="headlineSmall">Units</Text>
           <Text variant="bodyMedium" style={styles.muted}>
-            {categories.length} shown from {pagination?.total ?? categories.length}
+            {units.length} shown from {pagination?.total ?? units.length}
           </Text>
         </View>
         <Button mode="contained" onPress={openCreateModal}>
@@ -215,7 +232,7 @@ export default function CategoriesScreen() {
       <Searchbar
         value={search}
         onChangeText={setSearch}
-        placeholder="Search categories, parent, status"
+        placeholder="Search units, base, operator, status"
         loading={loading}
         onClearIconPress={() => setSearch('')}
       />
@@ -223,35 +240,37 @@ export default function CategoriesScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <DataTable style={styles.table}>
           <DataTable.Header>
-            <DataTable.Title style={styles.nameColumn}>Category</DataTable.Title>
-            <DataTable.Title style={styles.imageColumn}>Image</DataTable.Title>
-            <DataTable.Title style={styles.parentColumn}>Parent</DataTable.Title>
+            <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
+            <DataTable.Title style={styles.nameColumn}>Unit</DataTable.Title>
+            <DataTable.Title style={styles.baseColumn}>Base</DataTable.Title>
+            <DataTable.Title style={styles.operatorColumn}>Operator</DataTable.Title>
+            <DataTable.Title numeric style={styles.valueColumn}>
+              Value
+            </DataTable.Title>
             <DataTable.Title style={styles.statusColumn}>Status</DataTable.Title>
             <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
           </DataTable.Header>
 
-          {categories.map((category) => (
-            <DataTable.Row key={category.id}>
-              <DataTable.Cell style={styles.nameColumn}>{category.name}</DataTable.Cell>
-              <DataTable.Cell style={styles.imageColumn}>
-                {category.image ? (
-                  <Image source={{ uri: category.image }} style={styles.tableImage} />
-                ) : (
-                  'No image'
-                )}
+          {units.map((unit) => (
+            <DataTable.Row key={unit.id}>
+              <DataTable.Cell style={styles.codeColumn}>{unit.unit_code}</DataTable.Cell>
+              <DataTable.Cell style={styles.nameColumn}>{unit.unit_name}</DataTable.Cell>
+              <DataTable.Cell style={styles.baseColumn}>
+                {unit.base_unit_name ?? unit.base?.unit_name ?? 'Base unit'}
               </DataTable.Cell>
-              <DataTable.Cell style={styles.parentColumn}>
-                {category.parent_category_name ?? category.parent?.name ?? 'Root'}
+              <DataTable.Cell style={styles.operatorColumn}>{unit.operator ?? '-'}</DataTable.Cell>
+              <DataTable.Cell numeric style={styles.valueColumn}>
+                {unit.operation_value ?? '-'}
               </DataTable.Cell>
               <DataTable.Cell style={styles.statusColumn}>
-                {category.is_active ? 'Active' : 'Inactive'}
+                {unit.is_active ? 'Active' : 'Inactive'}
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  <Button compact mode="text" onPress={() => openEditModal(category)}>
+                  <Button compact mode="text" onPress={() => openEditModal(unit)}>
                     Edit
                   </Button>
-                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(category)}>
+                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(unit)}>
                     Delete
                   </Button>
                 </View>
@@ -283,9 +302,9 @@ export default function CategoriesScreen() {
         </View>
       ) : null}
 
-      {!loading && categories.length === 0 ? (
+      {!loading && units.length === 0 ? (
         <Text variant="bodyMedium" style={styles.empty}>
-          No categories found.
+          No units found.
         </Text>
       ) : null}
 
@@ -295,78 +314,98 @@ export default function CategoriesScreen() {
           onDismiss={closeModal}
           contentContainerStyle={styles.modal}
         >
-          <Text variant="titleLarge">
-            {editingCategory ? 'Edit Category' : 'Add Category'}
-          </Text>
+          <Text variant="titleLarge">{editingUnit ? 'Edit Unit' : 'Add Unit'}</Text>
 
           <TextInput
             mode="outlined"
-            label="Category name"
-            value={form.name}
-            onChangeText={(value) => updateForm('name', value)}
+            label="Unit code"
+            value={form.unitCode}
+            onChangeText={(value) => updateForm('unitCode', value)}
           />
-
-          <ImageUploadField
-            label="Category image"
-            imageUri={form.imageFile?.uri ?? form.image}
-            disabled={saving}
-            onChange={(image) =>
-              setForm((current) => ({
-                ...current,
-                imageFile: image,
-                removeImage: false,
-              }))
-            }
-            onClear={() =>
-              setForm((current) => ({
-                ...current,
-                image: null,
-                imageFile: null,
-                removeImage: Boolean(editingCategory?.image),
-              }))
-            }
+          <TextInput
+            mode="outlined"
+            label="Unit name"
+            value={form.unitName}
+            onChangeText={(value) => updateForm('unitName', value)}
           />
 
           <Menu
-            visible={parentMenuVisible}
-            onDismiss={() => setParentMenuVisible(false)}
+            visible={baseMenuVisible}
+            onDismiss={() => setBaseMenuVisible(false)}
             anchor={
               <Button
                 mode="outlined"
-                contentStyle={styles.parentButton}
-                onPress={() => setParentMenuVisible(true)}
+                contentStyle={styles.menuButton}
+                onPress={() => setBaseMenuVisible(true)}
               >
-                {selectedParent?.name ?? 'Root category'}
+                {selectedBase?.unit_name ?? 'No base unit'}
               </Button>
             }
           >
             <Menu.Item
-              title="Root category"
+              title="No base unit"
               onPress={() => {
-                updateForm('parentId', null);
-                setParentMenuVisible(false);
+                updateBaseUnit(null);
+                setBaseMenuVisible(false);
               }}
             />
-            {parentOptions.map((category) => (
+            {units.map((unit) => (
               <Menu.Item
-                key={category.id}
-                title={category.name}
+                key={unit.id}
+                title={unit.unit_name}
                 onPress={() => {
-                  updateForm('parentId', category.id);
-                  setParentMenuVisible(false);
+                  updateBaseUnit(unit.id);
+                  setBaseMenuVisible(false);
                 }}
               />
             ))}
           </Menu>
-          <HelperText type="info" visible={parentOptions.length === 0}>
-            Save more categories to choose a parent.
+          <HelperText type="info" visible={units.length === 0}>
+            Save more units to choose a base unit.
           </HelperText>
+
+          {form.baseUnit !== null ? (
+            <>
+              <Menu
+                visible={operatorMenuVisible}
+                onDismiss={() => setOperatorMenuVisible(false)}
+                anchor={
+                  <Button
+                    mode="outlined"
+                    contentStyle={styles.menuButton}
+                    onPress={() => setOperatorMenuVisible(true)}
+                  >
+                    {form.operator ?? '*'}
+                  </Button>
+                }
+              >
+                {operatorOptions.map((operator) => (
+                  <Menu.Item
+                    key={operator}
+                    title={operator}
+                    onPress={() => {
+                      updateForm('operator', operator);
+                      setOperatorMenuVisible(false);
+                    }}
+                  />
+                ))}
+              </Menu>
+
+              <TextInput
+                mode="outlined"
+                label="Operation value"
+                value={form.operationValue}
+                keyboardType="decimal-pad"
+                onChangeText={(value) => updateForm('operationValue', value)}
+              />
+            </>
+          ) : null}
 
           <View style={styles.switchRow}>
             <View>
               <Text variant="titleSmall">Active</Text>
               <Text variant="bodySmall" style={styles.muted}>
-                Show this category as available.
+                Show this unit as available.
               </Text>
             </View>
             <Switch
@@ -379,7 +418,7 @@ export default function CategoriesScreen() {
             <Button mode="outlined" onPress={closeModal} disabled={saving}>
               Cancel
             </Button>
-            <Button mode="contained" onPress={saveCategory} loading={saving} disabled={saving}>
+            <Button mode="contained" onPress={saveUnit} loading={saving} disabled={saving}>
               Save
             </Button>
           </View>
@@ -403,25 +442,25 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
   table: {
-    minWidth: 700,
+    minWidth: 820,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#ffffff',
   },
-  nameColumn: {
-    flex: 1.3,
-  },
-  imageColumn: {
+  codeColumn: {
     flex: 0.8,
   },
-  tableImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#f2f4f7',
+  nameColumn: {
+    flex: 1.2,
   },
-  parentColumn: {
+  baseColumn: {
     flex: 1.1,
+  },
+  operatorColumn: {
+    flex: 0.8,
+  },
+  valueColumn: {
+    flex: 0.8,
   },
   statusColumn: {
     flex: 0.8,
@@ -455,7 +494,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     gap: 12,
   },
-  parentButton: {
+  menuButton: {
     justifyContent: 'flex-start',
   },
   switchRow: {

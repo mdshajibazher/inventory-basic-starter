@@ -3,22 +3,98 @@
 namespace Database\Seeders;
 
 use App\Models\Category;
-use App\Models\Product;
 use App\Models\User;
 use Illuminate\Database\Seeder;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $inventoryPermissions = [
+            'products-index',
+            'products-add',
+            'products-edit',
+            'products-delete',
+            'brands-index',
+            'brands-add',
+            'brands-edit',
+            'brands-delete',
+            'categories-index',
+            'categories-add',
+            'categories-edit',
+            'categories-delete',
+            'units-index',
+            'units-add',
+            'units-edit',
+            'units-delete',
+        ];
+
+        $legacyInventoryPermissions = [
+            'brand',
+            'category',
+            'unit',
+        ];
+
+        $userPermissions = [
+            'users-index',
+            'users-add',
+            'users-edit',
+            'users-delete',
+        ];
+
+        $permissions = collect([
+            ...$inventoryPermissions,
+            ...$legacyInventoryPermissions,
+            ...$userPermissions,
+        ])->mapWithKeys(function ($name) {
+            $permission = Permission::query()->firstOrCreate(['name' => $name]);
+            $permission->forceFill(['guard_name' => 'web'])->save();
+
+            return [$name => $permission];
+        });
+
+        $adminRole = Role::query()->firstOrCreate(
+            ['name' => 'Admin'],
+            [
+                'description' => 'admin can access all data...',
+                'guard_name' => 'web',
+                'is_active' => true,
+            ]
+        );
+        $adminRole->forceFill(['guard_name' => 'web', 'is_active' => true])->save();
+        $adminRole->permissions()->sync($permissions->pluck('id')->all());
+
+        $dummyRole = Role::query()->firstOrCreate(
+            ['name' => 'Dummy'],
+            [
+                'description' => 'Dummy inventory role for product, brand, category, and unit access.',
+                'guard_name' => 'web',
+                'is_active' => true,
+            ]
+        );
+        $dummyRole->forceFill(['guard_name' => 'web', 'is_active' => true])->save();
+        $dummyRole->syncPermissions([
+            ...$inventoryPermissions,
+            ...$legacyInventoryPermissions,
+        ]);
+
         $user = User::query()->firstOrCreate(
             ['email' => 'admin@example.com'],
             [
                 'name' => 'Inventory Admin',
                 'password' => 'password',
-                'phone' => '01700817934'
+                'phone' => '01700817934',
+                'role_id' => $adminRole->id,
             ]
         );
+        $user->forceFill(['role_id' => $adminRole->id])->save();
+        $user->assignRole($adminRole);
+        $user->syncPermissions($permissions->keys()->all());
 
         $drinks = Category::query()->firstOrCreate(
             ['name' => 'Drinks'],

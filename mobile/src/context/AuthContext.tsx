@@ -6,6 +6,7 @@ import type { User } from '../types';
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
+  hasPermission: (permission: string | string[]) => boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -57,8 +58,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setUser(null);
   }
 
+  function hasPermission(permission: string | string[]) {
+    if (!user?.permissions) return false;
+
+    const permissions = Array.isArray(permission) ? permission : [permission];
+    return permissions.some((item) => user.permissions?.includes(item));
+  }
+
   const value = useMemo(
-    () => ({ user, loading, login, logout }),
+    () => ({ user, loading, hasPermission, login, logout }),
     [user, loading]
   );
 

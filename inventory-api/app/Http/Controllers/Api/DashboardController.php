@@ -15,7 +15,7 @@ class DashboardController extends Controller
             'data' => [
                 'total_categories' => Category::count(),
                 'total_products' => Product::count(),
-                'total_quantity' => Product::sum('quantity'),
+                'total_quantity' => Product::sum('qty'),
                 'low_stock_products' => 0, //TODO in future
                 'recent_movements' => 0, //TODO in future
             ],

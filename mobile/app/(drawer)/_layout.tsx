@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { DrawerActions } from '@react-navigation/native';
@@ -7,7 +8,7 @@ import { IconButton } from 'react-native-paper';
 import { useAuth } from '@/src/context/AuthContext';
 
 export default function DrawerLayout() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, hasPermission, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
 
   async function handleLogout() {
@@ -51,10 +52,81 @@ export default function DrawerLayout() {
         ),
       })}
     >
-      <Drawer.Screen name="dashboard" options={{ title: 'Dashboard', drawerLabel: 'Dashboard' }} />
-      <Drawer.Screen name="categories" options={{ title: 'Categories', drawerLabel: 'Categories' }} />
-      <Drawer.Screen name="products" options={{ title: 'Products', drawerLabel: 'Products' }} />
-      <Drawer.Screen name="profile" options={{ title: 'Profile', drawerLabel: 'Profile' }} />
+      <Drawer.Screen
+        name="dashboard"
+        options={{
+          title: 'Dashboard',
+          drawerLabel: 'Dashboard',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="view-dashboard-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen
+        name="brands"
+        options={{
+          title: 'Brands',
+          drawerLabel: 'Brands',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="tag-multiple-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('brand') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="categories"
+        options={{
+          title: 'Categories',
+          drawerLabel: 'Categories',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="shape-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('category') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="units"
+        options={{
+          title: 'Units',
+          drawerLabel: 'Units',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="scale-balance" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('unit') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="products"
+        options={{
+          title: 'Products',
+          drawerLabel: 'Products',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="package-variant-closed" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('products-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="roles"
+        options={{
+          title: 'Roles',
+          drawerLabel: 'Roles',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="account-key-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('users-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          drawerLabel: 'Profile',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="account-circle-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Drawer>
   );
 }
@@ -76,5 +148,8 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     marginRight: 8,
+  },
+  hiddenDrawerItem: {
+    display: 'none',
   },
 });
