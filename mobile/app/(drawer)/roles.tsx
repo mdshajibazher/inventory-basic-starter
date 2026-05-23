@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import {
   Button,
   Checkbox,
@@ -23,6 +24,12 @@ type RoleForm = {
   isActive: boolean;
   permissions: string[];
 };
+
+type RouteParams = {
+  refreshKey?: number;
+};
+
+type CheckboxStatus = 'checked' | 'unchecked' | 'indeterminate';
 
 const emptyForm: RoleForm = {
   name: '',
@@ -49,8 +56,22 @@ function permissionLabel(name: string) {
     .join(' ');
 }
 
+function permissionNames(permissions: Permission[]) {
+  return permissions.map((permission) => permission.name);
+}
+
+function sectionStatus(permissions: Permission[], selectedPermissions: string[]): CheckboxStatus {
+  const names = permissionNames(permissions);
+  const selectedCount = names.filter((name) => selectedPermissions.includes(name)).length;
+
+  if (selectedCount === 0) return 'unchecked';
+  if (selectedCount === names.length) return 'checked';
+  return 'indeterminate';
+}
+
 export default function RolesScreen() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, refreshUser } = useAuth();
+  const route = useRoute();
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
@@ -60,9 +81,15 @@ export default function RolesScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [rolePermissionModalVisible, setRolePermissionModalVisible] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [form, setForm] = useState<RoleForm>(emptyForm);
+  const [selectedRolePermissions, setSelectedRolePermissions] = useState<string[]>([]);
   const requestIdRef = useRef(0);
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
+  const canAdd = hasPermission('users-add');
+  const canEdit = hasPermission('users-edit');
+  const canDelete = hasPermission('users-delete');
 
   const groupedPermissions = useMemo(() => {
     return permissions.reduce<Record<string, Permission[]>>((groups, permission) => {
@@ -100,7 +127,7 @@ export default function RolesScreen() {
 
   useEffect(() => {
     load(page);
-  }, [load, page]);
+  }, [load, page, refreshKey]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -120,12 +147,25 @@ export default function RolesScreen() {
   }
 
   function togglePermission(permission: string) {
-    setForm((current) => ({
-      ...current,
-      permissions: current.permissions.includes(permission)
-        ? current.permissions.filter((item) => item !== permission)
-        : [...current.permissions, permission],
-    }));
+    setSelectedRolePermissions((current) =>
+      current.includes(permission)
+        ? current.filter((item) => item !== permission)
+        : [...current, permission]
+    );
+  }
+
+  function togglePermissionSection(permissions: Permission[]) {
+    const names = permissionNames(permissions);
+
+    setSelectedRolePermissions((current) => {
+      const allSelected = names.every((name) => current.includes(name));
+
+      if (allSelected) {
+        return current.filter((permission) => !names.includes(permission));
+      }
+
+      return Array.from(new Set([...current, ...names]));
+    });
   }
 
   function openCreateModal() {
@@ -140,10 +180,22 @@ export default function RolesScreen() {
     setModalVisible(true);
   }
 
+  function openRolePermissionModal(role: Role) {
+    setEditingRole(role);
+    setSelectedRolePermissions(role.permissions?.map((permission) => permission.name) ?? []);
+    setRolePermissionModalVisible(true);
+  }
+
   function closeModal() {
     setModalVisible(false);
     setEditingRole(null);
     setForm(emptyForm);
+  }
+
+  function closeRolePermissionModal() {
+    setRolePermissionModalVisible(false);
+    setEditingRole(null);
+    setSelectedRolePermissions([]);
   }
 
   async function saveRole() {
@@ -158,7 +210,6 @@ export default function RolesScreen() {
         name: form.name.trim(),
         description: form.description.trim() || null,
         is_active: form.isActive,
-        permissions: form.permissions,
       };
 
       if (editingRole) {
@@ -170,6 +221,29 @@ export default function RolesScreen() {
       closeModal();
       await load(editingRole ? page : 1);
       if (!editingRole) setPage(1);
+    } catch (error) {
+      Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveRolePermissions() {
+    if (!editingRole) return;
+
+    setSaving(true);
+    try {
+      await api.updateRole(editingRole.id, {
+        name: editingRole.name,
+        description: editingRole.description ?? null,
+        is_active: Boolean(editingRole.is_active),
+        permissions: selectedRolePermissions,
+      });
+      const currentUser = await refreshUser();
+      closeRolePermissionModal();
+      if (currentUser?.permissions?.includes('users-index')) {
+        await load(page);
+      }
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
@@ -211,9 +285,11 @@ export default function RolesScreen() {
             {roles.length} shown from {pagination?.total ?? roles.length}
           </Text>
         </View>
-        <Button mode="contained" onPress={openCreateModal}>
-          Add
-        </Button>
+        {canAdd ? (
+          <Button mode="contained" onPress={openCreateModal}>
+            Add
+          </Button>
+        ) : null}
       </View>
 
       <Searchbar
@@ -244,12 +320,21 @@ export default function RolesScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  <Button compact mode="text" onPress={() => openEditModal(role)}>
-                    Edit
-                  </Button>
-                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(role)}>
-                    Delete
-                  </Button>
+                  {canEdit ? (
+                    <>
+                      <Button compact mode="text" onPress={() => openEditModal(role)}>
+                        Edit
+                      </Button>
+                      <Button compact mode="text" onPress={() => openRolePermissionModal(role)}>
+                        Update Permission
+                      </Button>
+                    </>
+                  ) : null}
+                  {canDelete ? (
+                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(role)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </View>
               </DataTable.Cell>
             </DataTable.Row>
@@ -308,16 +393,43 @@ export default function RolesScreen() {
               />
             </View>
 
+            <View style={styles.modalActions}>
+              <Button mode="text" onPress={closeModal} disabled={saving}>
+                Cancel
+              </Button>
+              <Button mode="contained" onPress={saveRole} loading={saving} disabled={saving}>
+                Save
+              </Button>
+            </View>
+          </ScrollView>
+        </Modal>
+        <Modal
+          visible={rolePermissionModalVisible}
+          onDismiss={closeRolePermissionModal}
+          contentContainerStyle={styles.modal}
+        >
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <Text variant="titleLarge">Update Permission</Text>
+            <Text variant="bodyMedium" style={styles.muted}>
+              {editingRole?.name}
+            </Text>
+
             {Object.entries(groupedPermissions).map(([group, groupPermissions]) => (
               <View key={group} style={styles.permissionGroup}>
                 <Text variant="titleMedium" style={styles.groupTitle}>
                   {permissionLabel(group)}
                 </Text>
+                <Checkbox.Item
+                  label="Select all"
+                  status={sectionStatus(groupPermissions, selectedRolePermissions)}
+                  onPress={() => togglePermissionSection(groupPermissions)}
+                  disabled={saving}
+                />
                 {groupPermissions.map((permission) => (
                   <Checkbox.Item
                     key={permission.id}
                     label={permissionLabel(permission.name)}
-                    status={form.permissions.includes(permission.name) ? 'checked' : 'unchecked'}
+                    status={selectedRolePermissions.includes(permission.name) ? 'checked' : 'unchecked'}
                     onPress={() => togglePermission(permission.name)}
                     disabled={saving}
                   />
@@ -326,10 +438,10 @@ export default function RolesScreen() {
             ))}
 
             <View style={styles.modalActions}>
-              <Button mode="text" onPress={closeModal} disabled={saving}>
+              <Button mode="outlined" onPress={closeRolePermissionModal} disabled={saving}>
                 Cancel
               </Button>
-              <Button mode="contained" onPress={saveRole} loading={saving} disabled={saving}>
+              <Button mode="contained" onPress={saveRolePermissions} loading={saving} disabled={saving}>
                 Save
               </Button>
             </View>
@@ -354,7 +466,7 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
   table: {
-    minWidth: 680,
+    minWidth: 860,
     backgroundColor: '#ffffff',
     borderRadius: 12,
     overflow: 'hidden',
@@ -370,7 +482,7 @@ const styles = StyleSheet.create({
     minWidth: 120,
   },
   actionColumn: {
-    minWidth: 180,
+    minWidth: 300,
   },
   actions: {
     flexDirection: 'row',

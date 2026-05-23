@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
   Button,
@@ -25,6 +26,10 @@ type UnitForm = {
   operator: string | null;
   operationValue: string;
   isActive: boolean;
+};
+
+type RouteParams = {
+  refreshKey?: number;
 };
 
 const emptyForm: UnitForm = {
@@ -54,6 +59,7 @@ function unitToForm(unit: Unit): UnitForm {
 
 export default function UnitsScreen() {
   const { hasPermission } = useAuth();
+  const route = useRoute();
   const [units, setUnits] = useState<Unit[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -67,6 +73,10 @@ export default function UnitsScreen() {
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [form, setForm] = useState<UnitForm>(emptyForm);
   const requestIdRef = useRef(0);
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
+  const canAdd = hasPermission('units-add');
+  const canEdit = hasPermission('units-edit');
+  const canDelete = hasPermission('units-delete');
 
   const selectedBase = useMemo(
     () => units.find((unit) => unit.id === form.baseUnit),
@@ -96,7 +106,7 @@ export default function UnitsScreen() {
 
   useEffect(() => {
     load(page);
-  }, [load, page]);
+  }, [load, page, refreshKey]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -211,7 +221,7 @@ export default function UnitsScreen() {
     }
   }
 
-  if (!hasPermission('unit')) {
+  if (!hasPermission('units-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -224,9 +234,11 @@ export default function UnitsScreen() {
             {units.length} shown from {pagination?.total ?? units.length}
           </Text>
         </View>
-        <Button mode="contained" onPress={openCreateModal}>
-          Add
-        </Button>
+        {canAdd ? (
+          <Button mode="contained" onPress={openCreateModal}>
+            Add
+          </Button>
+        ) : null}
       </View>
 
       <Searchbar
@@ -267,12 +279,16 @@ export default function UnitsScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  <Button compact mode="text" onPress={() => openEditModal(unit)}>
-                    Edit
-                  </Button>
-                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(unit)}>
-                    Delete
-                  </Button>
+                  {canEdit ? (
+                    <Button compact mode="text" onPress={() => openEditModal(unit)}>
+                      Edit
+                    </Button>
+                  ) : null}
+                  {canDelete ? (
+                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(unit)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </View>
               </DataTable.Cell>
             </DataTable.Row>

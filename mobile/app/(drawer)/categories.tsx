@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
   Button,
@@ -28,6 +29,10 @@ type CategoryForm = {
   isActive: boolean;
 };
 
+type RouteParams = {
+  refreshKey?: number;
+};
+
 const emptyForm: CategoryForm = {
   name: '',
   image: null,
@@ -52,6 +57,7 @@ function categoryToForm(category: Category): CategoryForm {
 
 export default function CategoriesScreen() {
   const { hasPermission } = useAuth();
+  const route = useRoute();
   const [categories, setCategories] = useState<Category[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -64,6 +70,10 @@ export default function CategoriesScreen() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [form, setForm] = useState<CategoryForm>(emptyForm);
   const requestIdRef = useRef(0);
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
+  const canAdd = hasPermission('categories-add');
+  const canEdit = hasPermission('categories-edit');
+  const canDelete = hasPermission('categories-delete');
 
   const parentOptions = useMemo(
     () => categories.filter((category) => category.id !== editingCategory?.id),
@@ -98,7 +108,7 @@ export default function CategoriesScreen() {
 
   useEffect(() => {
     load(page);
-  }, [load, page]);
+  }, [load, page, refreshKey]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -194,7 +204,7 @@ export default function CategoriesScreen() {
     }
   }
 
-  if (!hasPermission('category')) {
+  if (!hasPermission('categories-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -207,9 +217,11 @@ export default function CategoriesScreen() {
             {categories.length} shown from {pagination?.total ?? categories.length}
           </Text>
         </View>
-        <Button mode="contained" onPress={openCreateModal}>
-          Add
-        </Button>
+        {canAdd ? (
+          <Button mode="contained" onPress={openCreateModal}>
+            Add
+          </Button>
+        ) : null}
       </View>
 
       <Searchbar
@@ -248,12 +260,16 @@ export default function CategoriesScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  <Button compact mode="text" onPress={() => openEditModal(category)}>
-                    Edit
-                  </Button>
-                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(category)}>
-                    Delete
-                  </Button>
+                  {canEdit ? (
+                    <Button compact mode="text" onPress={() => openEditModal(category)}>
+                      Edit
+                    </Button>
+                  ) : null}
+                  {canDelete ? (
+                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(category)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </View>
               </DataTable.Cell>
             </DataTable.Row>

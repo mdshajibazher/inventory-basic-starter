@@ -7,6 +7,7 @@ type AuthContextValue = {
   user: User | null;
   loading: boolean;
   hasPermission: (permission: string | string[]) => boolean;
+  refreshUser: () => Promise<User | null>;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -48,6 +49,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setUser(meResponse.data as User);
   }
 
+  async function refreshUser() {
+    try {
+      const response = await api.me();
+      const nextUser = response.data as User;
+      setUser(nextUser);
+      return nextUser;
+    } catch {
+      await tokenStorage.clear();
+      setUser(null);
+      return null;
+    }
+  }
+
   async function logout() {
     try {
       await api.logout();
@@ -66,7 +80,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }
 
   const value = useMemo(
-    () => ({ user, loading, hasPermission, login, logout }),
+    () => ({ user, loading, hasPermission, refreshUser, login, logout }),
     [user, loading]
   );
 

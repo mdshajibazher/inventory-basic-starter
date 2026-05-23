@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Screen } from '@/src/components/Screen';
 import { Muted, Stat, Title } from '@/src/components/UI';
 import { api } from '@/src/lib/api';
 import type { DashboardSummary } from '@/src/types';
 
+type RouteParams = {
+  refreshKey?: number;
+};
+
 export default function DashboardScreen() {
+  const route = useRoute();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -15,9 +21,11 @@ export default function DashboardScreen() {
     setSummary(response.data as DashboardSummary);
   }, []);
 
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
+
   useEffect(() => {
     load().finally(() => setLoading(false));
-  }, [load]);
+  }, [load, refreshKey]);
 
   async function refresh() {
     setRefreshing(true);

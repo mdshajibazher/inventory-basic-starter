@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
   Button,
@@ -25,6 +26,10 @@ type BrandForm = {
   isActive: boolean;
 };
 
+type RouteParams = {
+  refreshKey?: number;
+};
+
 const emptyForm: BrandForm = {
   title: '',
   image: null,
@@ -47,6 +52,7 @@ function brandToForm(brand: Brand): BrandForm {
 
 export default function BrandsScreen() {
   const { hasPermission } = useAuth();
+  const route = useRoute();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -58,6 +64,10 @@ export default function BrandsScreen() {
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [form, setForm] = useState<BrandForm>(emptyForm);
   const requestIdRef = useRef(0);
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
+  const canAdd = hasPermission('brands-add');
+  const canEdit = hasPermission('brands-edit');
+  const canDelete = hasPermission('brands-delete');
 
   const load = useCallback(async (nextPage = page) => {
     const requestId = requestIdRef.current + 1;
@@ -82,7 +92,7 @@ export default function BrandsScreen() {
 
   useEffect(() => {
     load(page);
-  }, [load, page]);
+  }, [load, page, refreshKey]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -176,7 +186,7 @@ export default function BrandsScreen() {
     }
   }
 
-  if (!hasPermission('brand')) {
+  if (!hasPermission('brands-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -189,9 +199,11 @@ export default function BrandsScreen() {
             {brands.length} shown from {pagination?.total ?? brands.length}
           </Text>
         </View>
-        <Button mode="contained" onPress={openCreateModal}>
-          Add
-        </Button>
+        {canAdd ? (
+          <Button mode="contained" onPress={openCreateModal}>
+            Add
+          </Button>
+        ) : null}
       </View>
 
       <Searchbar
@@ -226,12 +238,16 @@ export default function BrandsScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  <Button compact mode="text" onPress={() => openEditModal(brand)}>
-                    Edit
-                  </Button>
-                  <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(brand)}>
-                    Delete
-                  </Button>
+                  {canEdit ? (
+                    <Button compact mode="text" onPress={() => openEditModal(brand)}>
+                      Edit
+                    </Button>
+                  ) : null}
+                  {canDelete ? (
+                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(brand)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </View>
               </DataTable.Cell>
             </DataTable.Row>

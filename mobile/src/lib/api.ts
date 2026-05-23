@@ -60,11 +60,31 @@ type UnitPayload = {
   is_active?: boolean;
 };
 
+type TaxPayload = {
+  name: string;
+  rate: number;
+  is_active?: boolean;
+};
+
+type CurrencyPayload = {
+  name: string;
+  code: string;
+  exchange_rate: number;
+};
+
 type RolePayload = {
   name: string;
   description?: string | null;
   is_active?: boolean;
   permissions?: string[];
+};
+
+type UserPayload = {
+  name: string;
+  email: string;
+  phone: string;
+  password?: string;
+  is_active?: boolean;
 };
 
 export type ProductPayload = {
@@ -240,12 +260,54 @@ export const api = {
 
   dashboard: () => request<{ data: unknown }>('/dashboard'),
 
+  users: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/users${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  userOptions: () => request<{ data: unknown }>('/users/options'),
+
+  createUser: (payload: UserPayload) =>
+    request<{ data: unknown }>('/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateUser: (id: number, payload: UserPayload) =>
+    request<{ data: unknown }>(`/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  updateUserRoles: (id: number, payload: { roles: number[] }) =>
+    request<{ data: unknown }>(`/users/${id}/roles`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  updateUserPermissions: (id: number, payload: { permissions: string[] }) =>
+    request<{ data: unknown }>(`/users/${id}/permissions`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteUser: (id: number) =>
+    request<{ message: string }>(`/users/${id}`, {
+      method: 'DELETE',
+    }),
+
   roles: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(
       `/roles${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
     ),
 
   permissions: () => request<{ data: unknown[] }>('/roles/permissions'),
+
+  updatePermission: (id: number, payload: { name: string }) =>
+    request<{ data: unknown }>(`/roles/permissions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 
   createRole: (payload: RolePayload) =>
     request<{ data: unknown }>('/roles', {
@@ -335,6 +397,50 @@ export const api = {
 
   deleteUnit: (id: number) =>
     request<{ message: string }>(`/units/${id}`, {
+      method: 'DELETE',
+    }),
+
+  taxes: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/taxes${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createTax: (payload: TaxPayload) =>
+    request<{ data: unknown }>('/taxes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateTax: (id: number, payload: TaxPayload) =>
+    request<{ data: unknown }>(`/taxes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteTax: (id: number) =>
+    request<{ message: string }>(`/taxes/${id}`, {
+      method: 'DELETE',
+    }),
+
+  currencies: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/currencies${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createCurrency: (payload: CurrencyPayload) =>
+    request<{ data: unknown }>('/currencies', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateCurrency: (id: number, payload: CurrencyPayload) =>
+    request<{ data: unknown }>(`/currencies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCurrency: (id: number) =>
+    request<{ message: string }>(`/currencies/${id}`, {
       method: 'DELETE',
     }),
 

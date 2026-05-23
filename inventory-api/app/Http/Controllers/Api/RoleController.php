@@ -59,6 +59,29 @@ class RoleController extends Controller
         ]);
     }
 
+    public function updatePermission(Request $request, Permission $permission)
+    {
+        $data = $request->validate([
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('permissions', 'name')
+                    ->where('guard_name', $permission->guard_name)
+                    ->ignore($permission->id),
+            ],
+        ]);
+
+        $permission->update($data);
+
+        app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
+        return response()->json([
+            'message' => 'Permission updated successfully.',
+            'data' => $permission,
+        ]);
+    }
+
     public function store(Request $request)
     {
         $role = DB::transaction(function () use ($request) {
@@ -89,11 +112,14 @@ class RoleController extends Controller
     {
         $role = DB::transaction(function () use ($request, $role) {
             $data = $this->validatedData($request, $role);
-            $permissions = $data['permissions'] ?? [];
+            $permissions = $data['permissions'] ?? null;
             unset($data['permissions']);
 
             $role->update($data);
-            $role->syncPermissions($permissions);
+
+            if ($permissions !== null) {
+                $role->syncPermissions($permissions);
+            }
 
             return $role->load('permissions:id,name');
         });

@@ -32,12 +32,14 @@ class DatabaseSeeder extends Seeder
             'units-add',
             'units-edit',
             'units-delete',
-        ];
-
-        $legacyInventoryPermissions = [
-            'brand',
-            'category',
-            'unit',
+            'taxes-index',
+            'taxes-add',
+            'taxes-edit',
+            'taxes-delete',
+            'currencies-index',
+            'currencies-add',
+            'currencies-edit',
+            'currencies-delete',
         ];
 
         $userPermissions = [
@@ -47,9 +49,12 @@ class DatabaseSeeder extends Seeder
             'users-delete',
         ];
 
+        Permission::query()
+            ->whereIn('name', ['brand', 'category', 'currency', 'tax', 'unit'])
+            ->delete();
+
         $permissions = collect([
             ...$inventoryPermissions,
-            ...$legacyInventoryPermissions,
             ...$userPermissions,
         ])->mapWithKeys(function ($name) {
             $permission = Permission::query()->firstOrCreate(['name' => $name]);
@@ -80,7 +85,6 @@ class DatabaseSeeder extends Seeder
         $dummyRole->forceFill(['guard_name' => 'web', 'is_active' => true])->save();
         $dummyRole->syncPermissions([
             ...$inventoryPermissions,
-            ...$legacyInventoryPermissions,
         ]);
 
         $user = User::query()->firstOrCreate(
@@ -94,7 +98,7 @@ class DatabaseSeeder extends Seeder
         );
         $user->forceFill(['role_id' => $adminRole->id])->save();
         $user->assignRole($adminRole);
-        $user->syncPermissions($permissions->keys()->all());
+        //$user->syncPermissions($permissions->keys()->all());
 
         $drinks = Category::query()->firstOrCreate(
             ['name' => 'Drinks'],

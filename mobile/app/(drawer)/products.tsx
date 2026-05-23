@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Image, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
   Button,
@@ -57,6 +58,10 @@ type ProductOptions = {
   categories: Category[];
   units: Unit[];
   taxes: Tax[];
+};
+
+type RouteParams = {
+  refreshKey?: number;
 };
 
 const perPage = 15;
@@ -196,6 +201,7 @@ function SelectField<T>({
 
 export default function ProductsScreen() {
   const { hasPermission } = useAuth();
+  const route = useRoute();
   const [products, setProducts] = useState<Product[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [options, setOptions] = useState<ProductOptions>({
@@ -219,6 +225,7 @@ export default function ProductsScreen() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const requestIdRef = useRef(0);
+  const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
   const canAdd = hasPermission('products-add');
   const canEdit = hasPermission('products-edit');
   const canDelete = hasPermission('products-delete');
@@ -252,7 +259,7 @@ export default function ProductsScreen() {
 
   useEffect(() => {
     load(page);
-  }, [load, page]);
+  }, [load, page, refreshKey]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
