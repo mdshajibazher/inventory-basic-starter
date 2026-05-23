@@ -428,8 +428,9 @@ export default function ProductsScreen() {
           </Button>
         ) : null}
       </View>
-
       <Searchbar
+        style={styles.searchbar}
+        inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
         placeholder="Search products, code, brand, category"
@@ -467,7 +468,7 @@ export default function ProductsScreen() {
                     <Button compact mode="text" onPress={() => openEditModal(product)}>Edit</Button>
                   ) : null}
                   {canDelete ? (
-                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(product)}>Delete</Button>
+                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(product)}>Delete</Button>
                   ) : null}
                 </View>
               </DataTable.Cell>
@@ -655,7 +656,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
+  },
+  searchbar: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: '#ffffff',
+  },
+  searchbarInput: {
+    minHeight: 0,
+    paddingVertical: 0,
   },
   table: {
     minWidth: 760,
@@ -683,7 +694,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 6,
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#f2f2f2',
   },
   actions: {
     flexDirection: 'row',
@@ -696,12 +707,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   paginationText: {
-    color: '#667085',
+    color: '#666666',
   },
   empty: {
     paddingVertical: 24,
     textAlign: 'center',
-    color: '#667085',
+    color: '#666666',
   },
   modal: {
     maxHeight: '92%',
@@ -715,7 +726,7 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     marginBottom: 4,
-    color: '#344054',
+    color: '#333333',
   },
   selectButton: {
     justifyContent: 'flex-start',

@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { Brand, Category, Currency, PaginationMeta, Tax, Unit } from '@/lib/types';
+import type { Brand, Category, Currency, PaginationMeta, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Modal, Select, StatusBadge, Switch } from '@/components/ui';
@@ -12,7 +12,7 @@ import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/comp
 
 const perPage = 15;
 
-type Resource = 'brands' | 'categories' | 'units' | 'taxes' | 'currencies';
+type Resource = 'brands' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses';
 
 type ResourceMap = {
   brands: Brand;
@@ -20,6 +20,7 @@ type ResourceMap = {
   units: Unit;
   taxes: Tax;
   currencies: Currency;
+  warehouses: Warehouse;
 };
 
 const meta: Record<Resource, { title: string; search: string; permission: string }> = {
@@ -28,6 +29,7 @@ const meta: Record<Resource, { title: string; search: string; permission: string
   units: { title: 'Units', search: 'Search units, base, operator, status', permission: 'units' },
   taxes: { title: 'Taxes', search: 'Search taxes, rates, status', permission: 'taxes' },
   currencies: { title: 'Currencies', search: 'Search currencies, codes, exchange rates', permission: 'currencies' },
+  warehouses: { title: 'Warehouses', search: 'Search warehouses, contact, address, status', permission: 'warehouses' },
 };
 
 type FormState = Record<string, string | boolean | number | null | File>;
@@ -191,10 +193,12 @@ function emptyForm(resource: Resource): FormState {
       return { name: '', rate: '', isActive: true };
     case 'currencies':
       return { name: '', code: '', exchangeRate: '' };
+    case 'warehouses':
+      return { name: '', phone: '', email: '', address: '', isActive: true };
   }
 }
 
-function toForm(resource: Resource, item: Brand | Category | Unit | Tax | Currency): FormState {
+function toForm(resource: Resource, item: Brand | Category | Unit | Tax | Currency | Warehouse): FormState {
   switch (resource) {
     case 'brands': {
       const brand = item as Brand;
@@ -223,6 +227,16 @@ function toForm(resource: Resource, item: Brand | Category | Unit | Tax | Curren
       const currency = item as Currency;
       return { name: currency.name, code: currency.code, exchangeRate: String(currency.exchange_rate) };
     }
+    case 'warehouses': {
+      const warehouse = item as Warehouse;
+      return {
+        name: warehouse.name,
+        phone: warehouse.phone ?? '',
+        email: warehouse.email ?? '',
+        address: warehouse.address,
+        isActive: Boolean(warehouse.is_active),
+      };
+    }
   }
 }
 
@@ -243,6 +257,10 @@ function validate(resource: Resource, form: FormState) {
     if (!String(form.name).trim() || !String(form.code).trim()) return { title: 'Missing fields', description: 'Currency name and code are required.' };
     if (!String(form.exchangeRate).trim() || Number.isNaN(exchangeRate) || exchangeRate < 0) return { title: 'Invalid rate', description: 'Enter a valid exchange rate.' };
   }
+  if (resource === 'warehouses') {
+    if (!String(form.name).trim()) return { title: 'Missing name', description: 'Warehouse name is required.' };
+    if (!String(form.address).trim()) return { title: 'Missing address', description: 'Warehouse address is required.' };
+  }
   return null;
 }
 
@@ -258,6 +276,8 @@ async function createResource(resource: Resource, form: FormState) {
       return api.createTax({ name: String(form.name).trim(), rate: toNumber(String(form.rate)), is_active: Boolean(form.isActive) });
     case 'currencies':
       return api.createCurrency({ name: String(form.name).trim(), code: String(form.code).trim().toUpperCase(), exchange_rate: toNumber(String(form.exchangeRate)) });
+    case 'warehouses':
+      return api.createWarehouse(warehousePayload(form));
   }
 }
 
@@ -273,6 +293,8 @@ async function updateResource(resource: Resource, id: number, form: FormState) {
       return api.updateTax(id, { name: String(form.name).trim(), rate: toNumber(String(form.rate)), is_active: Boolean(form.isActive) });
     case 'currencies':
       return api.updateCurrency(id, { name: String(form.name).trim(), code: String(form.code).trim().toUpperCase(), exchange_rate: toNumber(String(form.exchangeRate)) });
+    case 'warehouses':
+      return api.updateWarehouse(id, warehousePayload(form));
   }
 }
 
@@ -288,6 +310,8 @@ async function deleteResource(resource: Resource, id: number) {
       return api.deleteTax(id);
     case 'currencies':
       return api.deleteCurrency(id);
+    case 'warehouses':
+      return api.deleteWarehouse(id);
   }
 }
 
@@ -299,6 +323,16 @@ function unitPayload(form: FormState) {
     base_unit: numberOrNull(form.baseUnit),
     operator: hasBaseUnit ? String(form.operator || '*') : '*',
     operation_value: hasBaseUnit ? toNumber(String(form.operationValue), 1) : 1,
+    is_active: Boolean(form.isActive),
+  };
+}
+
+function warehousePayload(form: FormState) {
+  return {
+    name: String(form.name).trim(),
+    phone: nullableText(form.phone),
+    email: nullableText(form.email),
+    address: String(form.address).trim(),
     is_active: Boolean(form.isActive),
   };
 }
@@ -357,11 +391,22 @@ function renderFields(
       </>
     );
   }
+  if (resource === 'currencies') {
+    return (
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Currency name"><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
+        <Field label="Code"><Input value={String(form.code)} onChange={(event) => setValue('code', event.target.value)} /></Field>
+        <Field label="Exchange rate"><Input type="number" step="0.0001" value={String(form.exchangeRate)} onChange={(event) => setValue('exchangeRate', event.target.value)} /></Field>
+      </div>
+    );
+  }
   return (
     <div className="grid gap-4 sm:grid-cols-3">
-      <Field label="Currency name"><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
-      <Field label="Code"><Input value={String(form.code)} onChange={(event) => setValue('code', event.target.value)} /></Field>
-      <Field label="Exchange rate"><Input type="number" step="0.0001" value={String(form.exchangeRate)} onChange={(event) => setValue('exchangeRate', event.target.value)} /></Field>
+      <Field label="Warehouse name"><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
+      <Field label="Phone"><Input value={String(form.phone)} onChange={(event) => setValue('phone', event.target.value)} /></Field>
+      <Field label="Email"><Input type="email" value={String(form.email)} onChange={(event) => setValue('email', event.target.value)} /></Field>
+      <Field label="Address"><Input value={String(form.address)} onChange={(event) => setValue('address', event.target.value)} /></Field>
+      <ActiveField form={form} setValue={setValue} />
     </div>
   );
 }
@@ -387,7 +432,7 @@ function ActiveField({ form, setValue }: { form: FormState; setValue: (key: stri
   );
 }
 
-function renderTable<T extends Brand | Category | Unit | Tax | Currency>(
+function renderTable<T extends Brand | Category | Unit | Tax | Currency | Warehouse>(
   resource: Resource,
   items: T[],
   actions: { canEdit: boolean; canDelete: boolean; openEdit: (item: T) => void; remove: (item: T) => void; saving: boolean }
@@ -411,7 +456,10 @@ function renderTable<T extends Brand | Category | Unit | Tax | Currency>(
   if (resource === 'taxes') {
     return <Table headers={['Tax', 'Rate', 'Status', 'Action']}>{(items as Tax[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.rate}%</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
-  return <Table headers={['Currency', 'Code', 'Exchange Rate', 'Action']}>{(items as Currency[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.code}</td><td className="px-4 py-3">{item.exchange_rate}</td>{actionCells(item as T)}</tr>)}</Table>;
+  if (resource === 'currencies') {
+    return <Table headers={['Currency', 'Code', 'Exchange Rate', 'Action']}>{(items as Currency[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.code}</td><td className="px-4 py-3">{item.exchange_rate}</td>{actionCells(item as T)}</tr>)}</Table>;
+  }
+  return <Table headers={['Warehouse', 'Phone', 'Email', 'Address', 'Status', 'Action']}>{(items as Warehouse[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.phone || '-'}</td><td className="px-4 py-3">{item.email || '-'}</td><td className="px-4 py-3">{item.address}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
 }
 
 function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
@@ -435,13 +483,19 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function nullableText(value: unknown) {
+  const text = String(value ?? '').trim();
+  return text ? text : null;
+}
+
 function singular(title: string) {
   return title.endsWith('ies') ? `${title.slice(0, -3)}y` : title.replace(/s$/, '');
 }
 
-function itemLabel(resource: Resource, item: Brand | Category | Unit | Tax | Currency) {
+function itemLabel(resource: Resource, item: Brand | Category | Unit | Tax | Currency | Warehouse) {
   if (resource === 'brands') return (item as Brand).title;
   if (resource === 'units') return (item as Unit).unit_name;
   if (resource === 'currencies') return (item as Currency).code;
+  if (resource === 'warehouses') return (item as Warehouse).name;
   return (item as Category | Tax).name;
 }

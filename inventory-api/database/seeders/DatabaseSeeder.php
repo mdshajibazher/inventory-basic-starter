@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Category;
+use App\Models\CustomerGroup;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
@@ -40,6 +41,14 @@ class DatabaseSeeder extends Seeder
             'currencies-add',
             'currencies-edit',
             'currencies-delete',
+            'warehouses-index',
+            'warehouses-add',
+            'warehouses-edit',
+            'warehouses-delete',
+            'customers-index',
+            'customers-add',
+            'customers-edit',
+            'customers-delete',
         ];
 
         $userPermissions = [
@@ -87,6 +96,15 @@ class DatabaseSeeder extends Seeder
             ...$inventoryPermissions,
         ]);
 
+        Role::query()->firstOrCreate(
+            ['name' => 'Customer'],
+            [
+                'description' => 'Customer portal user.',
+                'guard_name' => 'web',
+                'is_active' => true,
+            ]
+        );
+
         $user = User::query()->firstOrCreate(
             ['email' => 'admin@example.com'],
             [
@@ -109,6 +127,15 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Office Supplies'],
             ['is_active' => true]
         );
+
+        CustomerGroup::query()->firstOrCreate(
+            ['name' => 'General'],
+            ['percentage' => '0', 'is_active' => true]
+        );
+
+        $this->call(WarehouseSeeder::class);
+        $this->call(UnitSeeder::class);
+        $this->call(TaxSeeder::class);
 
         // Product::query()->firstOrCreate(
         //     ['sku' => 'COKE-500'],

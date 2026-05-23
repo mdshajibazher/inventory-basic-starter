@@ -15,11 +15,13 @@ import {
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
-import type { PaginationMeta, Tax } from '@/src/types';
+import type { PaginationMeta, Warehouse } from '@/src/types';
 
-type TaxForm = {
+type WarehouseForm = {
   name: string;
-  rate: string;
+  phone: string;
+  email: string;
+  address: string;
   isActive: boolean;
 };
 
@@ -27,26 +29,35 @@ type RouteParams = {
   refreshKey?: number;
 };
 
-const emptyForm: TaxForm = {
+const emptyForm: WarehouseForm = {
   name: '',
-  rate: '',
+  phone: '',
+  email: '',
+  address: '',
   isActive: true,
 };
 
 const perPage = 15;
 
-function taxToForm(tax: Tax): TaxForm {
+function warehouseToForm(warehouse: Warehouse): WarehouseForm {
   return {
-    name: tax.name,
-    rate: String(tax.rate),
-    isActive: Boolean(tax.is_active),
+    name: warehouse.name,
+    phone: warehouse.phone ?? '',
+    email: warehouse.email ?? '',
+    address: warehouse.address,
+    isActive: Boolean(warehouse.is_active),
   };
 }
 
-export default function TaxesScreen() {
+function nullableText(value: string) {
+  const text = value.trim();
+  return text ? text : null;
+}
+
+export default function WarehousesScreen() {
   const { hasPermission } = useAuth();
   const route = useRoute();
-  const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -54,23 +65,23 @@ export default function TaxesScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingTax, setEditingTax] = useState<Tax | null>(null);
-  const [form, setForm] = useState<TaxForm>(emptyForm);
+  const [editingWarehouse, setEditingWarehouse] = useState<Warehouse | null>(null);
+  const [form, setForm] = useState<WarehouseForm>(emptyForm);
   const requestIdRef = useRef(0);
   const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
-  const canAdd = hasPermission('taxes-add');
-  const canEdit = hasPermission('taxes-edit');
-  const canDelete = hasPermission('taxes-delete');
+  const canAdd = hasPermission('warehouses-add');
+  const canEdit = hasPermission('warehouses-edit');
+  const canDelete = hasPermission('warehouses-delete');
 
   const load = useCallback(async (nextPage = page) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const response = await api.taxes({ page: nextPage, perPage, search: debouncedSearch });
+      const response = await api.warehouses({ page: nextPage, perPage, search: debouncedSearch });
       if (requestId !== requestIdRef.current) return;
 
-      setTaxes(response.data as Tax[]);
+      setWarehouses(response.data as Warehouse[]);
       setPagination(response.meta ?? null);
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
@@ -96,57 +107,57 @@ export default function TaxesScreen() {
     return () => clearTimeout(timeout);
   }, [search]);
 
-  function updateForm<K extends keyof TaxForm>(key: K, value: TaxForm[K]) {
+  function updateForm<K extends keyof WarehouseForm>(key: K, value: WarehouseForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
   function openCreateModal() {
-    setEditingTax(null);
+    setEditingWarehouse(null);
     setForm(emptyForm);
     setModalVisible(true);
   }
 
-  function openEditModal(tax: Tax) {
-    setEditingTax(tax);
-    setForm(taxToForm(tax));
+  function openEditModal(warehouse: Warehouse) {
+    setEditingWarehouse(warehouse);
+    setForm(warehouseToForm(warehouse));
     setModalVisible(true);
   }
 
   function closeModal() {
     setModalVisible(false);
-    setEditingTax(null);
+    setEditingWarehouse(null);
     setForm(emptyForm);
   }
 
-  async function saveTax() {
-    const rate = Number(form.rate);
-
+  async function saveWarehouse() {
     if (!form.name.trim()) {
-      Alert.alert('Missing name', 'Tax name is required.');
+      Alert.alert('Missing name', 'Warehouse name is required.');
       return;
     }
 
-    if (!form.rate.trim() || Number.isNaN(rate) || rate < 0) {
-      Alert.alert('Invalid rate', 'Enter a valid tax rate.');
+    if (!form.address.trim()) {
+      Alert.alert('Missing address', 'Warehouse address is required.');
       return;
     }
 
     const payload = {
       name: form.name.trim(),
-      rate,
+      phone: nullableText(form.phone),
+      email: nullableText(form.email),
+      address: form.address.trim(),
       is_active: form.isActive,
     };
 
     setSaving(true);
     try {
-      if (editingTax) {
-        await api.updateTax(editingTax.id, payload);
+      if (editingWarehouse) {
+        await api.updateWarehouse(editingWarehouse.id, payload);
       } else {
-        await api.createTax(payload);
+        await api.createWarehouse(payload);
       }
 
       closeModal();
-      if (editingTax) {
+      if (editingWarehouse) {
         await load(page);
       } else if (page === 1) {
         await load(1);
@@ -160,23 +171,23 @@ export default function TaxesScreen() {
     }
   }
 
-  function confirmDelete(tax: Tax) {
-    Alert.alert('Delete tax?', `Delete ${tax.name}?`, [
+  function confirmDelete(warehouse: Warehouse) {
+    Alert.alert('Delete warehouse?', `Delete ${warehouse.name}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          void deleteTax(tax);
+          void deleteWarehouse(warehouse);
         },
       },
     ]);
   }
 
-  async function deleteTax(tax: Tax) {
+  async function deleteWarehouse(warehouse: Warehouse) {
     setSaving(true);
     try {
-      await api.deleteTax(tax.id);
+      await api.deleteWarehouse(warehouse.id);
       await load(page);
     } catch (error) {
       Alert.alert('Delete failed', error instanceof Error ? error.message : 'Try again.');
@@ -185,7 +196,7 @@ export default function TaxesScreen() {
     }
   }
 
-  if (!hasPermission('taxes-index')) {
+  if (!hasPermission('warehouses-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -193,9 +204,9 @@ export default function TaxesScreen() {
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text variant="headlineSmall">Taxes</Text>
+          <Text variant="headlineSmall">Warehouses</Text>
           <Text variant="bodyMedium" style={styles.muted}>
-            {taxes.length} shown from {pagination?.total ?? taxes.length}
+            {warehouses.length} shown from {pagination?.total ?? warehouses.length}
           </Text>
         </View>
         {canAdd ? (
@@ -209,7 +220,7 @@ export default function TaxesScreen() {
         inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
-        placeholder="Search taxes, rates, status"
+        placeholder="Search warehouses, contact, address, status"
         loading={loading}
         onClearIconPress={() => setSearch('')}
       />
@@ -217,32 +228,32 @@ export default function TaxesScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <DataTable style={styles.table}>
           <DataTable.Header>
-            <DataTable.Title style={styles.nameColumn}>Tax</DataTable.Title>
-            <DataTable.Title numeric style={styles.rateColumn}>
-              Rate
-            </DataTable.Title>
+            <DataTable.Title style={styles.nameColumn}>Warehouse</DataTable.Title>
+            <DataTable.Title style={styles.contactColumn}>Phone</DataTable.Title>
+            <DataTable.Title style={styles.contactColumn}>Email</DataTable.Title>
+            <DataTable.Title style={styles.addressColumn}>Address</DataTable.Title>
             <DataTable.Title style={styles.statusColumn}>Status</DataTable.Title>
             <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
           </DataTable.Header>
 
-          {taxes.map((tax) => (
-            <DataTable.Row key={tax.id}>
-              <DataTable.Cell style={styles.nameColumn}>{tax.name}</DataTable.Cell>
-              <DataTable.Cell numeric style={styles.rateColumn}>
-                {tax.rate}%
-              </DataTable.Cell>
+          {warehouses.map((warehouse) => (
+            <DataTable.Row key={warehouse.id}>
+              <DataTable.Cell style={styles.nameColumn}>{warehouse.name}</DataTable.Cell>
+              <DataTable.Cell style={styles.contactColumn}>{warehouse.phone || '-'}</DataTable.Cell>
+              <DataTable.Cell style={styles.contactColumn}>{warehouse.email || '-'}</DataTable.Cell>
+              <DataTable.Cell style={styles.addressColumn}>{warehouse.address}</DataTable.Cell>
               <DataTable.Cell style={styles.statusColumn}>
-                {tax.is_active ? 'Active' : 'Inactive'}
+                {warehouse.is_active ? 'Active' : 'Inactive'}
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
                   {canEdit ? (
-                    <Button compact mode="text" onPress={() => openEditModal(tax)}>
+                    <Button compact mode="text" onPress={() => openEditModal(warehouse)}>
                       Edit
                     </Button>
                   ) : null}
                   {canDelete ? (
-                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(tax)}>
+                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(warehouse)}>
                       Delete
                     </Button>
                   ) : null}
@@ -275,36 +286,55 @@ export default function TaxesScreen() {
         </View>
       ) : null}
 
-      {!loading && taxes.length === 0 ? (
+      {!loading && warehouses.length === 0 ? (
         <Text variant="bodyMedium" style={styles.empty}>
-          No taxes found.
+          No warehouses found.
         </Text>
       ) : null}
 
       <Portal>
-        <Modal visible={modalVisible} onDismiss={closeModal} contentContainerStyle={styles.modal}>
-          <Text variant="titleLarge">{editingTax ? 'Edit Tax' : 'Add Tax'}</Text>
+        <Modal
+          visible={modalVisible}
+          onDismiss={closeModal}
+          contentContainerStyle={styles.modal}
+        >
+          <Text variant="titleLarge">
+            {editingWarehouse ? 'Edit Warehouse' : 'Add Warehouse'}
+          </Text>
 
           <TextInput
             mode="outlined"
-            label="Tax name"
+            label="Warehouse name"
             value={form.name}
             onChangeText={(value) => updateForm('name', value)}
           />
           <TextInput
             mode="outlined"
-            label="Rate"
-            value={form.rate}
-            keyboardType="decimal-pad"
-            right={<TextInput.Affix text="%" />}
-            onChangeText={(value) => updateForm('rate', value)}
+            label="Phone"
+            value={form.phone}
+            onChangeText={(value) => updateForm('phone', value)}
+          />
+          <TextInput
+            mode="outlined"
+            label="Email"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={form.email}
+            onChangeText={(value) => updateForm('email', value)}
+          />
+          <TextInput
+            mode="outlined"
+            label="Address"
+            multiline
+            value={form.address}
+            onChangeText={(value) => updateForm('address', value)}
           />
 
           <View style={styles.switchRow}>
             <View>
               <Text variant="titleSmall">Active</Text>
               <Text variant="bodySmall" style={styles.muted}>
-                Show this tax as available.
+                Show this warehouse as available.
               </Text>
             </View>
             <Switch
@@ -317,7 +347,7 @@ export default function TaxesScreen() {
             <Button mode="outlined" onPress={closeModal} disabled={saving}>
               Cancel
             </Button>
-            <Button mode="contained" onPress={saveTax} loading={saving} disabled={saving}>
+            <Button mode="contained" onPress={saveWarehouse} loading={saving} disabled={saving}>
               Save
             </Button>
           </View>
@@ -351,7 +381,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   table: {
-    minWidth: 680,
+    minWidth: 960,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#ffffff',
@@ -359,8 +389,11 @@ const styles = StyleSheet.create({
   nameColumn: {
     flex: 1.4,
   },
-  rateColumn: {
-    flex: 0.9,
+  contactColumn: {
+    flex: 1.2,
+  },
+  addressColumn: {
+    flex: 1.8,
   },
   statusColumn: {
     flex: 0.8,

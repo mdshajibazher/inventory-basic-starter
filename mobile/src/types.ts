@@ -129,6 +129,42 @@ export type Currency = {
   exchange_rate: number | string;
 };
 
+export type Warehouse = {
+  id: number;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address: string;
+  is_active?: boolean | number | null;
+};
+
+export type CustomerGroup = {
+  id: number;
+  name: string;
+  percentage: number | string;
+};
+
+export type Customer = {
+  id: number;
+  customer_group_id: number;
+  user_id?: number | null;
+  name: string;
+  company_name?: string | null;
+  email?: string | null;
+  phone_number: string;
+  tax_no?: string | null;
+  address: string;
+  city: string;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  deposit?: number | string | null;
+  expense?: number | string | null;
+  is_active?: boolean | number | null;
+  customer_group?: CustomerGroup;
+  user?: Pick<User, 'id' | 'name' | 'email'> | null;
+};
+
 export type StockMovement = {
   id: number;
   type: 'in' | 'out';

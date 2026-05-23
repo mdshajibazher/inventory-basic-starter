@@ -195,8 +195,9 @@ export default function CurrenciesScreen() {
           </Button>
         ) : null}
       </View>
-
       <Searchbar
+        style={styles.searchbar}
+        inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
         placeholder="Search currencies, codes, exchange rates"
@@ -230,7 +231,7 @@ export default function CurrenciesScreen() {
                     </Button>
                   ) : null}
                   {canDelete ? (
-                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(currency)}>
+                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(currency)}>
                       Delete
                     </Button>
                   ) : null}
@@ -321,7 +322,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
+  },
+  searchbar: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: '#ffffff',
+  },
+  searchbarInput: {
+    minHeight: 0,
+    paddingVertical: 0,
   },
   table: {
     minWidth: 760,
@@ -353,12 +364,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   paginationText: {
-    color: '#344054',
+    color: '#333333',
   },
   empty: {
     paddingVertical: 24,
     textAlign: 'center',
-    color: '#667085',
+    color: '#666666',
   },
   modal: {
     margin: 18,

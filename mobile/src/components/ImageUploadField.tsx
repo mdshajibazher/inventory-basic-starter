@@ -77,7 +77,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: 8,
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#f2f2f2',
   },
   actions: {
     flexDirection: 'row',

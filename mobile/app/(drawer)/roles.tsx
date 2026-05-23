@@ -291,8 +291,9 @@ export default function RolesScreen() {
           </Button>
         ) : null}
       </View>
-
       <Searchbar
+        style={styles.searchbar}
+        inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
         placeholder="Search roles, description, status"
@@ -331,7 +332,7 @@ export default function RolesScreen() {
                     </>
                   ) : null}
                   {canDelete ? (
-                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(role)}>
+                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(role)}>
                       Delete
                     </Button>
                   ) : null}
@@ -463,7 +464,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
+  },
+  searchbar: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: '#ffffff',
+  },
+  searchbarInput: {
+    minHeight: 0,
+    paddingVertical: 0,
   },
   table: {
     minWidth: 860,
@@ -495,7 +506,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   paginationText: {
-    color: '#475467',
+    color: '#444444',
   },
   modal: {
     margin: 18,
@@ -514,7 +525,7 @@ const styles = StyleSheet.create({
   },
   permissionGroup: {
     borderTopWidth: 1,
-    borderTopColor: '#eaecf0',
+    borderTopColor: '#e5e5e5',
     paddingTop: 8,
   },
   groupTitle: {

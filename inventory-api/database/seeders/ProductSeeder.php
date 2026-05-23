@@ -1,7 +1,6 @@
 <?php
 
 namespace Database\Seeders;
-use App\Models\Product;
 use Illuminate\Database\Seeder;
 
 class ProductSeeder extends Seeder
@@ -53,6 +52,6 @@ class ProductSeeder extends Seeder
             array('id' => '73','name' => 'Combo Two Vat Exclusive','code' => '12066278','type' => 'combo','barcode_symbology' => 'C128','brand_id' => '3','category_id' => '2','unit_id' => '0','purchase_unit_id' => '0','sale_unit_id' => '0','cost' => '0','price' => '420','qty' => '0','alert_quantity' => NULL,'promotion' => NULL,'promotion_price' => NULL,'starting_date' => NULL,'last_date' => NULL,'tax_id' => NULL,'tax_method' => '1','image' => 'zummXD2dvAtI.png','file' => NULL,'is_variant' => NULL,'is_batch' => NULL,'is_diffPrice' => NULL,'featured' => NULL,'product_list' => '1,10','qty_list' => '1,1','price_list' => '390,30','product_details' => '','is_active' => '1','created_at' => '2022-04-30 06:50:58','updated_at' => '2022-04-30 06:50:58'),
             array('id' => '74','name' => 'Batch Product 1','code' => '30402390','type' => 'standard','barcode_symbology' => 'C128','brand_id' => '7','category_id' => '12','unit_id' => '1','purchase_unit_id' => '2','sale_unit_id' => '1','cost' => '100','price' => '150','qty' => '1200','alert_quantity' => NULL,'promotion' => NULL,'promotion_price' => NULL,'starting_date' => '2022-04-30','last_date' => NULL,'tax_id' => NULL,'tax_method' => '1','image' => 'zummXD2dvAtI.png','file' => NULL,'is_variant' => NULL,'is_batch' => '1','is_diffPrice' => NULL,'featured' => NULL,'product_list' => NULL,'qty_list' => NULL,'price_list' => NULL,'product_details' => '','is_active' => '1','created_at' => '2022-04-30 17:43:24','updated_at' => '2022-04-30 17:44:27')
         );
-        Product::insert($products);
+        \App\Product::insert($products);
     }
 }

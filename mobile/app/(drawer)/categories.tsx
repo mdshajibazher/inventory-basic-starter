@@ -223,8 +223,9 @@ export default function CategoriesScreen() {
           </Button>
         ) : null}
       </View>
-
       <Searchbar
+        style={styles.searchbar}
+        inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
         placeholder="Search categories, parent, status"
@@ -266,7 +267,7 @@ export default function CategoriesScreen() {
                     </Button>
                   ) : null}
                   {canDelete ? (
-                    <Button compact mode="text" textColor="#b42318" onPress={() => confirmDelete(category)}>
+                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(category)}>
                       Delete
                     </Button>
                   ) : null}
@@ -416,7 +417,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
+  },
+  searchbar: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: '#ffffff',
+  },
+  searchbarInput: {
+    minHeight: 0,
+    paddingVertical: 0,
   },
   table: {
     minWidth: 700,
@@ -434,7 +445,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 6,
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#f2f2f2',
   },
   parentColumn: {
     flex: 1.1,
@@ -457,12 +468,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   paginationText: {
-    color: '#344054',
+    color: '#333333',
   },
   empty: {
     paddingVertical: 24,
     textAlign: 'center',
-    color: '#667085',
+    color: '#666666',
   },
   modal: {
     margin: 18,

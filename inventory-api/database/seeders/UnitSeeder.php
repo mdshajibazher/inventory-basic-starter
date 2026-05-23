@@ -1,7 +1,6 @@
 <?php
 
 namespace Database\Seeders;
-use App\Models\Unit;
 use Illuminate\Database\Seeder;
 
 class UnitSeeder extends Seeder
@@ -13,7 +12,7 @@ class UnitSeeder extends Seeder
      */
     public function run()
     {
-        Unit::insert(array(
+        \App\Models\Unit::insert(array(
             array('id' => '1','unit_code' => 'pc','unit_name' => 'Piece','base_unit' => NULL,'operator' => '*','operation_value' => '1','is_active' => '1','created_at' => '2018-05-12 08:27:46','updated_at' => '2018-08-18 03:41:53'),
             array('id' => '2','unit_code' => 'dozen','unit_name' => 'dozen box','base_unit' => '1','operator' => '*','operation_value' => '12','is_active' => '1','created_at' => '2018-05-12 15:57:05','updated_at' => '2018-05-12 15:57:05'),
             array('id' => '3','unit_code' => 'cartoon','unit_name' => 'cartoon box','base_unit' => '1','operator' => '*','operation_value' => '24','is_active' => '1','created_at' => '2018-05-12 15:57:45','updated_at' => '2020-03-11 16:36:59'),

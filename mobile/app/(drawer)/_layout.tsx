@@ -34,6 +34,16 @@ export default function DrawerLayout() {
         <AppDrawerContent {...props} hasPermission={hasPermission} />
       )}
       screenOptions={({ navigation }) => ({
+        drawerActiveBackgroundColor: '#000000',
+        drawerActiveTintColor: '#ffffff',
+        drawerInactiveTintColor: '#000000',
+        drawerStyle: {
+          backgroundColor: '#ffffff',
+        },
+        headerStyle: {
+          backgroundColor: '#ffffff',
+        },
+        headerTintColor: '#000000',
         headerTitleAlign: 'center',
         headerShown: true,
         headerLeft: () => (
@@ -128,6 +138,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="warehouses"
+        options={{
+          title: 'Warehouses',
+          drawerLabel: 'Warehouses',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="warehouse" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('warehouses-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="products"
         options={{
           title: 'Products',
@@ -136,6 +157,17 @@ export default function DrawerLayout() {
             <MaterialCommunityIcons name="package-variant-closed" size={size} color={color} />
           ),
           drawerItemStyle: hasPermission('products-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="customers"
+        options={{
+          title: 'Customers',
+          drawerLabel: 'Customers',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="account-box-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('customers-index') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -182,7 +214,11 @@ function AppDrawerContent({
   hasPermission: (permission: string | string[]) => boolean;
 }) {
   const activeRoute = state.routeNames[state.index];
-  const settingsRouteNames = ['roles', 'brands', 'units', 'taxes', 'currencies', 'categories'];
+  const peopleRouteNames = ['customers', 'users'];
+  const settingsRouteNames = ['roles', 'brands', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
+  const [peopleExpanded, setPeopleExpanded] = useState(
+    peopleRouteNames.includes(activeRoute)
+  );
   const [settingsExpanded, setSettingsExpanded] = useState(
     settingsRouteNames.includes(activeRoute)
   );
@@ -209,14 +245,44 @@ function AppDrawerContent({
     item('units', 'Units', 'scale-balance', hasPermission('units-index')),
     item('taxes', 'Taxes', 'percent-outline', hasPermission('taxes-index')),
     item('currencies', 'Currencies', 'currency-usd', hasPermission('currencies-index')),
+    item('warehouses', 'Warehouses', 'warehouse', hasPermission('warehouses-index')),
     item('categories', 'Categories', 'shape-outline', hasPermission('categories-index')),
+  ].filter(Boolean);
+
+  const peopleItems = [
+    item('customers', 'Customers', 'account-box-outline', hasPermission('customers-index')),
+    item('users', 'Users', 'account-multiple-outline', hasPermission('users-index')),
   ].filter(Boolean);
 
   return (
     <DrawerContentScrollView>
       {item('dashboard', 'Dashboard', 'view-dashboard-outline')}
       {item('products', 'Products', 'package-variant-closed', hasPermission('products-index'))}
-      {item('users', 'Users', 'account-multiple-outline', hasPermission('users-index'))}
+
+      {peopleItems.length ? (
+        <View style={styles.drawerSection}>
+          <DrawerItem
+            label={({ color }) => (
+              <View style={styles.drawerGroupLabel}>
+                <Text style={[styles.drawerGroupLabelText, { color }]}>People</Text>
+                <MaterialCommunityIcons
+                  name={peopleExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color={color}
+                />
+              </View>
+            )}
+            focused={peopleRouteNames.includes(activeRoute)}
+            icon={({ color, size }) => (
+              <MaterialCommunityIcons name="account-group-outline" size={size} color={color} />
+            )}
+            onPress={() => setPeopleExpanded((current) => !current)}
+          />
+          {peopleExpanded ? (
+            <View style={styles.drawerSubItems}>{peopleItems}</View>
+          ) : null}
+        </View>
+      ) : null}
 
       {settingsItems.length ? (
         <View style={styles.drawerSection}>
@@ -261,7 +327,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 2,
     borderRadius: 1,
-    backgroundColor: '#1f2937',
+    backgroundColor: '#000000',
   },
   logoutButton: {
     marginRight: 8,
@@ -273,7 +339,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#eaecf0',
+    borderTopColor: '#e5e5e5',
   },
   drawerSubItems: {
     paddingLeft: 12,

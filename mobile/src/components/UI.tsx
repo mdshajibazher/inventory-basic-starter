@@ -14,7 +14,7 @@ export function Muted({ children }: PropsWithChildren) {
 }
 
 export function Input(props: TextInputProps) {
-  return <TextInput placeholderTextColor="#7b8190" style={styles.input} {...props} />;
+  return <TextInput placeholderTextColor="#666666" style={styles.input} {...props} />;
 }
 
 export function Button({
@@ -64,23 +64,23 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#121826',
+    color: '#000000',
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
     fontSize: 14,
   },
   input: {
     backgroundColor: '#ffffff',
-    borderColor: '#d9deea',
+    borderColor: '#000000',
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#121826',
+    color: '#000000',
   },
   button: {
-    backgroundColor: '#111827',
+    backgroundColor: '#000000',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -98,9 +98,9 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#111827',
+    color: '#000000',
   },
   statLabel: {
-    color: '#667085',
+    color: '#666666',
   },
 });

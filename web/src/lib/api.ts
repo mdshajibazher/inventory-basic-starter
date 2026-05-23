@@ -75,6 +75,32 @@ type CurrencyPayload = {
   exchange_rate: number;
 };
 
+type WarehousePayload = {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address: string;
+  is_active?: boolean;
+};
+
+export type CustomerPayload = {
+  customer_group_id: number;
+  name: string;
+  company_name?: string | null;
+  email?: string | null;
+  phone_number: string;
+  tax_no?: string | null;
+  address: string;
+  city: string;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  is_active?: boolean;
+  create_user?: boolean;
+  username?: string | null;
+  password?: string | null;
+};
+
 type RolePayload = {
   name: string;
   description?: string | null;
@@ -256,6 +282,17 @@ export const api = {
   createCurrency: (payload: CurrencyPayload) => request<{ data: unknown }>('/currencies', { method: 'POST', body: JSON.stringify(payload) }),
   updateCurrency: (id: number, payload: CurrencyPayload) => request<{ data: unknown }>(`/currencies/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteCurrency: (id: number) => request<{ message: string }>(`/currencies/${id}`, { method: 'DELETE' }),
+  warehouses: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(`/warehouses${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
+  createWarehouse: (payload: WarehousePayload) => request<{ data: unknown }>('/warehouses', { method: 'POST', body: JSON.stringify(payload) }),
+  updateWarehouse: (id: number, payload: WarehousePayload) => request<{ data: unknown }>(`/warehouses/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteWarehouse: (id: number) => request<{ message: string }>(`/warehouses/${id}`, { method: 'DELETE' }),
+  customers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(`/customers${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
+  customerOptions: () => request<{ data: unknown }>('/customers/options'),
+  createCustomer: (payload: CustomerPayload) => request<{ data: unknown }>('/customers', { method: 'POST', body: JSON.stringify(payload) }),
+  updateCustomer: (id: number, payload: CustomerPayload) => request<{ data: unknown }>(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteCustomer: (id: number) => request<{ message: string }>(`/customers/${id}`, { method: 'DELETE' }),
   productOptions: () => request<{ data: unknown }>('/products/options'),
   products: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/products${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),

@@ -18,7 +18,7 @@ export function Screen({
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#f6f7fb',
+    backgroundColor: '#ffffff',
   },
   content: {
     padding: 18,

@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CurrencyController;
+use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\RoleController;
@@ -11,6 +12,7 @@ use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\TaxController;
 use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\WarehouseController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -26,6 +28,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/roles/permissions', [RoleController::class, 'permissions'])->middleware('permission:users-index');
     Route::put('/roles/permissions/{permission}', [RoleController::class, 'updatePermission'])->middleware('permission:users-index');
     Route::apiResource('roles', RoleController::class)->middleware('permission:users-index');
+
+    Route::get('/customers/options', [CustomerController::class, 'options'])->middleware('permission:customers-index|customers-add|customers-edit');
+    Route::get('/customers', [CustomerController::class, 'index'])->middleware('permission:customers-index');
+    Route::post('/customers', [CustomerController::class, 'store'])->middleware('permission:customers-add');
+    Route::get('/customers/{customer}', [CustomerController::class, 'show'])->middleware('permission:customers-index');
+    Route::match(['put', 'patch'], '/customers/{customer}', [CustomerController::class, 'update'])->middleware('permission:customers-edit');
+    Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->middleware('permission:customers-delete');
 
     Route::get('/brands', [BrandController::class, 'index'])->middleware('permission:brands-index');
     Route::post('/brands', [BrandController::class, 'store'])->middleware('permission:brands-add');
@@ -44,6 +53,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/currencies/{currency}', [CurrencyController::class, 'show'])->middleware('permission:currencies-index');
     Route::match(['put', 'patch'], '/currencies/{currency}', [CurrencyController::class, 'update'])->middleware('permission:currencies-edit');
     Route::delete('/currencies/{currency}', [CurrencyController::class, 'destroy'])->middleware('permission:currencies-delete');
+
+    Route::get('/warehouses', [WarehouseController::class, 'index'])->middleware('permission:warehouses-index');
+    Route::post('/warehouses', [WarehouseController::class, 'store'])->middleware('permission:warehouses-add');
+    Route::get('/warehouses/{warehouse}', [WarehouseController::class, 'show'])->middleware('permission:warehouses-index');
+    Route::match(['put', 'patch'], '/warehouses/{warehouse}', [WarehouseController::class, 'update'])->middleware('permission:warehouses-edit');
+    Route::delete('/warehouses/{warehouse}', [WarehouseController::class, 'destroy'])->middleware('permission:warehouses-delete');
 
     Route::get('/taxes', [TaxController::class, 'index'])->middleware('permission:taxes-index');
     Route::post('/taxes', [TaxController::class, 'store'])->middleware('permission:taxes-add');

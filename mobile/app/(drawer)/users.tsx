@@ -346,8 +346,9 @@ export default function UsersScreen() {
           </Button>
         ) : null}
       </View>
-
       <Searchbar
+        style={styles.searchbar}
+        inputStyle={styles.searchbarInput}
         value={search}
         onChangeText={setSearch}
         placeholder="Search users, email, phone, roles, permissions"
@@ -573,7 +574,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   muted: {
-    color: '#667085',
+    color: '#666666',
+  },
+  searchbar: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: '#ffffff',
+  },
+  searchbarInput: {
+    minHeight: 0,
+    paddingVertical: 0,
   },
   table: {
     minWidth: 1280,
@@ -611,12 +622,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   paginationText: {
-    color: '#344054',
+    color: '#333333',
   },
   empty: {
     paddingVertical: 24,
     textAlign: 'center',
-    color: '#667085',
+    color: '#666666',
   },
   modal: {
     margin: 18,
@@ -636,7 +647,7 @@ const styles = StyleSheet.create({
   },
   permissionGroup: {
     borderTopWidth: 1,
-    borderTopColor: '#eaecf0',
+    borderTopColor: '#e5e5e5',
     paddingTop: 8,
   },
   groupTitle: {
