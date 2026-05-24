@@ -25,6 +25,10 @@ class DatabaseSeeder extends Seeder
             'brands-add',
             'brands-edit',
             'brands-delete',
+            'branches-index',
+            'branches-add',
+            'branches-edit',
+            'branches-delete',
             'categories-index',
             'categories-add',
             'categories-edit',
@@ -49,6 +53,10 @@ class DatabaseSeeder extends Seeder
             'customers-add',
             'customers-edit',
             'customers-delete',
+            'suppliers-index',
+            'suppliers-add',
+            'suppliers-edit',
+            'suppliers-delete',
         ];
 
         $userPermissions = [
@@ -136,6 +144,8 @@ class DatabaseSeeder extends Seeder
         $this->call(WarehouseSeeder::class);
         $this->call(UnitSeeder::class);
         $this->call(TaxSeeder::class);
+        $this->call(BillerSeeder::class);
+        $this->call(SupplierSeeder::class);
 
         // Product::query()->firstOrCreate(
         //     ['sku' => 'COKE-500'],

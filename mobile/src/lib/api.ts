@@ -51,6 +51,24 @@ type CategoryPayload = {
   is_active?: boolean;
 };
 
+type BranchPayload = {
+  name: string;
+  image?: UploadImage | null;
+  remove_image?: boolean;
+  company_name: string;
+  vat_number?: string | null;
+  email: string;
+  phone_number: string;
+  address: string;
+  city: string;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  is_active?: boolean;
+};
+
+type SupplierPayload = BranchPayload;
+
 type UnitPayload = {
   unit_code: string;
   unit_name: string;
@@ -184,6 +202,28 @@ function categoryFormData(payload: CategoryPayload) {
   appendNullableNumber(formData, 'parent_id', payload.parent_id);
   appendBoolean(formData, 'is_active', payload.is_active);
   return formData;
+}
+
+function branchFormData(payload: BranchPayload) {
+  const formData = new FormData();
+  formData.append('name', payload.name);
+  appendImage(formData, 'image', payload.image);
+  appendBoolean(formData, 'remove_image', payload.remove_image);
+  formData.append('company_name', payload.company_name);
+  appendNullableString(formData, 'vat_number', payload.vat_number);
+  formData.append('email', payload.email);
+  formData.append('phone_number', payload.phone_number);
+  formData.append('address', payload.address);
+  formData.append('city', payload.city);
+  appendNullableString(formData, 'state', payload.state);
+  appendNullableString(formData, 'postal_code', payload.postal_code);
+  appendNullableString(formData, 'country', payload.country);
+  appendBoolean(formData, 'is_active', payload.is_active);
+  return formData;
+}
+
+function supplierFormData(payload: SupplierPayload) {
+  return branchFormData(payload);
 }
 
 function appendNullableString(formData: FormData, key: string, value?: string | null) {
@@ -375,6 +415,58 @@ export const api = {
 
   deleteBrand: (id: number) =>
     request<{ message: string }>(`/brands/${id}`, {
+      method: 'DELETE',
+    }),
+
+  branches: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/branches${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createBranch: (payload: BranchPayload) =>
+    request<{ data: unknown }>('/branches', {
+      method: 'POST',
+      body: branchFormData(payload),
+    }),
+
+  updateBranch: (id: number, payload: BranchPayload) =>
+    request<{ data: unknown }>(`/branches/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = branchFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  deleteBranch: (id: number) =>
+    request<{ message: string }>(`/branches/${id}`, {
+      method: 'DELETE',
+    }),
+
+  suppliers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/suppliers${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createSupplier: (payload: SupplierPayload) =>
+    request<{ data: unknown }>('/suppliers', {
+      method: 'POST',
+      body: supplierFormData(payload),
+    }),
+
+  updateSupplier: (id: number, payload: SupplierPayload) =>
+    request<{ data: unknown }>(`/suppliers/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = supplierFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  deleteSupplier: (id: number) =>
+    request<{ message: string }>(`/suppliers/${id}`, {
       method: 'DELETE',
     }),
 

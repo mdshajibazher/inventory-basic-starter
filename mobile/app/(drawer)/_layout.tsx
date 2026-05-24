@@ -94,6 +94,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="branches"
+        options={{
+          title: 'Branches',
+          drawerLabel: 'Branches',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="source-branch" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('branches-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="categories"
         options={{
           title: 'Categories',
@@ -171,6 +182,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="suppliers"
+        options={{
+          title: 'Suppliers',
+          drawerLabel: 'Suppliers',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="truck-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('suppliers-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="users"
         options={{
           title: 'Users',
@@ -214,8 +236,8 @@ function AppDrawerContent({
   hasPermission: (permission: string | string[]) => boolean;
 }) {
   const activeRoute = state.routeNames[state.index];
-  const peopleRouteNames = ['customers', 'users'];
-  const settingsRouteNames = ['roles', 'brands', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
+  const peopleRouteNames = ['customers', 'suppliers', 'users'];
+  const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
   const [peopleExpanded, setPeopleExpanded] = useState(
     peopleRouteNames.includes(activeRoute)
   );
@@ -242,6 +264,7 @@ function AppDrawerContent({
   const settingsItems = [
     item('roles', 'Roles', 'account-key-outline', hasPermission('users-index')),
     item('brands', 'Brands', 'tag-multiple-outline', hasPermission('brands-index')),
+    item('branches', 'Branches', 'source-branch', hasPermission('branches-index')),
     item('units', 'Units', 'scale-balance', hasPermission('units-index')),
     item('taxes', 'Taxes', 'percent-outline', hasPermission('taxes-index')),
     item('currencies', 'Currencies', 'currency-usd', hasPermission('currencies-index')),
@@ -251,6 +274,7 @@ function AppDrawerContent({
 
   const peopleItems = [
     item('customers', 'Customers', 'account-box-outline', hasPermission('customers-index')),
+    item('suppliers', 'Suppliers', 'truck-outline', hasPermission('suppliers-index')),
     item('users', 'Users', 'account-multiple-outline', hasPermission('users-index')),
   ].filter(Boolean);
 

@@ -44,6 +44,38 @@ export type Brand = {
   is_active?: boolean | number | null;
 };
 
+export type Branch = {
+  id: number;
+  name: string;
+  image?: string | null;
+  company_name: string;
+  vat_number?: string | null;
+  email: string;
+  phone_number: string;
+  address: string;
+  city: string;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  is_active?: boolean | number | null;
+};
+
+export type Supplier = {
+  id: number;
+  name: string;
+  image?: string | null;
+  company_name: string;
+  vat_number?: string | null;
+  email: string;
+  phone_number: string;
+  address: string;
+  city: string;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  is_active?: boolean | number | null;
+};
+
 export type Unit = {
   id: number;
   unit_code: string;

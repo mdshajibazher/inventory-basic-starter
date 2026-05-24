@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { Brand, Category, Currency, PaginationMeta, Tax, Unit, Warehouse } from '@/lib/types';
+import type { Brand, Branch, Category, Currency, PaginationMeta, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Modal, Select, StatusBadge, Switch } from '@/components/ui';
@@ -12,10 +12,12 @@ import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/comp
 
 const perPage = 15;
 
-type Resource = 'brands' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses';
+type Resource = 'brands' | 'branches' | 'suppliers' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses';
 
 type ResourceMap = {
   brands: Brand;
+  branches: Branch;
+  suppliers: Supplier;
   categories: Category;
   units: Unit;
   taxes: Tax;
@@ -25,6 +27,8 @@ type ResourceMap = {
 
 const meta: Record<Resource, { title: string; search: string; permission: string }> = {
   brands: { title: 'Brands', search: 'Search brands, image, status', permission: 'brands' },
+  branches: { title: 'Branches', search: 'Search branches, company, contact, address, status', permission: 'branches' },
+  suppliers: { title: 'Suppliers', search: 'Search suppliers, company, contact, address, status', permission: 'suppliers' },
   categories: { title: 'Categories', search: 'Search categories, parent, status', permission: 'categories' },
   units: { title: 'Units', search: 'Search units, base, operator, status', permission: 'units' },
   taxes: { title: 'Taxes', search: 'Search taxes, rates, status', permission: 'taxes' },
@@ -185,6 +189,23 @@ function emptyForm(resource: Resource): FormState {
   switch (resource) {
     case 'brands':
       return { title: '', image: null, removeImage: false, isActive: true };
+    case 'branches':
+    case 'suppliers':
+      return {
+        name: '',
+        image: null,
+        removeImage: false,
+        companyName: '',
+        vatNumber: '',
+        email: '',
+        phoneNumber: '',
+        address: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: '',
+        isActive: true,
+      };
     case 'categories':
       return { name: '', image: null, removeImage: false, parentId: null, isActive: true };
     case 'units':
@@ -198,11 +219,30 @@ function emptyForm(resource: Resource): FormState {
   }
 }
 
-function toForm(resource: Resource, item: Brand | Category | Unit | Tax | Currency | Warehouse): FormState {
+function toForm(resource: Resource, item: Brand | Branch | Category | Unit | Tax | Currency | Warehouse): FormState {
   switch (resource) {
     case 'brands': {
       const brand = item as Brand;
       return { title: brand.title, image: null, removeImage: false, isActive: Boolean(brand.is_active) };
+    }
+    case 'branches':
+    case 'suppliers': {
+      const branch = item as Branch;
+      return {
+        name: branch.name,
+        image: null,
+        removeImage: false,
+        companyName: branch.company_name,
+        vatNumber: branch.vat_number ?? '',
+        email: branch.email,
+        phoneNumber: branch.phone_number,
+        address: branch.address,
+        city: branch.city,
+        state: branch.state ?? '',
+        postalCode: branch.postal_code ?? '',
+        country: branch.country ?? '',
+        isActive: Boolean(branch.is_active),
+      };
     }
     case 'categories': {
       const category = item as Category;
@@ -242,6 +282,15 @@ function toForm(resource: Resource, item: Brand | Category | Unit | Tax | Curren
 
 function validate(resource: Resource, form: FormState) {
   if (resource === 'brands' && !String(form.title).trim()) return { title: 'Missing title', description: 'Brand title is required.' };
+  if (resource === 'branches' || resource === 'suppliers') {
+    const label = resource === 'branches' ? 'Branch' : 'Supplier';
+    if (!String(form.name).trim()) return { title: 'Missing name', description: `${label} name is required.` };
+    if (!String(form.companyName).trim()) return { title: 'Missing company', description: 'Company name is required.' };
+    if (!String(form.email).trim()) return { title: 'Missing email', description: `${label} email is required.` };
+    if (!String(form.phoneNumber).trim()) return { title: 'Missing phone', description: 'Phone number is required.' };
+    if (!String(form.address).trim()) return { title: 'Missing address', description: `${label} address is required.` };
+    if (!String(form.city).trim()) return { title: 'Missing city', description: `${label} city is required.` };
+  }
   if (resource === 'categories' && !String(form.name).trim()) return { title: 'Missing name', description: 'Category name is required.' };
   if (resource === 'units') {
     if (!String(form.unitCode).trim() || !String(form.unitName).trim()) return { title: 'Missing fields', description: 'Unit code and unit name are required.' };
@@ -268,6 +317,10 @@ async function createResource(resource: Resource, form: FormState) {
   switch (resource) {
     case 'brands':
       return api.createBrand({ title: String(form.title).trim(), image: fileValue(form.image), remove_image: Boolean(form.removeImage), is_active: Boolean(form.isActive) });
+    case 'branches':
+      return api.createBranch(branchPayload(form));
+    case 'suppliers':
+      return api.createSupplier(branchPayload(form));
     case 'categories':
       return api.createCategory({ name: String(form.name).trim(), image: fileValue(form.image), remove_image: Boolean(form.removeImage), parent_id: numberOrNull(form.parentId), is_active: Boolean(form.isActive) });
     case 'units':
@@ -285,6 +338,10 @@ async function updateResource(resource: Resource, id: number, form: FormState) {
   switch (resource) {
     case 'brands':
       return api.updateBrand(id, { title: String(form.title).trim(), image: fileValue(form.image), remove_image: Boolean(form.removeImage), is_active: Boolean(form.isActive) });
+    case 'branches':
+      return api.updateBranch(id, branchPayload(form));
+    case 'suppliers':
+      return api.updateSupplier(id, branchPayload(form));
     case 'categories':
       return api.updateCategory(id, { name: String(form.name).trim(), image: fileValue(form.image), remove_image: Boolean(form.removeImage), parent_id: numberOrNull(form.parentId), is_active: Boolean(form.isActive) });
     case 'units':
@@ -302,6 +359,10 @@ async function deleteResource(resource: Resource, id: number) {
   switch (resource) {
     case 'brands':
       return api.deleteBrand(id);
+    case 'branches':
+      return api.deleteBranch(id);
+    case 'suppliers':
+      return api.deleteSupplier(id);
     case 'categories':
       return api.deleteCategory(id);
     case 'units':
@@ -337,6 +398,24 @@ function warehousePayload(form: FormState) {
   };
 }
 
+function branchPayload(form: FormState) {
+  return {
+    name: String(form.name).trim(),
+    image: fileValue(form.image),
+    remove_image: Boolean(form.removeImage),
+    company_name: String(form.companyName).trim(),
+    vat_number: nullableText(form.vatNumber),
+    email: String(form.email).trim(),
+    phone_number: String(form.phoneNumber).trim(),
+    address: String(form.address).trim(),
+    city: String(form.city).trim(),
+    state: nullableText(form.state),
+    postal_code: nullableText(form.postalCode),
+    country: nullableText(form.country),
+    is_active: Boolean(form.isActive),
+  };
+}
+
 function renderFields(
   resource: Resource,
   form: FormState,
@@ -358,6 +437,27 @@ function renderFields(
       <>
         <Field label="Name"><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
         <Field label="Parent category"><Select value={form.parentId ? String(form.parentId) : 'none'} onValueChange={(value) => setValue('parentId', value === 'none' ? null : Number(value))} options={categoryOptions} /></Field>
+        <ImageFields form={form} setValue={setValue} />
+        <ActiveField form={form} setValue={setValue} />
+      </>
+    );
+  }
+  if (resource === 'branches' || resource === 'suppliers') {
+    const label = resource === 'branches' ? 'Branch' : 'Supplier';
+    return (
+      <>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={`${label} name`}><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
+          <Field label="Company name"><Input value={String(form.companyName)} onChange={(event) => setValue('companyName', event.target.value)} /></Field>
+          <Field label="VAT number"><Input value={String(form.vatNumber)} onChange={(event) => setValue('vatNumber', event.target.value)} /></Field>
+          <Field label="Email"><Input type="email" value={String(form.email)} onChange={(event) => setValue('email', event.target.value)} /></Field>
+          <Field label="Phone number"><Input value={String(form.phoneNumber)} onChange={(event) => setValue('phoneNumber', event.target.value)} /></Field>
+          <Field label="City"><Input value={String(form.city)} onChange={(event) => setValue('city', event.target.value)} /></Field>
+          <Field label="Address"><Input value={String(form.address)} onChange={(event) => setValue('address', event.target.value)} /></Field>
+          <Field label="State"><Input value={String(form.state)} onChange={(event) => setValue('state', event.target.value)} /></Field>
+          <Field label="Postal code"><Input value={String(form.postalCode)} onChange={(event) => setValue('postalCode', event.target.value)} /></Field>
+          <Field label="Country"><Input value={String(form.country)} onChange={(event) => setValue('country', event.target.value)} /></Field>
+        </div>
         <ImageFields form={form} setValue={setValue} />
         <ActiveField form={form} setValue={setValue} />
       </>
@@ -432,7 +532,7 @@ function ActiveField({ form, setValue }: { form: FormState; setValue: (key: stri
   );
 }
 
-function renderTable<T extends Brand | Category | Unit | Tax | Currency | Warehouse>(
+function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency | Warehouse>(
   resource: Resource,
   items: T[],
   actions: { canEdit: boolean; canDelete: boolean; openEdit: (item: T) => void; remove: (item: T) => void; saving: boolean }
@@ -446,6 +546,10 @@ function renderTable<T extends Brand | Category | Unit | Tax | Currency | Wareho
 
   if (resource === 'brands') {
     return <Table headers={['Brand', 'Image', 'Status', 'Action']}>{(items as Brand[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.title}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+  }
+  if (resource === 'branches' || resource === 'suppliers') {
+    const firstHeader = resource === 'branches' ? 'Branch' : 'Supplier';
+    return <Table headers={[firstHeader, 'Image', 'Company', 'Email', 'Phone', 'City', 'Status', 'Action']}>{(items as Array<Branch | Supplier>).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3">{item.company_name}</td><td className="px-4 py-3">{item.email}</td><td className="px-4 py-3">{item.phone_number}</td><td className="px-4 py-3">{item.city}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
   if (resource === 'categories') {
     return <Table headers={['Category', 'Image', 'Parent', 'Status', 'Action']}>{(items as Category[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3">{item.parent_category_name ?? item.parent?.name ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
@@ -492,8 +596,10 @@ function singular(title: string) {
   return title.endsWith('ies') ? `${title.slice(0, -3)}y` : title.replace(/s$/, '');
 }
 
-function itemLabel(resource: Resource, item: Brand | Category | Unit | Tax | Currency | Warehouse) {
+function itemLabel(resource: Resource, item: Brand | Branch | Supplier | Category | Unit | Tax | Currency | Warehouse) {
   if (resource === 'brands') return (item as Brand).title;
+  if (resource === 'branches') return (item as Branch).name;
+  if (resource === 'suppliers') return (item as Supplier).name;
   if (resource === 'units') return (item as Unit).unit_name;
   if (resource === 'currencies') return (item as Currency).code;
   if (resource === 'warehouses') return (item as Warehouse).name;

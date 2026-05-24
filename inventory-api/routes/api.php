@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandController;
+use App\Http\Controllers\Api\BranchController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\CustomerController;
@@ -9,6 +10,7 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\StockController;
+use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TaxController;
 use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\UserController;
@@ -36,11 +38,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['put', 'patch'], '/customers/{customer}', [CustomerController::class, 'update'])->middleware('permission:customers-edit');
     Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->middleware('permission:customers-delete');
 
+    Route::get('/suppliers', [SupplierController::class, 'index'])->middleware('permission:suppliers-index');
+    Route::post('/suppliers', [SupplierController::class, 'store'])->middleware('permission:suppliers-add');
+    Route::get('/suppliers/{supplier}', [SupplierController::class, 'show'])->middleware('permission:suppliers-index');
+    Route::match(['put', 'patch'], '/suppliers/{supplier}', [SupplierController::class, 'update'])->middleware('permission:suppliers-edit');
+    Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy'])->middleware('permission:suppliers-delete');
+
     Route::get('/brands', [BrandController::class, 'index'])->middleware('permission:brands-index');
     Route::post('/brands', [BrandController::class, 'store'])->middleware('permission:brands-add');
     Route::get('/brands/{brand}', [BrandController::class, 'show'])->middleware('permission:brands-index');
     Route::match(['put', 'patch'], '/brands/{brand}', [BrandController::class, 'update'])->middleware('permission:brands-edit');
     Route::delete('/brands/{brand}', [BrandController::class, 'destroy'])->middleware('permission:brands-delete');
+
+    Route::get('/branches', [BranchController::class, 'index'])->middleware('permission:branches-index');
+    Route::post('/branches', [BranchController::class, 'store'])->middleware('permission:branches-add');
+    Route::get('/branches/{branch}', [BranchController::class, 'show'])->middleware('permission:branches-index');
+    Route::match(['put', 'patch'], '/branches/{branch}', [BranchController::class, 'update'])->middleware('permission:branches-edit');
+    Route::delete('/branches/{branch}', [BranchController::class, 'destroy'])->middleware('permission:branches-delete');
 
     Route::get('/categories', [CategoryController::class, 'index'])->middleware('permission:categories-index');
     Route::post('/categories', [CategoryController::class, 'store'])->middleware('permission:categories-add');

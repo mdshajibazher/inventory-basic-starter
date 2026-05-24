@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Boxes,
+  Building2,
   ChevronRight,
   CircleDollarSign,
   LayoutDashboard,
@@ -38,11 +39,13 @@ const navItems: NavItem[] = [
 
 const peopleItems: NavItem[] = [
   { href: '/customers', label: 'Customers', icon: Users, permission: 'customers-index' },
+  { href: '/suppliers', label: 'Suppliers', icon: Building2, permission: 'suppliers-index' },
   { href: '/users', label: 'Users', icon: Users, permission: 'users-index' },
 ];
 
 const settingsItems: NavItem[] = [
   { href: '/brands', label: 'Brands', icon: Tags, permission: 'brands-index' },
+  { href: '/branches', label: 'Branches', icon: Building2, permission: 'branches-index' },
   { href: '/categories', label: 'Categories', icon: ChevronRight, permission: 'categories-index' },
   { href: '/units', label: 'Units', icon: Ruler, permission: 'units-index' },
   { href: '/taxes', label: 'Taxes', icon: Percent, permission: 'taxes-index' },
