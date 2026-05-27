@@ -97,6 +97,16 @@ class Product extends Model
         return $this->belongsTo(Tax::class);
     }
 
+    public function variants(): HasMany
+    {
+        return $this->hasMany(ProductVariant::class)->orderBy('position');
+    }
+
+    public function warehousePrices(): HasMany
+    {
+        return $this->hasMany(ProductWarehouse::class)->whereNull('variant_id')->whereNull('product_batch_id')->orderBy('warehouse_id');
+    }
+
     public function stockMovements(): HasMany
     {
         return $this->hasMany(StockMovement::class);

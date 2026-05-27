@@ -139,12 +139,30 @@ export type Product = {
   is_batch?: boolean | number | null;
   is_diffPrice?: boolean | number | null;
   is_active?: boolean | number | null;
+  variants?: ProductVariant[];
+  warehouse_prices?: ProductWarehousePrice[];
   brand?: Brand;
   category?: Category;
   unit?: Unit;
   purchase_unit?: Unit;
   sale_unit?: Unit;
   tax?: Tax;
+};
+
+export type ProductWarehousePrice = {
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  price?: number | string | null;
+};
+
+export type ProductVariant = {
+  id: number;
+  variant_id: number;
+  name: string;
+  position: number;
+  item_code: string;
+  additional_price: number | string | null;
+  qty: number;
 };
 
 export type Tax = {
@@ -168,6 +186,12 @@ export type Warehouse = {
   email?: string | null;
   address: string;
   is_active?: boolean | number | null;
+};
+
+export type PurchaseStatus = {
+  id: number;
+  value: string;
+  label: string;
 };
 
 export type CustomerGroup = {

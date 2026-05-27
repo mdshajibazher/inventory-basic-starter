@@ -154,11 +154,96 @@ export type ProductPayload = {
   starting_date?: string | null;
   last_date?: string | null;
   is_variant?: boolean;
+  variants?: ProductVariantPayload[];
   is_batch?: boolean;
   is_diffPrice?: boolean;
+  warehouse_prices?: ProductWarehousePricePayload[];
   is_active?: boolean;
   image?: UploadImage | null;
   remove_image?: boolean;
+};
+
+export type ProductWarehousePricePayload = {
+  warehouse_id: number;
+  price?: number | null;
+};
+
+export type ProductVariantPayload = {
+  id?: number | null;
+  variant_id?: number | null;
+  name: string;
+  item_code: string;
+  additional_price: number;
+};
+
+export type SalesInvoiceLinePayload = {
+  product_id: number;
+  product_code?: string | null;
+  product_batch_id?: number | null;
+  qty: number;
+  sale_unit?: number | string | null;
+  net_unit_price: number;
+  discount: number;
+  tax_rate?: number | null;
+  tax: number;
+  subtotal: number;
+};
+
+export type SalesInvoicePayload = {
+  reference_no: string;
+  customer_id: number;
+  warehouse_id: number;
+  biller_id: number;
+  sale_status: number;
+  payment_status: number;
+  lines: SalesInvoiceLinePayload[];
+  order_tax_rate?: number;
+  order_discount?: number;
+  coupon_id?: number | null;
+  coupon_discount?: number;
+  coupon_active?: boolean;
+  shipping_cost?: number;
+  paid_by_id?: number | null;
+  paying_amount?: number;
+  paid_amount?: number;
+  payment_note?: string | null;
+  sale_note?: string | null;
+  staff_note?: string | null;
+  document?: UploadImage | null;
+};
+
+export type PurchaseInvoiceLinePayload = {
+  product_id: number;
+  product_code?: string | null;
+  qty: number;
+  received: number;
+  batch_no?: string | null;
+  expired_date?: string | null;
+  purchase_unit?: number | string | null;
+  net_unit_cost: number;
+  discount: number;
+  tax_rate: number;
+  tax: number;
+  subtotal: number;
+};
+
+export type PurchaseInvoicePayload = {
+  reference_no: string;
+  supplier_id: number;
+  warehouse_id: number;
+  status: number;
+  purchase_status_id?: number;
+  payment_status: number;
+  lines: PurchaseInvoiceLinePayload[];
+  order_tax_rate?: number;
+  order_discount?: number;
+  shipping_cost?: number;
+  paid_by_id?: number | null;
+  paying_amount?: number;
+  paid_amount?: number;
+  payment_note?: string | null;
+  note?: string | null;
+  document?: UploadImage | null;
 };
 
 function isFormData(body: BodyInit | null | undefined): body is FormData {
@@ -258,11 +343,106 @@ function productFormData(payload: ProductPayload) {
   appendNullableString(formData, 'starting_date', payload.starting_date);
   appendNullableString(formData, 'last_date', payload.last_date);
   appendBoolean(formData, 'is_variant', payload.is_variant);
+  payload.variants?.forEach((variant, index) => {
+    appendNullableNumber(formData, `product_variant_id[${index}]`, variant.id);
+    appendNullableNumber(formData, `variant_id[${index}]`, variant.variant_id);
+    formData.append(`variant_name[${index}]`, variant.name);
+    formData.append(`item_code[${index}]`, variant.item_code);
+    formData.append(`additional_price[${index}]`, String(variant.additional_price));
+  });
   appendBoolean(formData, 'is_batch', payload.is_batch);
   appendBoolean(formData, 'is_diffPrice', payload.is_diffPrice);
+  payload.warehouse_prices?.forEach((warehousePrice, index) => {
+    formData.append(`warehouse_id[${index}]`, String(warehousePrice.warehouse_id));
+    appendNullableNumber(formData, `diff_price[${index}]`, warehousePrice.price);
+  });
   appendBoolean(formData, 'is_active', payload.is_active);
   appendBoolean(formData, 'remove_image', payload.remove_image);
   appendImage(formData, 'image', payload.image);
+  return formData;
+}
+
+function appendNumberArray(formData: FormData, key: string, values: number[]) {
+  values.forEach((value, index) => {
+    formData.append(`${key}[${index}]`, String(value));
+  });
+}
+
+function appendNullableNumberArray(formData: FormData, key: string, values: (number | null | undefined)[]) {
+  values.forEach((value, index) => {
+    formData.append(`${key}[${index}]`, value === null || value === undefined ? '' : String(value));
+  });
+}
+
+function appendNullableStringArray(formData: FormData, key: string, values: (string | number | null | undefined)[]) {
+  values.forEach((value, index) => {
+    formData.append(`${key}[${index}]`, value === null || value === undefined ? '' : String(value));
+  });
+}
+
+function salesInvoiceFormData(payload: SalesInvoicePayload) {
+  const formData = new FormData();
+  formData.append('reference_no', payload.reference_no);
+  formData.append('customer_id', String(payload.customer_id));
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  formData.append('biller_id', String(payload.biller_id));
+  formData.append('sale_status', String(payload.sale_status));
+  formData.append('payment_status', String(payload.payment_status));
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  appendNullableStringArray(formData, 'sale_unit', payload.lines.map((line) => line.sale_unit));
+  appendNumberArray(formData, 'net_unit_price', payload.lines.map((line) => line.net_unit_price));
+  appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
+  appendNullableNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
+  appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
+  appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);
+  appendNullableNumber(formData, 'order_discount', payload.order_discount ?? 0);
+  appendNullableNumber(formData, 'coupon_id', payload.coupon_id);
+  appendNullableNumber(formData, 'coupon_discount', payload.coupon_discount ?? 0);
+  appendBoolean(formData, 'coupon_active', payload.coupon_active ?? false);
+  appendNullableNumber(formData, 'shipping_cost', payload.shipping_cost ?? 0);
+  appendNullableNumber(formData, 'paid_by_id', payload.paid_by_id);
+  appendNullableNumber(formData, 'paying_amount', payload.paying_amount ?? payload.paid_amount ?? 0);
+  appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
+  appendNullableString(formData, 'payment_note', payload.payment_note);
+  appendNullableString(formData, 'sale_note', payload.sale_note);
+  appendNullableString(formData, 'staff_note', payload.staff_note);
+  appendImage(formData, 'document', payload.document);
+  return formData;
+}
+
+function purchaseInvoiceFormData(payload: PurchaseInvoicePayload) {
+  const formData = new FormData();
+  formData.append('reference_no', payload.reference_no);
+  formData.append('supplier_id', String(payload.supplier_id));
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  formData.append('status', String(payload.status));
+  formData.append('purchase_status_id', String(payload.purchase_status_id ?? payload.status));
+  formData.append('payment_status', String(payload.payment_status));
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  appendNumberArray(formData, 'received', payload.lines.map((line) => line.received));
+  appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
+  appendNullableStringArray(formData, 'expired_date', payload.lines.map((line) => line.expired_date));
+  appendNullableStringArray(formData, 'purchase_unit', payload.lines.map((line) => line.purchase_unit));
+  appendNumberArray(formData, 'net_unit_cost', payload.lines.map((line) => line.net_unit_cost));
+  appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
+  appendNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
+  appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
+  appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);
+  appendNullableNumber(formData, 'order_discount', payload.order_discount ?? 0);
+  appendNullableNumber(formData, 'shipping_cost', payload.shipping_cost ?? 0);
+  appendNullableNumber(formData, 'paid_by_id', payload.paid_by_id);
+  appendNullableNumber(formData, 'paying_amount', payload.paying_amount ?? payload.paid_amount ?? 0);
+  appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
+  appendNullableString(formData, 'payment_note', payload.payment_note);
+  appendNullableString(formData, 'note', payload.note);
+  appendImage(formData, 'document', payload.document);
   return formData;
 }
 
@@ -392,9 +572,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  brands: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  brands: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/brands${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/brands${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
     ),
 
   createBrand: (payload: BrandPayload) =>
@@ -418,9 +598,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  branches: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  branches: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/branches${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/branches${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
     ),
 
   createBranch: (payload: BranchPayload) =>
@@ -444,9 +624,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  suppliers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  suppliers: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/suppliers${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/suppliers${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
     ),
 
   createSupplier: (payload: SupplierPayload) =>
@@ -470,9 +650,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  categories: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  categories: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/categories${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/categories${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
     ),
 
   createCategory: (payload: CategoryPayload) =>
@@ -562,9 +742,9 @@ export const api = {
       method: 'DELETE',
     }),
 
-  warehouses: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  warehouses: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/warehouses${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/warehouses${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
     ),
 
   createWarehouse: (payload: WarehousePayload) =>
@@ -635,6 +815,54 @@ export const api = {
     request<{ message: string }>(`/products/${id}`, {
       method: 'DELETE',
     }),
+
+  salesInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  salesInvoice: (id: number) => request<{ data: unknown }>(`/sales-invoices/${id}`),
+
+  createSalesInvoice: (payload: SalesInvoicePayload) =>
+    request<{ data: unknown; message: string }>('/sales-invoices', {
+      method: 'POST',
+      body: salesInvoiceFormData(payload),
+    }),
+
+  updateSalesInvoice: (id: number, payload: SalesInvoicePayload) =>
+    request<{ data: unknown; message: string }>(`/sales-invoices/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = salesInvoiceFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
+
+  createPurchaseInvoice: (payload: PurchaseInvoicePayload) =>
+    request<{ data: unknown; message: string }>('/purchase-invoices', {
+      method: 'POST',
+      body: purchaseInvoiceFormData(payload),
+    }),
+
+  updatePurchaseInvoice: (id: number, payload: PurchaseInvoicePayload) =>
+    request<{ data: unknown; message: string }>(`/purchase-invoices/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = purchaseInvoiceFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  purchaseStatuses: () => request<{ data: unknown[] }>('/purchase-statuses'),
 
   stockIn: (payload: { product_id: number; quantity: number; note?: string }) =>
     request<{ data: unknown }>('/stock/in', {

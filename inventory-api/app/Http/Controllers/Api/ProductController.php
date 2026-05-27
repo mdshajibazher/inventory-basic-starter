@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
-use App\Models\Brand;
-use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductWarehouse;
+use App\Models\ProductVariant;
 use App\Models\Tax;
 use App\Models\Unit;
+use App\Models\Variant;
+use App\Models\Warehouse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -19,6 +22,9 @@ class ProductController extends Controller
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
 
+        logger([
+            'request' => $request->all()
+        ]);
         return ProductResource::collection(Product::query()
             ->with([
                 'brand:id,title',
@@ -27,18 +33,21 @@ class ProductController extends Controller
                 'purchaseUnit:id,unit_code,unit_name',
                 'saleUnit:id,unit_code,unit_name',
                 'tax:id,name,rate',
+                'variants.variant:id,name',
+                'warehousePrices.warehouse:id,name',
             ])
             ->where('is_active', true)
             ->when($request->filled('search'), function ($query) use ($request) {
                 $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
+                $likeOperator = $query->getConnection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
 
                 foreach ($terms as $term) {
-                    $query->where(function ($subQuery) use ($term) {
-                        $subQuery->where('name', 'like', "%{$term}%")
-                            ->orWhere('code', 'like', "%{$term}%")
-                            ->orWhere('type', 'like', "%{$term}%")
-                            ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', 'like', "%{$term}%"))
-                            ->orWhereHas('brand', fn ($brandQuery) => $brandQuery->where('title', 'like', "%{$term}%"));
+                    $query->where(function ($subQuery) use ($term, $likeOperator) {
+                        $subQuery->where('name', $likeOperator, "%{$term}%")
+                            ->orWhere('code', $likeOperator, "%{$term}%")
+                            ->orWhere('type', $likeOperator, "%{$term}%")
+                            ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', $likeOperator, "%{$term}%"))
+                            ->orWhereHas('brand', fn ($brandQuery) => $brandQuery->where('title', $likeOperator, "%{$term}%"));
                     });
                 }
             })
@@ -61,8 +70,6 @@ class ProductController extends Controller
                     ['id' => 1, 'name' => 'Exclusive'],
                     ['id' => 2, 'name' => 'Inclusive'],
                 ],
-                'brands' => Brand::query()->where('is_active', true)->orderBy('title')->get(['id', 'title']),
-                'categories' => Category::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
                 'units' => Unit::query()->where('is_active', true)->orderBy('unit_name')->get([
                     'id',
                     'unit_code',
@@ -72,6 +79,7 @@ class ProductController extends Controller
                     'operation_value',
                 ]),
                 'taxes' => Tax::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'rate']),
+                'warehouses' => Warehouse::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
             ],
         ]);
     }
@@ -86,7 +94,13 @@ class ProductController extends Controller
             $data['image'] = 'zummXD2dvAtI.png';
         }
 
-        $product = Product::create($data);
+        $product = DB::transaction(function () use ($data, $request) {
+            $product = Product::create($data);
+            $this->syncVariants($product, $request);
+            $this->syncWarehousePrices($product, $request);
+
+            return $product;
+        });
 
         return response()->json([
             'message' => 'Product created successfully.',
@@ -117,7 +131,11 @@ class ProductController extends Controller
 
         unset($data['remove_image']);
 
-        $product->update($data);
+        DB::transaction(function () use ($product, $data, $request) {
+            $product->update($data);
+            $this->syncVariants($product, $request);
+            $this->syncWarehousePrices($product, $request);
+        });
 
         return response()->json([
             'message' => 'Product updated successfully.',
@@ -169,8 +187,22 @@ class ProductController extends Controller
             'qty_list' => ['nullable', 'string', 'max:255'],
             'price_list' => ['nullable', 'string', 'max:255'],
             'is_variant' => ['nullable', 'boolean'],
+            'variant_name' => [Rule::requiredIf($request->boolean('is_variant')), 'array', 'min:1'],
+            'variant_name.*' => ['required_with:variant_name', 'string', 'max:255'],
+            'item_code' => [Rule::requiredIf($request->boolean('is_variant')), 'array', 'min:1'],
+            'item_code.*' => ['required_with:item_code', 'string', 'max:255'],
+            'additional_price' => ['nullable', 'array'],
+            'additional_price.*' => ['nullable', 'numeric', 'min:0'],
+            'variant_id' => ['nullable', 'array'],
+            'variant_id.*' => ['nullable', 'integer', 'exists:variants,id'],
+            'product_variant_id' => ['nullable', 'array'],
+            'product_variant_id.*' => ['nullable', 'integer', 'exists:product_variants,id'],
             'is_batch' => ['nullable', 'boolean'],
             'is_diffPrice' => ['nullable', 'boolean'],
+            'warehouse_id' => ['nullable', 'array'],
+            'warehouse_id.*' => ['required_with:warehouse_id', 'integer', 'exists:warehouses,id'],
+            'diff_price' => ['nullable', 'array'],
+            'diff_price.*' => ['nullable', 'numeric', 'min:0'],
             'is_active' => ['nullable', 'boolean'],
         ]);
 
@@ -193,7 +225,15 @@ class ProductController extends Controller
             $data['sale_unit_id'] = 0;
         }
 
-        return $data;
+        return collect($data)->except([
+            'variant_name',
+            'item_code',
+            'additional_price',
+            'variant_id',
+            'product_variant_id',
+            'warehouse_id',
+            'diff_price',
+        ])->all();
     }
 
     private function relations(): array
@@ -205,7 +245,92 @@ class ProductController extends Controller
             'purchaseUnit:id,unit_code,unit_name',
             'saleUnit:id,unit_code,unit_name',
             'tax:id,name,rate',
+            'variants.variant:id,name',
+            'warehousePrices.warehouse:id,name',
         ];
+    }
+
+    private function syncVariants(Product $product, Request $request): void
+    {
+        if (! $request->boolean('is_variant')) {
+            $product->variants()->delete();
+            return;
+        }
+
+        $variantNames = $request->input('variant_name', []);
+        $itemCodes = $request->input('item_code', []);
+        $additionalPrices = $request->input('additional_price', []);
+        $variantIds = $request->input('variant_id', []);
+        $productVariantIds = $request->input('product_variant_id', []);
+        $keptProductVariantIds = [];
+
+        foreach ($variantNames as $index => $name) {
+            $name = trim((string) $name);
+            $itemCode = trim((string) ($itemCodes[$index] ?? ''));
+
+            if ($name === '' || $itemCode === '') {
+                continue;
+            }
+
+            $variant = ! empty($variantIds[$index])
+                ? Variant::find($variantIds[$index])
+                : Variant::firstOrCreate(['name' => $name]);
+
+            $variant->update(['name' => $name]);
+
+            $productVariant = ! empty($productVariantIds[$index])
+                ? ProductVariant::where('product_id', $product->id)->find($productVariantIds[$index])
+                : null;
+
+            if (! $productVariant) {
+                $productVariant = new ProductVariant([
+                    'product_id' => $product->id,
+                    'qty' => 0,
+                ]);
+            }
+
+            $productVariant->fill([
+                'variant_id' => $variant->id,
+                'position' => $index + 1,
+                'item_code' => $itemCode,
+                'additional_price' => $additionalPrices[$index] ?? 0,
+            ])->save();
+
+            $keptProductVariantIds[] = $productVariant->id;
+        }
+
+        $product->variants()
+            ->when($keptProductVariantIds, fn ($query) => $query->whereNotIn('id', $keptProductVariantIds))
+            ->delete();
+    }
+
+    private function syncWarehousePrices(Product $product, Request $request): void
+    {
+        if (! $request->boolean('is_diffPrice')) {
+            $product->warehousePrices()->update(['price' => null]);
+            return;
+        }
+
+        $warehouseIds = $request->input('warehouse_id', []);
+        $diffPrices = $request->input('diff_price', []);
+
+        foreach ($warehouseIds as $index => $warehouseId) {
+            $price = $diffPrices[$index] ?? null;
+            $price = $price === '' ? null : $price;
+
+            ProductWarehouse::updateOrCreate(
+                [
+                    'product_id' => $product->id,
+                    'warehouse_id' => $warehouseId,
+                    'variant_id' => null,
+                    'product_batch_id' => null,
+                ],
+                [
+                    'qty' => 0,
+                    'price' => $price,
+                ]
+            );
+        }
     }
 
     private function deleteStoredImage(?string $image): void
