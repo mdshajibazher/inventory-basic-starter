@@ -171,6 +171,48 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="sales-invoices"
+        options={{
+          title: 'Sales Invoice',
+          drawerLabel: 'Sales Invoice',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="receipt-text-plus-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('sales-add') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      {['sales-invoices-create', 'sales-invoices-detail', 'sales-invoices-edit'].map((name) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          options={{
+            title: 'Sales Invoice',
+            drawerItemStyle: styles.hiddenDrawerItem,
+          }}
+        />
+      ))}
+      <Drawer.Screen
+        name="purchase-invoices"
+        options={{
+          title: 'Purchase Invoice',
+          drawerLabel: 'Purchase Invoice',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="receipt-text-plus-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('purchases-add') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      {['purchase-invoices-create', 'purchase-invoices-detail', 'purchase-invoices-edit'].map((name) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          options={{
+            title: 'Purchase Invoice',
+            drawerItemStyle: styles.hiddenDrawerItem,
+          }}
+        />
+      ))}
+      <Drawer.Screen
         name="customers"
         options={{
           title: 'Customers',
@@ -237,6 +279,7 @@ function AppDrawerContent({
 }) {
   const activeRoute = state.routeNames[state.index];
   const peopleRouteNames = ['customers', 'suppliers', 'users'];
+  const salesRouteNames = ['sales-invoices', 'purchase-invoices'];
   const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
   const [peopleExpanded, setPeopleExpanded] = useState(
     peopleRouteNames.includes(activeRoute)
@@ -278,10 +321,29 @@ function AppDrawerContent({
     item('users', 'Users', 'account-multiple-outline', hasPermission('users-index')),
   ].filter(Boolean);
 
+  const salesItems = [
+    item('sales-invoices', 'Sales Invoice', 'receipt-text-plus-outline', hasPermission('sales-add')),
+    item('purchase-invoices', 'Purchase Invoice', 'receipt-text-plus-outline', hasPermission('purchases-add')),
+  ].filter(Boolean);
+
   return (
     <DrawerContentScrollView>
       {item('dashboard', 'Dashboard', 'view-dashboard-outline')}
       {item('products', 'Products', 'package-variant-closed', hasPermission('products-index'))}
+
+      {salesItems.length ? (
+        <View style={styles.drawerSection}>
+          <DrawerItem
+            label="Invoices"
+            focused={salesRouteNames.includes(activeRoute)}
+            icon={({ color, size }) => (
+              <MaterialCommunityIcons name="cart-outline" size={size} color={color} />
+            )}
+            onPress={() => navigation.navigate('sales-invoices', { refreshKey: Date.now() })}
+          />
+          <View style={styles.drawerSubItems}>{salesItems}</View>
+        </View>
+      ) : null}
 
       {peopleItems.length ? (
         <View style={styles.drawerSection}>

@@ -17,6 +17,7 @@ class BranchController extends Controller
 
         return BranchResource::collection(
             Biller::query()
+                ->when($request->boolean('active_only'), fn ($query) => $query->where('is_active', true))
                 ->when($request->filled('search'), function ($query) use ($request) {
                     $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
 

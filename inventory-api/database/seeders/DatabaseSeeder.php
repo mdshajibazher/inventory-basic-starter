@@ -57,6 +57,16 @@ class DatabaseSeeder extends Seeder
             'suppliers-add',
             'suppliers-edit',
             'suppliers-delete',
+            'sales-index',
+            'sales-add',
+            'sales-show',
+            'sales-edit',
+            'sales-delete',
+            'purchases-index',
+            'purchases-add',
+            'purchases-show',
+            'purchases-edit',
+            'purchases-delete',
         ];
 
         $userPermissions = [
@@ -124,7 +134,7 @@ class DatabaseSeeder extends Seeder
         );
         $user->forceFill(['role_id' => $adminRole->id])->save();
         $user->assignRole($adminRole);
-        //$user->syncPermissions($permissions->keys()->all());
+        // $user->syncPermissions($permissions->keys()->all());
 
         $drinks = Category::query()->firstOrCreate(
             ['name' => 'Drinks'],
@@ -144,8 +154,10 @@ class DatabaseSeeder extends Seeder
         $this->call(WarehouseSeeder::class);
         $this->call(UnitSeeder::class);
         $this->call(TaxSeeder::class);
+        $this->call(PurchaseStatusSeeder::class);
         $this->call(BillerSeeder::class);
         $this->call(SupplierSeeder::class);
+        $this->call(ProductSeeder::class);
 
         // Product::query()->firstOrCreate(
         //     ['sku' => 'COKE-500'],
