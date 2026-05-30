@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Product;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -111,9 +112,21 @@ class StorePurchaseRequest extends FormRequest
                 }
             }
 
-            foreach ($this->input('batch_no', []) as $index => $batchNo) {
-                if ($batchNo && blank($this->input("expired_date.{$index}"))) {
-                    $validator->errors()->add("expired_date.{$index}", 'The expired date is required when batch no is present.');
+            $batchProductIds = Product::query()
+                ->whereIn('id', array_filter($productIds))
+                ->where('is_batch', true)
+                ->pluck('id')
+                ->all();
+
+            foreach ($productIds as $index => $productId) {
+                $requiresBatch = in_array((int) $productId, $batchProductIds, true);
+
+                if ($requiresBatch && blank($this->input("batch_no.{$index}"))) {
+                    $validator->errors()->add("batch_no.{$index}", 'The batch no is required for batch products.');
+                }
+
+                if ($requiresBatch && blank($this->input("expired_date.{$index}"))) {
+                    $validator->errors()->add("expired_date.{$index}", 'The expired date is required for batch products.');
                 }
             }
         });

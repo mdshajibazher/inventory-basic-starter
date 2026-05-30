@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
 use App\Models\Product;
+use App\Models\ProductBatch;
 use App\Models\ProductWarehouse;
 use App\Models\ProductVariant;
 use App\Models\Tax;
@@ -35,6 +36,8 @@ class ProductController extends Controller
                 'tax:id,name,rate',
                 'variants.variant:id,name',
                 'warehousePrices.warehouse:id,name',
+                'warehouseStocks.warehouse:id,name',
+                'warehouseStocks.batch:id,batch_no,expired_date',
             ])
             ->where('is_active', true)
             ->when($request->filled('search'), function ($query) use ($request) {
@@ -80,6 +83,50 @@ class ProductController extends Controller
                 ]),
                 'taxes' => Tax::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'rate']),
                 'warehouses' => Warehouse::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+            ],
+        ]);
+    }
+
+    public function checkBatchAvailability(int $productId, string $batchNo, int $warehouseId)
+    {
+        $batch = ProductBatch::query()
+            ->where('product_id', $productId)
+            ->where('batch_no', $batchNo)
+            ->first();
+
+        if (! $batch) {
+            return response()->json([
+                'data' => [
+                    'valid' => false,
+                    'qty' => 0,
+                    'product_batch_id' => null,
+                    'message' => 'Wrong Batch Number!',
+                ],
+            ]);
+        }
+
+        $warehouseStock = ProductWarehouse::query()
+            ->where('product_batch_id', $batch->id)
+            ->where('warehouse_id', $warehouseId)
+            ->first();
+
+        if (! $warehouseStock) {
+            return response()->json([
+                'data' => [
+                    'valid' => false,
+                    'qty' => 0,
+                    'product_batch_id' => $batch->id,
+                    'message' => 'This Batch does not exist in the selected warehouse!',
+                ],
+            ]);
+        }
+
+        return response()->json([
+            'data' => [
+                'valid' => true,
+                'qty' => $warehouseStock->qty,
+                'product_batch_id' => $batch->id,
+                'message' => 'ok',
             ],
         ]);
     }
@@ -187,9 +234,9 @@ class ProductController extends Controller
             'qty_list' => ['nullable', 'string', 'max:255'],
             'price_list' => ['nullable', 'string', 'max:255'],
             'is_variant' => ['nullable', 'boolean'],
-            'variant_name' => [Rule::requiredIf($request->boolean('is_variant')), 'array', 'min:1'],
+            'variant_name' => [Rule::requiredIf($request->boolean('is_variant') && ! $request->boolean('is_batch')), 'array', 'min:1'],
             'variant_name.*' => ['required_with:variant_name', 'string', 'max:255'],
-            'item_code' => [Rule::requiredIf($request->boolean('is_variant')), 'array', 'min:1'],
+            'item_code' => [Rule::requiredIf($request->boolean('is_variant') && ! $request->boolean('is_batch')), 'array', 'min:1'],
             'item_code.*' => ['required_with:item_code', 'string', 'max:255'],
             'additional_price' => ['nullable', 'array'],
             'additional_price.*' => ['nullable', 'numeric', 'min:0'],
@@ -214,8 +261,8 @@ class ProductController extends Controller
         $data['tax_method'] = $data['tax_method'] ?? 1;
         $data['featured'] = $data['featured'] ?? false;
         $data['promotion'] = $data['promotion'] ?? null;
-        $data['is_variant'] = $data['is_variant'] ?? null;
         $data['is_batch'] = $data['is_batch'] ?? null;
+        $data['is_variant'] = $data['is_batch'] ? null : ($data['is_variant'] ?? null);
         $data['is_diffPrice'] = $data['is_diffPrice'] ?? null;
 
         if (in_array($data['type'], ['combo', 'digital'], true)) {
@@ -247,12 +294,14 @@ class ProductController extends Controller
             'tax:id,name,rate',
             'variants.variant:id,name',
             'warehousePrices.warehouse:id,name',
+            'warehouseStocks.warehouse:id,name',
+            'warehouseStocks.batch:id,batch_no,expired_date',
         ];
     }
 
     private function syncVariants(Product $product, Request $request): void
     {
-        if (! $request->boolean('is_variant')) {
+        if ($request->boolean('is_batch') || ! $request->boolean('is_variant')) {
             $product->variants()->delete();
             return;
         }

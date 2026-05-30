@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Image, ScrollView, StyleProp, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
+import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { Redirect } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import {
   Button,
   DataTable,
@@ -81,6 +81,8 @@ type RouteParams = {
   refreshKey?: number;
 };
 
+type ProductScreenMode = 'index' | 'create' | 'edit';
+
 const perPage = 15;
 
 const emptyForm: ProductForm = {
@@ -146,9 +148,9 @@ function productToForm(product: Product): ProductForm {
       price: warehousePrice.price == null ? '' : String(warehousePrice.price),
     })),
     isBatch: Boolean(product.is_batch),
-    isVariant: Boolean(product.is_variant),
+    isVariant: Boolean(product.is_variant) && !Boolean(product.is_batch),
     variantInput: '',
-    variants: (product.variants ?? []).map((variant) => ({
+    variants: Boolean(product.is_batch) ? [] : (product.variants ?? []).map((variant) => ({
       id: variant.id,
       variantId: variant.variant_id,
       name: variant.name,
@@ -173,6 +175,44 @@ function toNullableNumber(value: string) {
 
 function generateCode() {
   return String(Math.floor(10000000 + Math.random() * 90000000));
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function parseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function calendarDays(month: Date) {
+  const start = startOfMonth(month);
+  start.setDate(start.getDate() - start.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
 }
 
 type SelectFieldProps<T> = {
@@ -329,10 +369,11 @@ function SearchableSelectField<T>({
   );
 }
 
-export default function ProductsScreen() {
+export default function ProductsScreen({ mode = 'index', productId }: { mode?: ProductScreenMode; productId?: number }) {
   const { width } = useWindowDimensions();
   const { hasPermission } = useAuth();
   const route = useRoute();
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [options, setOptions] = useState<ProductOptions>({
@@ -351,7 +392,6 @@ export default function ProductsScreen() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [modalVisible, setModalVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
@@ -379,17 +419,11 @@ export default function ProductsScreen() {
     setLoading(true);
 
     try {
-      const [productResponse, optionResponse] = await Promise.all([
-        api.products({ page: nextPage, perPage, search: debouncedSearch }),
-        api.productOptions(),
-      ]);
+      const productResponse = await api.products({ page: nextPage, perPage, search: debouncedSearch });
       if (requestId !== requestIdRef.current) return;
 
-      const nextOptions = optionResponse.data as ProductOptions;
       setProducts(productResponse.data as Product[]);
       setPagination(productResponse.meta ?? null);
-      setOptions(nextOptions);
-      setForm((current) => defaultsForOptions(current, nextOptions));
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
       Alert.alert('Load failed', error instanceof Error ? error.message : 'Try again.');
@@ -401,8 +435,45 @@ export default function ProductsScreen() {
   }, [debouncedSearch, page]);
 
   useEffect(() => {
+    if (mode !== 'index') return;
     load(page);
-  }, [load, page, refreshKey]);
+  }, [load, mode, page, refreshKey]);
+
+  useEffect(() => {
+    if (mode === 'index') return;
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setLoading(true);
+
+    Promise.all([
+      api.productOptions(),
+      mode === 'edit' && productId ? api.product(productId) : Promise.resolve(null),
+    ])
+      .then(([optionResponse, productResponse]) => {
+        if (requestId !== requestIdRef.current) return;
+        const nextOptions = optionResponse.data as ProductOptions;
+        setOptions(nextOptions);
+
+        if (productResponse) {
+          const product = productResponse.data as Product;
+          setEditingProduct(product);
+          setSelectedBrand(product.brand ?? null);
+          setSelectedCategory(product.category ?? null);
+          setForm(defaultsForOptions(productToForm(product), nextOptions));
+        } else {
+          resetCreateForm(nextOptions);
+        }
+      })
+      .catch((error) => {
+        if (requestId === requestIdRef.current) {
+          Alert.alert('Load failed', error instanceof Error ? error.message : 'Try again.');
+        }
+      })
+      .finally(() => {
+        if (requestId === requestIdRef.current) setLoading(false);
+      });
+  }, [mode, productId]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -427,8 +498,41 @@ export default function ProductsScreen() {
     };
   }
 
+  function resetCreateForm(nextOptions = options) {
+    setEditingProduct(null);
+    setSelectedBrand(null);
+    setSelectedCategory(null);
+    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }, nextOptions));
+  }
+
   function updateForm<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateBatch(value: boolean) {
+    setForm((current) => ({
+      ...current,
+      isBatch: value,
+      isVariant: value ? false : current.isVariant,
+      variantInput: value ? '' : current.variantInput,
+      variants: value ? [] : current.variants,
+    }));
+  }
+
+  function updateVariantEnabled(value: boolean) {
+    setForm((current) => ({
+      ...current,
+      isVariant: value,
+      isBatch: value ? false : current.isBatch,
+    }));
+  }
+
+  function updatePromotion(value: boolean) {
+    setForm((current) => ({
+      ...current,
+      promotion: value,
+      startingDate: value && !current.startingDate ? todayDate() : current.startingDate,
+    }));
   }
 
   function updateVariant<K extends keyof ProductVariantForm>(index: number, key: K, value: ProductVariantForm[K]) {
@@ -482,28 +586,16 @@ export default function ProductsScreen() {
     }));
   }
 
-  function openCreateModal() {
-    setEditingProduct(null);
-    setSelectedBrand(null);
-    setSelectedCategory(null);
-    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }));
-    setModalVisible(true);
+  function openCreatePage() {
+    router.push('/(drawer)/products-create');
   }
 
-  function openEditModal(product: Product) {
-    setEditingProduct(product);
-    setSelectedBrand(product.brand ?? null);
-    setSelectedCategory(product.category ?? null);
-    setForm(defaultsForOptions(productToForm(product)));
-    setModalVisible(true);
+  function openEditPage(product: Product) {
+    router.push({ pathname: '/(drawer)/products-edit', params: { id: String(product.id) } });
   }
 
-  function closeModal() {
-    setModalVisible(false);
-    setEditingProduct(null);
-    setSelectedBrand(null);
-    setSelectedCategory(null);
-    setForm(defaultsForOptions(emptyForm));
+  function closeForm() {
+    router.replace('/(drawer)/products');
   }
 
   function buildPayload(): ProductPayload | null {
@@ -551,8 +643,8 @@ export default function ProductsScreen() {
       last_date: form.promotion ? form.lastDate.trim() || null : null,
       is_diffPrice: form.isDiffPrice,
       is_batch: form.isBatch,
-      is_variant: form.isVariant,
-      variants: form.isVariant
+      is_variant: form.isVariant && !form.isBatch,
+      variants: form.isVariant && !form.isBatch
         ? form.variants.map((variant) => ({
           id: variant.id,
           variant_id: variant.variantId,
@@ -581,16 +673,10 @@ export default function ProductsScreen() {
         await api.updateProduct(editingProduct.id, payload);
       } else {
         await api.createProduct(payload);
+        resetCreateForm();
       }
 
-      closeModal();
-      if (editingProduct) {
-        await load(page);
-      } else if (page === 1) {
-        await load(1);
-      } else {
-        setPage(1);
-      }
+      closeForm();
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
@@ -630,92 +716,111 @@ export default function ProductsScreen() {
   const selectedTaxMethod = options.tax_methods.find((method) => method.id === form.taxMethod);
   const isStandard = form.type === 'standard';
 
-  if (!hasPermission('products-index')) {
+  if (mode === 'index' && !hasPermission('products-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
+  }
+
+  if (mode === 'create' && !hasPermission('products-add')) {
+    return <Redirect href="/(drawer)/products" />;
+  }
+
+  if (mode === 'edit' && !hasPermission('products-edit')) {
+    return <Redirect href="/(drawer)/products" />;
   }
 
   return (
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text variant="headlineSmall">Products</Text>
+          <Text variant="headlineSmall">{mode === 'edit' ? 'Edit Product' : mode === 'create' ? 'Add Product' : 'Products'}</Text>
           <Text variant="bodyMedium" style={styles.muted}>
-            {products.length} shown from {pagination?.total ?? products.length}
+            {mode === 'index'
+              ? `${products.length} shown from ${pagination?.total ?? products.length}`
+              : editingProduct
+                ? 'Update product information and stock settings'
+                : 'Create a product and configure price, stock, and variants'}
           </Text>
         </View>
-        {canAdd ? (
-          <Button mode="contained" onPress={openCreateModal}>
+        {mode === 'index' && canAdd ? (
+          <Button mode="contained" onPress={openCreatePage}>
             Add
           </Button>
         ) : null}
+        {mode !== 'index' ? (
+          <Button mode="outlined" onPress={closeForm}>
+            Back
+          </Button>
+        ) : null}
       </View>
-      <Searchbar
-        style={styles.searchbar}
-        inputStyle={styles.searchbarInput}
-        value={search}
-        onChangeText={setSearch}
-        placeholder="Search products, code, brand, category"
-        loading={loading}
-        onClearIconPress={() => setSearch('')}
-      />
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <DataTable style={styles.table}>
-          <DataTable.Header>
-            <DataTable.Title style={styles.imageColumn}>Image</DataTable.Title>
-            <DataTable.Title style={styles.nameColumn}>Product</DataTable.Title>
-            <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
-            <DataTable.Title style={styles.nameColumn}>Brand</DataTable.Title>
-            <DataTable.Title style={styles.nameColumn}>Category</DataTable.Title>
-            <DataTable.Title numeric style={styles.numberColumn}>Qty</DataTable.Title>
-            <DataTable.Title numeric style={styles.numberColumn}>Price</DataTable.Title>
-            <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
-          </DataTable.Header>
+      {mode === 'index' ? (
+        <>
+          <Searchbar
+            style={styles.searchbar}
+            inputStyle={styles.searchbarInput}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search products, code, brand, category"
+            loading={loading}
+            onClearIconPress={() => setSearch('')}
+          />
 
-          {products.map((product) => (
-            <DataTable.Row key={product.id}>
-              <DataTable.Cell style={styles.imageColumn}>
-                {product.image_url ? <Image source={{ uri: product.image_url }} style={styles.tableImage} /> : 'No image'}
-              </DataTable.Cell>
-              <DataTable.Cell style={styles.nameColumn}>{product.name}</DataTable.Cell>
-              <DataTable.Cell style={styles.codeColumn}>{product.code}</DataTable.Cell>
-              <DataTable.Cell style={styles.nameColumn}>{product.brand?.title ?? 'N/A'}</DataTable.Cell>
-              <DataTable.Cell style={styles.nameColumn}>{product.category?.name ?? 'N/A'}</DataTable.Cell>
-              <DataTable.Cell numeric style={styles.numberColumn}>{product.qty ?? 0}</DataTable.Cell>
-              <DataTable.Cell numeric style={styles.numberColumn}>{Number(product.price).toFixed(2)}</DataTable.Cell>
-              <DataTable.Cell style={styles.actionColumn}>
-                <View style={styles.actions}>
-                  {canEdit ? (
-                    <Button compact mode="text" onPress={() => openEditModal(product)}>Edit</Button>
-                  ) : null}
-                  {canDelete ? (
-                    <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(product)}>Delete</Button>
-                  ) : null}
-                </View>
-              </DataTable.Cell>
-            </DataTable.Row>
-          ))}
-        </DataTable>
-      </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <DataTable style={styles.table}>
+              <DataTable.Header>
+                <DataTable.Title style={styles.imageColumn}>Image</DataTable.Title>
+                <DataTable.Title style={styles.nameColumn}>Product</DataTable.Title>
+                <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
+                <DataTable.Title style={styles.nameColumn}>Brand</DataTable.Title>
+                <DataTable.Title style={styles.nameColumn}>Category</DataTable.Title>
+                <DataTable.Title numeric style={styles.numberColumn}>Qty</DataTable.Title>
+                <DataTable.Title numeric style={styles.numberColumn}>Price</DataTable.Title>
+                <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
+              </DataTable.Header>
 
-      {pagination && pagination.last_page > 1 ? (
-        <View style={styles.pagination}>
-          <Button mode="outlined" disabled={loading || page <= 1} onPress={() => setPage((current) => Math.max(1, current - 1))}>
-            Previous
-          </Button>
-          <Text variant="bodyMedium" style={styles.paginationText}>Page {pagination.current_page} of {pagination.last_page}</Text>
-          <Button mode="outlined" disabled={loading || page >= pagination.last_page} onPress={() => setPage((current) => Math.min(pagination.last_page, current + 1))}>
-            Next
-          </Button>
-        </View>
-      ) : null}
+              {products.map((product) => (
+                <DataTable.Row key={product.id}>
+                  <DataTable.Cell style={styles.imageColumn}>
+                    {product.image_url ? <Image source={{ uri: product.image_url }} style={styles.tableImage} /> : 'No image'}
+                  </DataTable.Cell>
+                  <DataTable.Cell style={styles.nameColumn}>{product.name}</DataTable.Cell>
+                  <DataTable.Cell style={styles.codeColumn}>{product.code}</DataTable.Cell>
+                  <DataTable.Cell style={styles.nameColumn}>{product.brand?.title ?? 'N/A'}</DataTable.Cell>
+                  <DataTable.Cell style={styles.nameColumn}>{product.category?.name ?? 'N/A'}</DataTable.Cell>
+                  <DataTable.Cell numeric style={styles.numberColumn}>{product.qty ?? 0}</DataTable.Cell>
+                  <DataTable.Cell numeric style={styles.numberColumn}>{Number(product.price).toFixed(2)}</DataTable.Cell>
+                  <DataTable.Cell style={styles.actionColumn}>
+                    <View style={styles.actions}>
+                      {canEdit ? (
+                        <Button compact mode="text" onPress={() => openEditPage(product)}>Edit</Button>
+                      ) : null}
+                      {canDelete ? (
+                        <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(product)}>Delete</Button>
+                      ) : null}
+                    </View>
+                  </DataTable.Cell>
+                </DataTable.Row>
+              ))}
+            </DataTable>
+          </ScrollView>
 
-      {!loading && products.length === 0 ? <Text variant="bodyMedium" style={styles.empty}>No products found.</Text> : null}
+          {pagination && pagination.last_page > 1 ? (
+            <View style={styles.pagination}>
+              <Button mode="outlined" disabled={loading || page <= 1} onPress={() => setPage((current) => Math.max(1, current - 1))}>
+                Previous
+              </Button>
+              <Text variant="bodyMedium" style={styles.paginationText}>Page {pagination.current_page} of {pagination.last_page}</Text>
+              <Button mode="outlined" disabled={loading || page >= pagination.last_page} onPress={() => setPage((current) => Math.min(pagination.last_page, current + 1))}>
+                Next
+              </Button>
+            </View>
+          ) : null}
 
-      <Portal>
-        <Modal visible={modalVisible} onDismiss={closeModal} contentContainerStyle={styles.modal}>
+          {!loading && products.length === 0 ? <Text variant="bodyMedium" style={styles.empty}>No products found.</Text> : null}
+        </>
+      ) : (
           <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text variant="titleLarge">{editingProduct ? 'Edit Product' : 'Add Product'}</Text>
+            <Text variant="titleLarge">{mode === 'edit' ? 'Edit Product' : 'Add Product'}</Text>
 
 
               <SelectField
@@ -842,9 +947,62 @@ export default function ProductsScreen() {
         
               <SwitchRow label="Featured" value={form.featured} onValueChange={(value) => updateForm('featured', value)} />
               <SwitchRow label="Different warehouse price" value={form.isDiffPrice} onValueChange={(value) => updateForm('isDiffPrice', value)} />
-              <SwitchRow label="Batch and expired date" value={form.isBatch} onValueChange={(value) => updateForm('isBatch', value)} />
-              <SwitchRow label="Product variant" value={form.isVariant} onValueChange={(value) => updateForm('isVariant', value)} />
-              <SwitchRow label="Promotional price" value={form.promotion} onValueChange={(value) => updateForm('promotion', value)} />
+              {form.isDiffPrice ? (
+                <View style={styles.warehousePriceSection}>
+                  <Text variant="titleSmall">Warehouse prices</Text>
+                  {form.warehousePrices.length ? form.warehousePrices.map((warehousePrice, index) => (
+                    <View key={warehousePrice.warehouseId} style={[styles.warehousePriceRow, compactVariantLayout && styles.warehousePriceRowCompact]}>
+                      <Text variant="bodyMedium" style={styles.warehousePriceName}>{warehousePrice.warehouseName}</Text>
+                      <TextInput
+                        dense
+                        mode="outlined"
+                        label="Price"
+                        value={warehousePrice.price}
+                        keyboardType="numeric"
+                        onChangeText={(value) => updateWarehousePrice(index, value)}
+                        style={styles.warehousePriceInput}
+                      />
+                    </View>
+                  )) : (
+                    <Text variant="bodyMedium" style={styles.emptyWarehousePrices}>No active warehouses found.</Text>
+                  )}
+                </View>
+              ) : null}
+              {!form.isVariant ? (
+                <SwitchRow label="Batch and expired date" value={form.isBatch} onValueChange={updateBatch} />
+              ) : null}
+              {!form.isBatch ? (
+                <SwitchRow label="Product variant" value={form.isVariant} onValueChange={updateVariantEnabled} />
+              ) : null}
+              <SwitchRow label="Add Promotional Price" value={form.promotion} onValueChange={updatePromotion} />
+              {form.promotion ? (
+                <View style={styles.promotionSection}>
+                  <TextInput
+                    dense
+                    mode="outlined"
+                    label="Promotional Price"
+                    value={form.promotionPrice}
+                    keyboardType="numeric"
+                    onChangeText={(value) => updateForm('promotionPrice', value)}
+                    style={styles.formField}
+                  />
+                  <DatePickerField
+                    label="Promotion Starts"
+                    value={form.startingDate}
+                    onChange={(value) => updateForm('startingDate', value)}
+                    style={styles.formField}
+                  />
+                  <TextInput
+                    dense
+                    mode="outlined"
+                    label="Promotion Ends"
+                    placeholder="YYYY-MM-DD"
+                    value={form.lastDate}
+                    onChangeText={(value) => updateForm('lastDate', value)}
+                    style={styles.formField}
+                  />
+                </View>
+              ) : null}
       
             {form.isVariant ? (
               <View style={styles.variantSection}>
@@ -872,42 +1030,12 @@ export default function ProductsScreen() {
               </View>
             ) : null}
 
-            {form.isDiffPrice ? (
-              <View style={styles.warehousePriceSection}>
-                <Text variant="titleSmall">Warehouse prices</Text>
-                {form.warehousePrices.length ? form.warehousePrices.map((warehousePrice, index) => (
-                  <View key={warehousePrice.warehouseId} style={[styles.warehousePriceRow, compactVariantLayout && styles.warehousePriceRowCompact]}>
-                    <Text variant="bodyMedium" style={styles.warehousePriceName}>{warehousePrice.warehouseName}</Text>
-                    <TextInput
-                      mode="outlined"
-                      label="Price"
-                      value={warehousePrice.price}
-                      keyboardType="numeric"
-                      onChangeText={(value) => updateWarehousePrice(index, value)}
-                      style={styles.warehousePriceInput}
-                    />
-                  </View>
-                )) : (
-                  <Text variant="bodyMedium" style={styles.emptyWarehousePrices}>No active warehouses found.</Text>
-                )}
-              </View>
-            ) : null}
-
-            {form.promotion ? (
-              <View style={styles.formRow}>
-                <TextInput mode="outlined" label="Promotion Price" value={form.promotionPrice} keyboardType="numeric" onChangeText={(value) => updateForm('promotionPrice', value)} style={styles.formField} />
-                <TextInput mode="outlined" label="Starting Date" placeholder="YYYY-MM-DD" value={form.startingDate} onChangeText={(value) => updateForm('startingDate', value)} style={styles.formField} />
-                <TextInput mode="outlined" label="Last Date" placeholder="YYYY-MM-DD" value={form.lastDate} onChangeText={(value) => updateForm('lastDate', value)} style={styles.formField} />
-              </View>
-            ) : null}
-
             <View style={styles.modalActions}>
-              <Button mode="outlined" onPress={closeModal} disabled={saving}>Cancel</Button>
-              <Button mode="contained" onPress={saveProduct} loading={saving} disabled={saving}>Save</Button>
+              <Button mode="outlined" onPress={closeForm} disabled={saving}>Cancel</Button>
+              <Button mode="contained" onPress={saveProduct} loading={saving} disabled={saving || loading}>{mode === 'edit' ? 'Update' : 'Save'}</Button>
             </View>
           </ScrollView>
-        </Modal>
-      </Portal>
+      )}
     </Screen>
   );
 }
@@ -917,6 +1045,77 @@ function SwitchRow({ label, value, onValueChange }: { label: string; value: bool
     <View style={styles.switchRow}>
       <Switch value={value} onValueChange={onValueChange} />
       <Text variant="bodyMedium" style={styles.switchLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function DatePickerField({ label, value, onChange, style }: { label: string; value: string; onChange: (value: string) => void; style?: StyleProp<ViewStyle> }) {
+  const [visible, setVisible] = useState(false);
+  const selectedDate = parseDate(value);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate ?? new Date()));
+  const days = calendarDays(visibleMonth);
+
+  function openPicker() {
+    setVisibleMonth(startOfMonth(selectedDate ?? new Date()));
+    setVisible(true);
+  }
+
+  function selectDate(date: Date) {
+    onChange(formatDate(date));
+    setVisible(false);
+  }
+
+  return (
+    <View style={style}>
+      <TextInput
+        dense
+        mode="outlined"
+        label={label}
+        value={value}
+        placeholder="YYYY-MM-DD"
+        editable={false}
+        right={<TextInput.Icon icon="calendar" onPress={openPicker} />}
+        onPressIn={openPicker}
+      />
+      <Portal>
+        <Modal visible={visible} onDismiss={() => setVisible(false)} contentContainerStyle={styles.datePickerModal}>
+          <View style={styles.datePickerHeader}>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, -1))}>Prev</Button>
+            <Text variant="titleMedium">{visibleMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</Text>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, 1))}>Next</Button>
+          </View>
+          <View style={styles.datePickerWeekdays}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+              <Text key={day} variant="labelSmall" style={styles.datePickerWeekday}>{day}</Text>
+            ))}
+          </View>
+          <View style={styles.datePickerGrid}>
+            {days.map((date) => {
+              const isCurrentMonth = date.getMonth() === visibleMonth.getMonth();
+              const isSelected = selectedDate ? formatDate(date) === formatDate(selectedDate) : false;
+
+              return (
+                <Pressable
+                  key={date.toISOString()}
+                  onPress={() => selectDate(date)}
+                  style={[styles.datePickerDay, isSelected && styles.datePickerDaySelected]}
+                >
+                  <Text
+                    variant="bodyMedium"
+                    style={[
+                      styles.datePickerDayText,
+                      !isCurrentMonth && styles.datePickerDayMuted,
+                      isSelected && styles.datePickerDayTextSelected,
+                    ]}
+                  >
+                    {date.getDate()}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Modal>
+      </Portal>
     </View>
   );
 }
@@ -1101,7 +1300,11 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   warehousePriceSection: {
+    borderColor: '#dddddd',
+    borderRadius: 8,
+    borderWidth: 1,
     gap: 10,
+    padding: 12,
   },
   warehousePriceRow: {
     alignItems: 'center',
@@ -1124,6 +1327,59 @@ const styles = StyleSheet.create({
   emptyWarehousePrices: {
     paddingVertical: 8,
     color: '#666666',
+  },
+  promotionSection: {
+    borderColor: '#dddddd',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12,
+  },
+  datePickerModal: {
+    alignSelf: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 14,
+    width: '92%',
+    maxWidth: 360,
+  },
+  datePickerHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  datePickerWeekdays: {
+    flexDirection: 'row',
+    marginBottom: 6,
+  },
+  datePickerWeekday: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#666666',
+  },
+  datePickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  datePickerDay: {
+    alignItems: 'center',
+    aspectRatio: 1,
+    flexBasis: '14.2857%',
+    justifyContent: 'center',
+    borderRadius: 6,
+  },
+  datePickerDaySelected: {
+    backgroundColor: '#111111',
+  },
+  datePickerDayText: {
+    color: '#222222',
+  },
+  datePickerDayMuted: {
+    color: '#aaaaaa',
+  },
+  datePickerDayTextSelected: {
+    color: '#ffffff',
   },
   variantInputRow: {
     alignItems: 'center',

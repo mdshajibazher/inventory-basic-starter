@@ -157,7 +157,9 @@ class DatabaseSeeder extends Seeder
         $this->call(PurchaseStatusSeeder::class);
         $this->call(BillerSeeder::class);
         $this->call(SupplierSeeder::class);
-        $this->call(ProductSeeder::class);
+        $this->call(BrandSeeder::class);
+        $this->call(CustomerSeeder::class);
+        // $this->call(ProductSeeder::class);
 
         // Product::query()->firstOrCreate(
         //     ['sku' => 'COKE-500'],

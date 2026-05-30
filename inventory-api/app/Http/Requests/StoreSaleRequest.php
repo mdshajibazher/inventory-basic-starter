@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Product;
+use App\Models\ProductBatch;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -17,6 +19,9 @@ class StoreSaleRequest extends FormRequest
     {
         $saleId = $this->route('sale')?->id ?? $this->route('sale');
 
+        logger([
+            'this request' => $this->request
+        ]);
         return [
             'reference_no' => ['required', 'string', 'max:191', Rule::unique('sales', 'reference_no')->ignore($saleId)],
             'customer_id' => ['required', 'integer', Rule::exists('customers', 'id')->where('is_active', true)],
@@ -31,6 +36,8 @@ class StoreSaleRequest extends FormRequest
             'product_code.*' => ['nullable', 'string', 'max:255'],
             'product_batch_id' => ['nullable', 'array'],
             'product_batch_id.*' => ['nullable', 'integer', 'exists:product_batches,id'],
+            'batch_no' => ['nullable', 'array'],
+            'batch_no.*' => ['nullable', 'string', 'max:255'],
             'qty' => ['required', 'array', 'min:1'],
             'qty.*' => ['required', 'numeric', 'gt:0'],
             'sale_unit' => ['nullable', 'array'],
@@ -72,6 +79,30 @@ class StoreSaleRequest extends FormRequest
         ];
     }
 
+    protected function prepareForValidation(): void
+    {
+        $productIds = $this->input('product_id', []);
+        $batchNumbers = $this->input('batch_no', []);
+        $batchIds = $this->input('product_batch_id', []);
+
+        if (! is_array($productIds) || ! is_array($batchNumbers)) {
+            return;
+        }
+
+        foreach ($productIds as $index => $productId) {
+            if (! blank($batchIds[$index] ?? null) || blank($batchNumbers[$index] ?? null)) {
+                continue;
+            }
+
+            $batchIds[$index] = ProductBatch::query()
+                ->where('product_id', $productId)
+                ->where('batch_no', $batchNumbers[$index])
+                ->value('id');
+        }
+
+        $this->merge(['product_batch_id' => $batchIds]);
+    }
+
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
@@ -86,7 +117,7 @@ class StoreSaleRequest extends FormRequest
                 }
             }
 
-            foreach (['product_code', 'product_batch_id', 'sale_unit', 'tax_rate'] as $field) {
+            foreach (['product_code', 'product_batch_id', 'batch_no', 'sale_unit', 'tax_rate'] as $field) {
                 if (! $this->has($field)) {
                     continue;
                 }
@@ -103,6 +134,27 @@ class StoreSaleRequest extends FormRequest
 
                 if ($extraIndexes !== []) {
                     $validator->errors()->add($field, "The {$field} array contains indexes without matching product items.");
+                }
+            }
+
+            $batchProductIds = Product::query()
+                ->whereIn('id', array_filter($productIds))
+                ->where('is_batch', true)
+                ->pluck('id')
+                ->all();
+
+            foreach ($productIds as $index => $productId) {
+                if (! in_array((int) $productId, $batchProductIds, true)) {
+                    continue;
+                }
+
+                if (blank($this->input("batch_no.{$index}")) && blank($this->input("product_batch_id.{$index}"))) {
+                    $validator->errors()->add("batch_no.{$index}", 'The batch no is required for batch products.');
+                    continue;
+                }
+
+                if (blank($this->input("product_batch_id.{$index}"))) {
+                    $validator->errors()->add("batch_no.{$index}", 'The selected batch no could not be found for this product.');
                 }
             }
         });

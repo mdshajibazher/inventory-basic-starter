@@ -170,6 +170,16 @@ export default function DrawerLayout() {
           drawerItemStyle: hasPermission('products-index') ? undefined : styles.hiddenDrawerItem,
         }}
       />
+      {['products-create', 'products-edit'].map((name) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          options={{
+            title: 'Products',
+            drawerItemStyle: styles.hiddenDrawerItem,
+          }}
+        />
+      ))}
       <Drawer.Screen
         name="sales-invoices"
         options={{

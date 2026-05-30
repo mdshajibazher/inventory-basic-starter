@@ -24,7 +24,7 @@ class PurchaseInvoiceController extends Controller
         'warehouse:id,name',
         'user:id,name,email',
         'purchaseStatus:id,value,label',
-        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id',
+        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch',
         'products.unit:id,unit_code,unit_name',
         'products.batch:id,batch_no,expired_date',
         'products.variant:id,name',

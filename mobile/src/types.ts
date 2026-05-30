@@ -152,6 +152,10 @@ export type Product = {
 export type ProductWarehousePrice = {
   warehouse_id: number;
   warehouse_name?: string | null;
+  product_batch_id?: number | null;
+  batch_no?: string | null;
+  expired_date?: string | null;
+  qty?: number | string | null;
   price?: number | string | null;
 };
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Redirect, router } from 'expo-router';
-import { ActivityIndicator, Button, DataTable, HelperText, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
+import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type SalesInvoicePayload } from '@/src/lib/api';
@@ -14,6 +14,7 @@ type ProductOptions = {
 type InvoiceLine = {
   key: string;
   productId: number | null;
+  batchNo: string;
   qty: string;
   price: string;
   discount: string;
@@ -49,6 +50,7 @@ type SearchableSelectFieldProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: null,
+  batchNo: '',
   qty: '1',
   price: '0',
   discount: '0',
@@ -88,10 +90,6 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const supportedProducts = useMemo(
-    () => products.filter((product) => !product.is_variant && !product.is_batch && product.type !== 'digital'),
-    [products]
-  );
   const selectedCustomer = customers.find((customer) => customer.id === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === form.warehouseId);
   const selectedBiller = billers.find((biller) => biller.id === form.billerId);
@@ -178,14 +176,36 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
     setLines((current) => current.map((line) => (line.key === key ? { ...line, [field]: value } : line)));
   }
 
+  function selectWarehouse(warehouse: Warehouse) {
+    setWarehouses((current) => upsertById(current, warehouse));
+    setForm((current) => ({ ...current, warehouseId: warehouse.id }));
+    setLines((current) => current.map((line) => {
+      const product = products.find((item) => item.id === line.productId);
+      return product ? { ...line, price: String(unitPriceForProduct(product, warehouse.id)) } : line;
+    }));
+  }
+
   function selectProduct(lineKey: string, product: Product) {
+    if (!form.warehouseId) {
+      Alert.alert('Select warehouse first', 'Choose a warehouse before selecting products.');
+      return;
+    }
+
+    const availableQty = warehouseStockForProduct(product, form.warehouseId);
+    if (availableQty <= 0) {
+      Alert.alert('No stock available', `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`);
+      return;
+    }
+
+    setProducts((current) => upsertById(current, product));
     setLines((current) =>
       current.map((line) =>
         line.key === lineKey
           ? {
               ...line,
               productId: product.id,
-              price: String(product.selling_price ?? product.price ?? 0),
+              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
+              price: String(unitPriceForProduct(product, form.warehouseId)),
               taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
             }
           : line
@@ -218,6 +238,12 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
 
     setSaving(true);
     try {
+      const batchError = await fillBatchIds(payload.lines, products, payload.warehouse_id);
+      if (batchError) {
+        Alert.alert('Invalid batch no', batchError);
+        return;
+      }
+
       const response = editingId
         ? await api.updateSalesInvoice(editingId, payload)
         : await api.createSalesInvoice(payload);
@@ -225,6 +251,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
       setEditingId(null);
       resetForm();
       void loadInvoices();
+      router.push('/(drawer)/sales-invoices');
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
@@ -266,6 +293,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: Number(line.product_id ?? product?.id ?? 0) || null,
         qty: String(line.qty ?? '1'),
+        batchNo: line.batch?.batch_no ?? '',
         price: String(line.net_unit_price ?? '0'),
         discount: String(line.discount ?? '0'),
         taxRate: String(line.tax_rate ?? '0'),
@@ -351,10 +379,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
           keyFor={(warehouse) => warehouse.id}
           labelFor={(warehouse) => warehouse.name}
           detailFor={(warehouse) => warehouse.address || warehouse.email || warehouse.phone || ''}
-          onSelect={(warehouse) => {
-            setWarehouses((current) => upsertById(current, warehouse));
-            setValue('warehouseId', warehouse.id);
-          }}
+          onSelect={selectWarehouse}
         />
         <SelectField
           label="Branch"
@@ -371,11 +396,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
           <Text variant="titleMedium">Products</Text>
           <Button mode="contained-tonal" onPress={addLine}>Add line</Button>
         </View>
-        <HelperText type="info" visible={products.length !== supportedProducts.length}>
-          Variant, batch, and digital products are hidden in this first invoice form.
-        </HelperText>
         {lines.map((line, index) => {
           const product = products.find((item) => item.id === line.productId);
+          const lineRequiresBatch = isBatchProduct(product);
           const lineTotal = calculateLine(line).subtotal;
           return (
             <View key={line.key} style={styles.lineCard}>
@@ -392,14 +415,14 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
                 search={searchProducts}
                 keyFor={(item) => item.id}
                 labelFor={(item) => `${item.name} (${item.code})`}
-                detailFor={(item) => `Price ${money(numberValue(item.selling_price ?? item.price))} | Qty ${money(numberValue(item.qty ?? item.quantity))}`}
+                detailFor={(item) => `Price ${money(unitPriceForProduct(item, form.warehouseId))} | Qty ${money(warehouseStockForProduct(item, form.warehouseId))}`}
                 onSelect={(item) => {
-                  setProducts((current) => upsertById(current, item));
                   selectProduct(line.key, item);
                 }}
               />
               <View style={styles.formRow}>
                 <TextInput mode="outlined" label="Qty" keyboardType="numeric" value={line.qty} onChangeText={(value) => updateLine(line.key, 'qty', value)} style={styles.formField} />
+                {lineRequiresBatch ? <TextInput mode="outlined" label="Batch no *" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} /> : null}
                 <TextInput mode="outlined" label="Unit price" keyboardType="numeric" value={line.price} onChangeText={(value) => updateLine(line.key, 'price', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Discount" keyboardType="numeric" value={line.discount} onChangeText={(value) => updateLine(line.key, 'discount', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
@@ -666,6 +689,10 @@ function buildPayload(
     Alert.alert('Invalid quantity', 'Line quantities must be greater than zero.');
     return null;
   }
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && !item.line.batchNo.trim())) {
+    Alert.alert('Missing batch no', 'Batch no is required for batch products.');
+    return null;
+  }
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
 
@@ -676,10 +703,11 @@ function buildPayload(
     biller_id: form.billerId,
     sale_status: 1,
     payment_status: paymentStatus(form.paymentMode),
-    lines: invoiceLines.map(({ product, values }) => ({
+    lines: invoiceLines.map(({ line, product, values }) => ({
       product_id: product?.id as number,
       product_code: product?.code ?? null,
       product_batch_id: null,
+      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       qty: values.qty,
       sale_unit: product?.type === 'combo' ? 'n/a' : product?.sale_unit_id ?? null,
       net_unit_price: values.price,
@@ -755,7 +783,63 @@ function taxForProduct(product: Product, taxes: Tax[]) {
 }
 
 function isInvoiceProductSupported(product: Product) {
-  return !product.is_variant && !product.is_batch && product.type !== 'digital';
+  return !product.is_variant && product.type !== 'digital';
+}
+
+function isBatchProduct(product?: Product | null) {
+  return product?.is_batch === true || String(product?.is_batch) === '1';
+}
+
+function unitPriceForProduct(product: Product, warehouseId?: number | null) {
+  const warehousePrice = warehouseId
+    ? product.warehouse_prices?.find((item) => Number(item.warehouse_id) === warehouseId)
+    : null;
+
+  if (product.is_diffPrice && warehousePrice?.price != null && warehousePrice.price !== '') {
+    return numberValue(warehousePrice.price);
+  }
+
+  return numberValue(product.selling_price ?? product.price);
+}
+
+function warehouseStockForProduct(product: Product, warehouseId?: number | null) {
+  const warehouseStocks = warehouseId
+    ? product.warehouse_prices?.filter((item) => Number(item.warehouse_id) === warehouseId)
+    : [];
+
+  if (warehouseStocks?.length) {
+    return warehouseStocks.reduce((sum, item) => sum + numberValue(item.qty), 0);
+  }
+
+  if (warehouseId) {
+    return 0;
+  }
+
+  return numberValue(product.qty ?? product.quantity);
+}
+
+function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
+  const batch = product.warehouse_prices?.find((item) =>
+    Number(item.warehouse_id) === Number(warehouseId) && item.batch_no
+  );
+
+  return batch?.batch_no ?? null;
+}
+
+async function fillBatchIds(lines: SalesInvoicePayload['lines'], products: Product[], warehouseId: number) {
+  for (const line of lines) {
+    if (!line.batch_no) continue;
+
+    const response = await api.checkBatchAvailability(line.product_id, line.batch_no, warehouseId);
+    if (!response.data.valid) {
+      const product = products.find((item) => item.id === line.product_id);
+      return `${product?.name ?? 'Selected product'} batch "${line.batch_no}" is not available in the selected warehouse. ${response.data.message}`;
+    }
+
+    line.product_batch_id = response.data.product_batch_id;
+  }
+
+  return null;
 }
 
 function upsertById<T extends { id: number }>(items: T[], item: T) {

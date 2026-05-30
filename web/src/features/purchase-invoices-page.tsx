@@ -111,6 +111,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === form.supplierId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
   const showReceived = Number(form.purchaseStatusId) === PURCHASE_STATUS_PARTIAL;
+  const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchSuppliers = useCallback(async (query: string) => {
@@ -226,6 +227,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   }
 
   function selectProduct(lineKey: string, product: Product) {
+    const warehouseId = nullableId(form.warehouseId);
     setProducts((current) => upsertById(current, product));
     setLines((current) =>
       current.map((line) =>
@@ -235,6 +237,8 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
               productId: String(product.id),
               cost: String(product.purchase_price ?? product.cost ?? 0),
               taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
+              expiredDate: isBatchProduct(product) ? line.expiredDate : '',
             }
           : line
       )
@@ -257,6 +261,12 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
 
     setSaving(true);
     try {
+      const batchError = await validateBatchLines(payload.lines, products, payload.warehouse_id);
+      if (batchError) {
+        toast.error('Invalid batch no', { description: batchError });
+        return;
+      }
+
       const response = editingId
         ? await api.updatePurchaseInvoice(editingId, payload)
         : await api.createPurchaseInvoice(payload);
@@ -433,11 +443,15 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           <table className="w-full min-w-[1120px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', ...(showReceived ? ['Received'] : []), 'Unit cost', 'Discount', 'Tax %', 'Batch no', 'Expiry', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', 'Qty', ...(showReceived ? ['Received'] : []), 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
-              {lines.map((line) => (
+              {lines.map((line) => {
+                const product = products.find((item) => String(item.id) === line.productId);
+                const lineRequiresBatch = isBatchProduct(product);
+
+                return (
                 <tr key={line.key} className="border-t border-neutral-100">
                   <td className="min-w-72 px-3 py-2">
                     <SearchableSelect
@@ -456,8 +470,12 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.cost} onChange={(event) => updateLine(line.key, 'cost', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input type="date" value={line.expiredDate} onChange={(event) => updateLine(line.key, 'expiredDate', event.target.value)} /></td>
+                  {hasBatchLine ? (
+                    <>
+                      <td className="px-3 py-2">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : null}</td>
+                      <td className="px-3 py-2">{lineRequiresBatch ? <Input required type="date" value={line.expiredDate} onChange={(event) => updateLine(line.key, 'expiredDate', event.target.value)} /> : null}</td>
+                    </>
+                  ) : null}
                   <td className="whitespace-nowrap px-3 py-2 font-medium">{money(calculateLine(line, form.purchaseStatusId).subtotal)}</td>
                   <td className="px-3 py-2 text-right">
                     <Button type="button" variant="ghost" className="h-9 w-9 px-0" disabled={lines.length === 1} onClick={() => setLines((current) => current.length === 1 ? current : current.filter((item) => item.key !== line.key))} aria-label="Remove line">
@@ -465,7 +483,8 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                     </Button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -637,8 +656,8 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     toast.error('Invalid received quantity', { description: 'Received quantity must be between zero and ordered quantity.' });
     return null;
   }
-  if (invoiceLines.some((item) => item.line.batchNo.trim() && !item.line.expiredDate)) {
-    toast.error('Missing expiry', { description: 'Expiry date is required when batch no is set.' });
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || !item.line.expiredDate))) {
+    toast.error('Missing batch details', { description: 'Batch no and expiry date are required for batch products.' });
     return null;
   }
 
@@ -655,8 +674,8 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
       product_code: product?.code ?? null,
       qty: values.qty,
       received: normalizedReceived(statusId, line),
-      batch_no: nullableText(line.batchNo),
-      expired_date: nullableText(line.expiredDate),
+      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
+      expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
       purchase_unit: product?.purchase_unit_id ?? null,
       net_unit_cost: values.cost,
       discount: values.discount,
@@ -746,6 +765,10 @@ function taxForProduct(product: Product, taxes: Tax[]) {
   return Number(taxes.find((tax) => tax.id === product.tax_id)?.rate ?? 0);
 }
 
+function isBatchProduct(product?: Product | null) {
+  return product?.is_batch === true || String(product?.is_batch) === '1';
+}
+
 function productLabel(productId: string, products: Product[]) {
   const product = products.find((item) => String(item.id) === productId);
   return product ? `${product.name} (${product.code})` : 'Select product';
@@ -763,6 +786,34 @@ function upsertById<T extends { id: number }>(items: T[], item: T) {
 
 function idValue(value?: number | null) {
   return value ? String(value) : 'none';
+}
+
+function nullableId(value?: string | null) {
+  if (!value || value === 'none') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
+  const batch = product.warehouse_prices?.find((item) =>
+    Number(item.warehouse_id) === Number(warehouseId) && item.batch_no
+  );
+
+  return batch?.batch_no ?? null;
+}
+
+async function validateBatchLines(lines: PurchaseInvoicePayload['lines'], products: Product[], warehouseId: number) {
+  for (const line of lines) {
+    if (!line.batch_no) continue;
+
+    const response = await api.checkBatchAvailability(line.product_id, line.batch_no, warehouseId);
+    if (!response.data.valid) {
+      const product = products.find((item) => item.id === line.product_id);
+      return `${product?.name ?? 'Selected product'} batch "${line.batch_no}" is not available in the selected warehouse. ${response.data.message}`;
+    }
+  }
+
+  return null;
 }
 
 function numberValue(value: string | number | null | undefined) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
@@ -223,6 +223,8 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
               productId: product.id,
               cost: String(product.purchase_price ?? product.cost ?? 0),
               taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
+              expiredDate: isBatchProduct(product) ? line.expiredDate : '',
             }
           : line
       )
@@ -245,6 +247,12 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
 
     setSaving(true);
     try {
+      const batchError = await validateBatchLines(payload.lines, products, payload.warehouse_id);
+      if (batchError) {
+        Alert.alert('Invalid batch no', batchError);
+        return;
+      }
+
       const response = editingId
         ? await api.updatePurchaseInvoice(editingId, payload)
         : await api.createPurchaseInvoice(payload);
@@ -310,19 +318,19 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
   return (
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerText}>
           <Text variant="headlineSmall">{editingId ? 'Edit Purchase Invoice' : 'Purchase Invoice'}</Text>
           <Text variant="bodyMedium" style={styles.muted}>{editingId ? 'Update invoice fields and line items' : 'Receive purchased stock with optional cash payment'}</Text>
         </View>
-        <Button mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>Refresh</Button>
+        <Button compact mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>Refresh</Button>
       </View>
 
       {mode === 'index' ? <View style={styles.panel}>
-        <View style={styles.sectionHeader}>
+        <View style={styles.invoiceListHeader}>
           <Text variant="titleMedium">Purchase invoices</Text>
           <View style={styles.rowActions}>
-            <Button mode="contained" onPress={() => router.push('/(drawer)/purchase-invoices-create')}>Create</Button>
-            <Button mode="outlined" loading={listLoading} disabled={listLoading} onPress={() => void loadInvoices()}>Refresh</Button>
+            <Button compact mode="contained" onPress={() => router.push('/(drawer)/purchase-invoices-create')}>Create</Button>
+            <Button compact mode="outlined" loading={listLoading} disabled={listLoading} onPress={() => void loadInvoices()}>Refresh</Button>
           </View>
         </View>
         {invoices.map((invoice) => (
@@ -398,6 +406,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
         </View>
         {lines.map((line, index) => {
           const product = products.find((item) => item.id === line.productId);
+          const lineRequiresBatch = isBatchProduct(product);
           const lineTotal = calculateLine(line, form.purchaseStatusId).subtotal;
           return (
             <View key={line.key} style={styles.lineCard}>
@@ -424,8 +433,12 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
                 <TextInput mode="outlined" label="Unit cost" keyboardType="numeric" value={line.cost} onChangeText={(value) => updateLine(line.key, 'cost', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Discount" keyboardType="numeric" value={line.discount} onChangeText={(value) => updateLine(line.key, 'discount', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
-                <TextInput mode="outlined" label="Batch no" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} />
-                <TextInput mode="outlined" label="Expiry YYYY-MM-DD" value={line.expiredDate} onChangeText={(value) => updateLine(line.key, 'expiredDate', value)} style={styles.formField} />
+                {lineRequiresBatch ? (
+                  <>
+                    <TextInput mode="outlined" label="Batch no *" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} />
+                    <DatePickerField label="Expiry *" value={line.expiredDate} onChange={(value) => updateLine(line.key, 'expiredDate', value)} style={styles.formField} />
+                  </>
+                ) : null}
               </View>
               <Text variant="bodyMedium" style={styles.lineTotal}>Line total: {money(lineTotal)}</Text>
             </View>
@@ -612,8 +625,8 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
     Alert.alert('Invalid received quantity', 'Received quantity must be between zero and ordered quantity.');
     return null;
   }
-  if (invoiceLines.some((item) => item.line.batchNo.trim() && !item.line.expiredDate.trim())) {
-    Alert.alert('Missing expiry', 'Expiry date is required when batch no is set.');
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || !item.line.expiredDate.trim()))) {
+    Alert.alert('Missing batch details', 'Batch no and expiry date are required for batch products.');
     return null;
   }
 
@@ -630,8 +643,8 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
       product_code: product?.code ?? null,
       qty: values.qty,
       received: normalizedReceived(form.purchaseStatusId, line),
-      batch_no: nullableText(line.batchNo),
-      expired_date: nullableText(line.expiredDate),
+      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
+      expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
       purchase_unit: product?.purchase_unit_id ?? null,
       net_unit_cost: values.cost,
       discount: values.discount,
@@ -725,6 +738,10 @@ function taxForProduct(product: Product, taxes: Tax[]) {
   return Number(taxes.find((tax) => tax.id === product.tax_id)?.rate ?? 0);
 }
 
+function isBatchProduct(product?: Product | null) {
+  return product?.is_batch === true || String(product?.is_batch) === '1';
+}
+
 function isInvoiceProductSupported(product: Product) {
   return !product.is_variant && product.type !== 'digital';
 }
@@ -733,6 +750,95 @@ function upsertById<T extends { id: number }>(items: T[], item: T) {
   return items.some((current) => current.id === item.id)
     ? items.map((current) => (current.id === item.id ? item : current))
     : [item, ...items];
+}
+
+function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
+  const batch = product.warehouse_prices?.find((item) =>
+    Number(item.warehouse_id) === Number(warehouseId) && item.batch_no
+  );
+
+  return batch?.batch_no ?? null;
+}
+
+async function validateBatchLines(lines: PurchaseInvoicePayload['lines'], products: Product[], warehouseId: number) {
+  for (const line of lines) {
+    if (!line.batch_no) continue;
+
+    const response = await api.checkBatchAvailability(line.product_id, line.batch_no, warehouseId);
+    if (!response.data.valid) {
+      const product = products.find((item) => item.id === line.product_id);
+      return `${product?.name ?? 'Selected product'} batch "${line.batch_no}" is not available in the selected warehouse. ${response.data.message}`;
+    }
+  }
+
+  return null;
+}
+
+function DatePickerField({ label, value, onChange, style }: { label: string; value: string; onChange: (value: string) => void; style?: StyleProp<ViewStyle> }) {
+  const [visible, setVisible] = useState(false);
+  const selectedDate = parseDate(value);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate ?? new Date()));
+  const days = calendarDays(visibleMonth);
+
+  function openPicker() {
+    setVisibleMonth(startOfMonth(selectedDate ?? new Date()));
+    setVisible(true);
+  }
+
+  function selectDate(date: Date) {
+    onChange(formatDate(date));
+    setVisible(false);
+  }
+
+  return (
+    <View style={style}>
+      <TextInput
+        dense
+        mode="outlined"
+        label={label}
+        value={value}
+        placeholder="YYYY-MM-DD"
+        editable={false}
+        right={<TextInput.Icon icon="calendar" onPress={openPicker} />}
+        onPressIn={openPicker}
+      />
+      <Portal>
+        <Modal visible={visible} onDismiss={() => setVisible(false)} contentContainerStyle={styles.datePickerModal}>
+          <View style={styles.datePickerHeader}>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, -1))}>Prev</Button>
+            <Text variant="titleMedium">{visibleMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</Text>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, 1))}>Next</Button>
+          </View>
+          <View style={styles.datePickerWeekdays}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+              <Text key={day} variant="labelSmall" style={styles.datePickerWeekday}>{day}</Text>
+            ))}
+          </View>
+          <View style={styles.datePickerGrid}>
+            {days.map((date) => {
+              const isCurrentMonth = date.getMonth() === visibleMonth.getMonth();
+              const isSelected = selectedDate ? formatDate(date) === formatDate(selectedDate) : false;
+
+              return (
+                <Pressable key={date.toISOString()} onPress={() => selectDate(date)} style={[styles.datePickerDay, isSelected && styles.datePickerDaySelected]}>
+                  <Text
+                    variant="bodyMedium"
+                    style={[
+                      styles.datePickerDayText,
+                      !isCurrentMonth && styles.datePickerDayMuted,
+                      isSelected && styles.datePickerDayTextSelected,
+                    ]}
+                  >
+                    {date.getDate()}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Modal>
+      </Portal>
+    </View>
+  );
 }
 
 function numberValue(value: string | number | null | undefined) {
@@ -753,6 +859,40 @@ function nullableText(value: string) {
   return text ? text : null;
 }
 
+function parseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function calendarDays(month: Date) {
+  const start = startOfMonth(month);
+  start.setDate(start.getDate() - start.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+}
+
 function generateReference() {
   const date = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -761,10 +901,12 @@ function generateReference() {
 
 const styles = StyleSheet.create({
   screen: { gap: 16 },
-  header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  header: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
+  headerText: { flex: 1, minWidth: 0 },
   muted: { color: '#666666' },
   panel: { width: '100%', maxWidth: '100%', alignSelf: 'stretch', gap: 10, padding: 14, borderRadius: 8, borderWidth: 1, borderColor: '#e5e5e5', backgroundColor: '#ffffff' },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  invoiceListHeader: { alignItems: 'stretch', gap: 10 },
   selectField: { width: '100%', maxWidth: '100%', flexShrink: 1 },
   fieldLabel: { marginBottom: 4, color: '#333333' },
   selectButton: { justifyContent: 'flex-start', width: '100%' },
@@ -783,9 +925,19 @@ const styles = StyleSheet.create({
   detailBox: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eeeeee', backgroundColor: '#fafafa' },
   formRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10, width: '100%', maxWidth: '100%' },
   formField: { minWidth: 0, flexBasis: '46%', flexGrow: 1, flexShrink: 1 },
+  datePickerModal: { alignSelf: 'center', backgroundColor: '#ffffff', borderRadius: 8, padding: 14, width: '92%', maxWidth: 360 },
+  datePickerHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  datePickerWeekdays: { flexDirection: 'row', marginBottom: 6 },
+  datePickerWeekday: { flex: 1, textAlign: 'center', color: '#666666' },
+  datePickerGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  datePickerDay: { alignItems: 'center', aspectRatio: 1, flexBasis: '14.2857%', justifyContent: 'center', borderRadius: 6 },
+  datePickerDaySelected: { backgroundColor: '#111111' },
+  datePickerDayText: { color: '#222222' },
+  datePickerDayMuted: { color: '#aaaaaa' },
+  datePickerDayTextSelected: { color: '#ffffff' },
   lineTotal: { textAlign: 'right', color: '#333333' },
   summaryTable: { minWidth: 360, borderRadius: 8, overflow: 'hidden', backgroundColor: '#ffffff' },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
-  rowActions: { flexDirection: 'row', gap: 8 },
+  rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   topActions: { flexDirection: 'row', justifyContent: 'flex-start', gap: 10 },
 });

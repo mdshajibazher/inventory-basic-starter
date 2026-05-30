@@ -58,11 +58,7 @@ class ProductResource extends JsonResource
                 'additional_price' => $productVariant->additional_price,
                 'qty' => $productVariant->qty,
             ])->values()),
-            'warehouse_prices' => $this->whenLoaded('warehousePrices', fn () => $this->warehousePrices->map(fn ($warehousePrice) => [
-                'warehouse_id' => $warehousePrice->warehouse_id,
-                'warehouse_name' => $warehousePrice->warehouse?->name,
-                'price' => $warehousePrice->price,
-            ])->values()),
+            'warehouse_prices' => $this->warehousePrices(),
             'brand' => $this->whenLoaded('brand'),
             'category' => $this->whenLoaded('category'),
             'unit' => $this->whenLoaded('unit'),
@@ -77,6 +73,28 @@ class ProductResource extends JsonResource
     private function primaryImage(): string
     {
         return trim(explode(',', (string) $this->image)[0]);
+    }
+
+    private function warehousePrices()
+    {
+        if ($this->is_batch && $this->relationLoaded('warehouseStocks')) {
+            return $this->warehouseStocks->map(fn ($warehousePrice) => [
+                'warehouse_id' => $warehousePrice->warehouse_id,
+                'warehouse_name' => $warehousePrice->warehouse?->name,
+                'product_batch_id' => $warehousePrice->product_batch_id,
+                'batch_no' => $warehousePrice->batch?->batch_no,
+                'expired_date' => $warehousePrice->batch?->expired_date?->toDateString(),
+                'qty' => $warehousePrice->qty,
+                'price' => $warehousePrice->price,
+            ])->values();
+        }
+
+        return $this->whenLoaded('warehousePrices', fn () => $this->warehousePrices->map(fn ($warehousePrice) => [
+            'warehouse_id' => $warehousePrice->warehouse_id,
+            'warehouse_name' => $warehousePrice->warehouse?->name,
+            'qty' => $warehousePrice->qty,
+            'price' => $warehousePrice->price,
+        ])->values());
     }
 
     private function imageUrl(Request $request, string $path): string

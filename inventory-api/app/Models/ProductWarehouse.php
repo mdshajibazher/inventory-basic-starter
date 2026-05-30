@@ -34,4 +34,9 @@ class ProductWarehouse extends Model
     {
         return $this->belongsTo(Warehouse::class);
     }
+
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(ProductBatch::class, 'product_batch_id');
+    }
 }

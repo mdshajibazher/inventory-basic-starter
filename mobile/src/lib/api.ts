@@ -180,6 +180,7 @@ export type SalesInvoiceLinePayload = {
   product_id: number;
   product_code?: string | null;
   product_batch_id?: number | null;
+  batch_no?: string | null;
   qty: number;
   sale_unit?: number | string | null;
   net_unit_price: number;
@@ -244,6 +245,13 @@ export type PurchaseInvoicePayload = {
   payment_note?: string | null;
   note?: string | null;
   document?: UploadImage | null;
+};
+
+export type BatchAvailabilityResponse = {
+  valid: boolean;
+  qty: number;
+  product_batch_id: number | null;
+  message: string;
 };
 
 function isFormData(body: BodyInit | null | undefined): body is FormData {
@@ -793,6 +801,13 @@ export const api = {
   products: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(
       `/products${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  product: (id: number) => request<{ data: unknown }>(`/products/${id}`),
+
+  checkBatchAvailability: (productId: number, batchNo: string, warehouseId: number) =>
+    request<{ data: BatchAvailabilityResponse }>(
+      `/check-batch-availability/${productId}/${encodeURIComponent(batchNo)}/${warehouseId}`
     ),
 
   createProduct: (payload: ProductPayload) =>

@@ -18,6 +18,7 @@ type ProductOptions = {
 type InvoiceLine = {
   key: string;
   productId: string;
+  batchNo: string;
   qty: string;
   price: string;
   discount: string;
@@ -55,6 +56,7 @@ type SearchableSelectProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: 'none',
+  batchNo: '',
   qty: '1',
   price: '0',
   discount: '0',
@@ -95,12 +97,9 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const supportedProducts = useMemo(
-    () => products.filter((product) => !product.is_variant && !product.is_batch && product.type !== 'digital'),
-    [products]
-  );
   const selectedCustomer = customers.find((customer) => String(customer.id) === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
+  const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchCustomers = useCallback(async (query: string) => {
@@ -186,7 +185,30 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
     setLines((current) => current.map((line) => (line.key === key ? { ...line, [field]: value } : line)));
   }
 
+  function selectWarehouse(warehouse: Warehouse) {
+    setWarehouses((current) => upsertById(current, warehouse));
+    setForm((current) => ({ ...current, warehouseId: String(warehouse.id) }));
+    setLines((current) => current.map((line) => {
+      const product = products.find((item) => String(item.id) === line.productId);
+      return product ? { ...line, price: String(unitPriceForProduct(product, warehouse.id)) } : line;
+    }));
+  }
+
   function selectProduct(lineKey: string, product: Product) {
+    const warehouseId = nullableId(form.warehouseId);
+    if (!warehouseId) {
+      toast.error('Select warehouse first', { description: 'Choose a warehouse before selecting products.' });
+      return;
+    }
+
+    const availableQty = warehouseStockForProduct(product, warehouseId);
+    if (availableQty <= 0) {
+      toast.error('No stock available', {
+        description: `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`,
+      });
+      return;
+    }
+
     setProducts((current) => upsertById(current, product));
     setLines((current) =>
       current.map((line) =>
@@ -194,7 +216,8 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
           ? {
               ...line,
               productId: String(product.id),
-              price: String(product.selling_price ?? product.price ?? 0),
+              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
+              price: String(unitPriceForProduct(product, warehouseId)),
               taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
             }
           : line
@@ -227,6 +250,12 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
 
     setSaving(true);
     try {
+      const batchError = await fillBatchIds(payload.lines, products, payload.warehouse_id);
+      if (batchError) {
+        toast.error('Invalid batch no', { description: batchError });
+        return;
+      }
+
       const response = editingId
         ? await api.updateSalesInvoice(editingId, payload)
         : await api.createSalesInvoice(payload);
@@ -234,6 +263,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
       setEditingId(null);
       resetForm();
       void loadInvoices();
+      router.push('/sales-invoices');
     } catch (error) {
       toast.error('Save failed', { description: errorMessage(error) });
     } finally {
@@ -274,6 +304,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: String(line.product_id ?? product?.id ?? 'none'),
+        batchNo: line.batch?.batch_no ?? '',
         qty: String(line.qty ?? '1'),
         price: String(line.net_unit_price ?? '0'),
         discount: String(line.discount ?? '0'),
@@ -380,10 +411,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
             keyFor={(warehouse) => warehouse.id}
             labelFor={(warehouse) => warehouse.name}
             detailFor={(warehouse) => warehouse.address || warehouse.email || warehouse.phone || ''}
-            onSelect={(warehouse) => {
-              setWarehouses((current) => upsertById(current, warehouse));
-              setValue('warehouseId', String(warehouse.id));
-            }}
+            onSelect={selectWarehouse}
           />
           <Field label="Branch"><Select value={form.billerId} onValueChange={(value) => setValue('billerId', value)} options={billerOptions(billers)} /></Field>
         </div>
@@ -393,7 +421,6 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">Products</h2>
-            {products.length !== supportedProducts.length ? <p className="mt-1 text-xs text-neutral-500">Variant, batch, and digital products are hidden in this first invoice form.</p> : null}
           </div>
           <Button type="button" variant="secondary" onClick={addLine}>
             <Plus className="h-4 w-4" />
@@ -404,11 +431,15 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', 'Qty', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
-              {lines.map((line) => (
+              {lines.map((line) => {
+                const product = products.find((item) => String(item.id) === line.productId);
+                const lineRequiresBatch = isBatchProduct(product);
+
+                return (
                 <tr key={line.key} className="border-t border-neutral-100">
                   <td className="min-w-72 px-3 py-2">
                     <SearchableSelect
@@ -418,11 +449,15 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
                       search={searchProducts}
                       keyFor={(product) => product.id}
                       labelFor={(product) => `${product.name} (${product.code})`}
-                      detailFor={(product) => `Price ${money(numberValue(product.selling_price ?? product.price))} | Qty ${money(numberValue(product.qty ?? product.quantity))}`}
+                      detailFor={(product) => {
+                        const warehouseId = nullableId(form.warehouseId);
+                        return `Price ${money(unitPriceForProduct(product, warehouseId))} | Qty ${money(warehouseStockForProduct(product, warehouseId))}`;
+                      }}
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
+                  {hasBatchLine ? <td className="px-3 py-2">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : null}</td> : null}
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></td>
@@ -433,7 +468,8 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
                     </Button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -631,7 +667,7 @@ function buildPayload(
   const invoiceLines = lines.map((line) => {
     const product = products.find((item) => String(item.id) === line.productId);
     const values = calculateLine(line);
-    return { product, values };
+    return { line, product, values };
   });
 
   if (invoiceLines.some((item) => !item.product)) {
@@ -640,6 +676,10 @@ function buildPayload(
   }
   if (invoiceLines.some((item) => item.values.qty <= 0)) {
     toast.error('Invalid quantity', { description: 'Line quantities must be greater than zero.' });
+    return null;
+  }
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && !item.line.batchNo.trim())) {
+    toast.error('Missing batch no', { description: 'Batch no is required for batch products.' });
     return null;
   }
 
@@ -652,10 +692,11 @@ function buildPayload(
     biller_id: Number(form.billerId),
     sale_status: 1,
     payment_status: paymentStatus(form.paymentMode),
-    lines: invoiceLines.map(({ product, values }) => ({
+    lines: invoiceLines.map(({ line, product, values }) => ({
       product_id: product?.id as number,
       product_code: product?.code ?? null,
       product_batch_id: null,
+      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       qty: values.qty,
       sale_unit: product?.type === 'combo' ? 'n/a' : product?.sale_unit_id ?? null,
       net_unit_price: values.price,
@@ -733,7 +774,11 @@ function productLabel(productId: string, products: Product[]) {
 }
 
 function isInvoiceProductSupported(product: Product) {
-  return !product.is_variant && !product.is_batch && product.type !== 'digital';
+  return !product.is_variant && product.type !== 'digital';
+}
+
+function isBatchProduct(product?: Product | null) {
+  return product?.is_batch === true || String(product?.is_batch) === '1';
 }
 
 function upsertById<T extends { id: number }>(items: T[], item: T) {
@@ -744,6 +789,64 @@ function upsertById<T extends { id: number }>(items: T[], item: T) {
 
 function idValue(value?: number | null) {
   return value ? String(value) : 'none';
+}
+
+function nullableId(value?: string | null) {
+  if (!value || value === 'none') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function unitPriceForProduct(product: Product, warehouseId?: number | null) {
+  const warehousePrice = warehouseId
+    ? product.warehouse_prices?.find((item) => Number(item.warehouse_id) === warehouseId)
+    : null;
+
+  if (product.is_diffPrice && warehousePrice?.price != null && warehousePrice.price !== '') {
+    return numberValue(warehousePrice.price);
+  }
+
+  return numberValue(product.selling_price ?? product.price);
+}
+
+function warehouseStockForProduct(product: Product, warehouseId?: number | null) {
+  const warehouseStocks = warehouseId
+    ? product.warehouse_prices?.filter((item) => Number(item.warehouse_id) === warehouseId)
+    : [];
+
+  if (warehouseStocks?.length) {
+    return warehouseStocks.reduce((sum, item) => sum + numberValue(item.qty), 0);
+  }
+
+  if (warehouseId) {
+    return 0;
+  }
+
+  return numberValue(product.qty ?? product.quantity);
+}
+
+function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
+  const batch = product.warehouse_prices?.find((item) =>
+    Number(item.warehouse_id) === Number(warehouseId) && item.batch_no
+  );
+
+  return batch?.batch_no ?? null;
+}
+
+async function fillBatchIds(lines: SalesInvoicePayload['lines'], products: Product[], warehouseId: number) {
+  for (const line of lines) {
+    if (!line.batch_no) continue;
+
+    const response = await api.checkBatchAvailability(line.product_id, line.batch_no, warehouseId);
+    if (!response.data.valid) {
+      const product = products.find((item) => item.id === line.product_id);
+      return `${product?.name ?? 'Selected product'} batch "${line.batch_no}" is not available in the selected warehouse. ${response.data.message}`;
+    }
+
+    line.product_batch_id = response.data.product_batch_id;
+  }
+
+  return null;
 }
 
 function numberValue(value: string | number | null | undefined) {

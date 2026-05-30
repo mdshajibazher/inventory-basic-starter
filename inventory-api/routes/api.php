@@ -88,9 +88,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['put', 'patch'], '/units/{unit}', [UnitController::class, 'update'])->middleware('permission:units-edit');
     Route::delete('/units/{unit}', [UnitController::class, 'destroy'])->middleware('permission:units-delete');
     Route::get('/products/options', [ProductController::class, 'options'])->middleware('permission:products-index|products-add|products-edit');
+    Route::get('/check-batch-availability/{product_id}/{batch_no}/{warehouse_id}', [ProductController::class, 'checkBatchAvailability'])
+        ->whereNumber('product_id')
+        ->whereNumber('warehouse_id')
+        ->middleware('permission:sales-index|sales-add|sales-edit|purchases-index|purchases-add|purchases-edit');
     Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products-index');
     Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products-add');
-    Route::get('/products/{product}', [ProductController::class, 'show'])->middleware('permission:products-index');
+    Route::get('/products/{product}', [ProductController::class, 'show'])->middleware('permission:products-index|products-edit');
     Route::match(['put', 'patch'], '/products/{product}', [ProductController::class, 'update'])->middleware('permission:products-edit');
     Route::delete('/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:products-delete');
 

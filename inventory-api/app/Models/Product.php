@@ -107,6 +107,11 @@ class Product extends Model
         return $this->hasMany(ProductWarehouse::class)->whereNull('variant_id')->whereNull('product_batch_id')->orderBy('warehouse_id');
     }
 
+    public function warehouseStocks(): HasMany
+    {
+        return $this->hasMany(ProductWarehouse::class)->whereNull('variant_id')->orderBy('warehouse_id')->orderBy('product_batch_id');
+    }
+
     public function stockMovements(): HasMany
     {
         return $this->hasMany(StockMovement::class);

@@ -225,6 +225,10 @@ class StorePurchaseInvoiceAction
 
     private function upsertBatch(Product $product, array $data, int|string $index, float $quantity): ?int
     {
+        if (! $product->is_batch) {
+            return null;
+        }
+
         $batchNo = $data['batch_no'][$index] ?? null;
 
         if (! $batchNo) {
@@ -312,6 +316,10 @@ class StorePurchaseInvoiceAction
 
     private function findBatchId(Product $product, array $data, int|string $index): ?int
     {
+        if (! $product->is_batch) {
+            return null;
+        }
+
         if (empty($data['batch_no'][$index])) {
             return null;
         }

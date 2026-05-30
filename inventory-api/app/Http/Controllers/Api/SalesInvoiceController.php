@@ -24,7 +24,7 @@ class SalesInvoiceController extends Controller
         'warehouse:id,name',
         'biller:id,name,company_name',
         'user:id,name,email',
-        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id',
+        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch',
         'products.unit:id,unit_code,unit_name',
         'products.batch:id,batch_no,expired_date',
         'products.variant:id,name',
