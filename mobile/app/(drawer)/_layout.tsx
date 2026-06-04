@@ -202,6 +202,27 @@ export default function DrawerLayout() {
         />
       ))}
       <Drawer.Screen
+        name="return-invoices"
+        options={{
+          title: 'Return Invoice',
+          drawerLabel: 'Return Invoice',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="receipt-text-remove-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('returns-add') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      {['return-invoices-create', 'return-invoices-detail', 'return-invoices-edit'].map((name) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          options={{
+            title: 'Return Invoice',
+            drawerItemStyle: styles.hiddenDrawerItem,
+          }}
+        />
+      ))}
+      <Drawer.Screen
         name="purchase-invoices"
         options={{
           title: 'Purchase Invoice',
@@ -289,7 +310,7 @@ function AppDrawerContent({
 }) {
   const activeRoute = state.routeNames[state.index];
   const peopleRouteNames = ['customers', 'suppliers', 'users'];
-  const salesRouteNames = ['sales-invoices', 'purchase-invoices'];
+  const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices'];
   const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
   const [peopleExpanded, setPeopleExpanded] = useState(
     peopleRouteNames.includes(activeRoute)
@@ -333,6 +354,7 @@ function AppDrawerContent({
 
   const salesItems = [
     item('sales-invoices', 'Sales Invoice', 'receipt-text-plus-outline', hasPermission('sales-add')),
+    item('return-invoices', 'Return Invoice', 'receipt-text-remove-outline', hasPermission('returns-add') || hasPermission('returns-index')),
     item('purchase-invoices', 'Purchase Invoice', 'receipt-text-plus-outline', hasPermission('purchases-add')),
   ].filter(Boolean);
 

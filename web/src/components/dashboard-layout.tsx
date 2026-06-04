@@ -37,6 +37,7 @@ const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
   { href: '/sales-invoices', label: 'Sales Invoice', icon: ReceiptText, permission: 'sales-add' },
+  { href: '/return-invoices', label: 'Return Invoice', icon: ReceiptText, permission: 'returns-add' },
   { href: '/purchase-invoices', label: 'Purchase Invoice', icon: ReceiptText, permission: 'purchases-add' },
 ];
 

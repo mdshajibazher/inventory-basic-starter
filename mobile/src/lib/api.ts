@@ -213,6 +213,10 @@ export type SalesInvoicePayload = {
   document?: UploadImage | null;
 };
 
+export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
+  return_note?: string | null;
+};
+
 export type PurchaseInvoiceLinePayload = {
   product_id: number;
   product_code?: string | null;
@@ -417,6 +421,30 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
   appendNullableString(formData, 'payment_note', payload.payment_note);
   appendNullableString(formData, 'sale_note', payload.sale_note);
+  appendNullableString(formData, 'staff_note', payload.staff_note);
+  appendImage(formData, 'document', payload.document);
+  return formData;
+}
+
+function returnInvoiceFormData(payload: ReturnInvoicePayload) {
+  const formData = new FormData();
+  formData.append('reference_no', payload.reference_no);
+  formData.append('customer_id', String(payload.customer_id));
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  formData.append('biller_id', String(payload.biller_id));
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
+  appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  appendNullableStringArray(formData, 'sale_unit', payload.lines.map((line) => line.sale_unit));
+  appendNumberArray(formData, 'net_unit_price', payload.lines.map((line) => line.net_unit_price));
+  appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
+  appendNullableNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
+  appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
+  appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);
+  appendNullableString(formData, 'return_note', payload.return_note ?? payload.sale_note);
   appendNullableString(formData, 'staff_note', payload.staff_note);
   appendImage(formData, 'document', payload.document);
   return formData;
@@ -849,6 +877,29 @@ export const api = {
       method: 'POST',
       body: (() => {
         const formData = salesInvoiceFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  returnInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  returnInvoice: (id: number) => request<{ data: unknown }>(`/return-invoices/${id}`),
+
+  createReturnInvoice: (payload: ReturnInvoicePayload) =>
+    request<{ data: unknown; message: string }>('/return-invoices', {
+      method: 'POST',
+      body: returnInvoiceFormData(payload),
+    }),
+
+  updateReturnInvoice: (id: number, payload: ReturnInvoicePayload) =>
+    request<{ data: unknown; message: string }>(`/return-invoices/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = returnInvoiceFormData(payload);
         formData.append('_method', 'PUT');
         return formData;
       })(),

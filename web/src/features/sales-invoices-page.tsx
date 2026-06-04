@@ -5,7 +5,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { api, type SalesInvoicePayload } from '@/lib/api';
+import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/lib/api';
 import type { Branch, Customer, Product, Tax, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
@@ -63,8 +63,8 @@ const emptyLine = (): InvoiceLine => ({
   taxRate: '0',
 });
 
-const emptyForm = (): FormState => ({
-  referenceNo: generateReference(),
+const emptyForm = (kind: InvoiceKind = 'sales'): FormState => ({
+  referenceNo: generateReference(kind),
   customerId: 'none',
   warehouseId: 'none',
   billerId: 'none',
@@ -79,16 +79,18 @@ const emptyForm = (): FormState => ({
 });
 
 type InvoicePageMode = 'index' | 'create' | 'details' | 'edit';
+type InvoiceKind = 'sales' | 'returns';
 
-export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: InvoicePageMode; invoiceId?: number }) {
+export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }: { mode?: InvoicePageMode; invoiceId?: number; kind?: InvoiceKind }) {
   const router = useRouter();
   const { hasPermission } = useAuth();
+  const labels = invoiceLabels(kind);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<FormState>(() => emptyForm(kind));
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
   const [selectedInvoice, setSelectedInvoice] = useState<Record<string, any> | null>(null);
@@ -151,9 +153,11 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
   }, []);
 
   useEffect(() => {
-    if (mode === 'create' && !hasPermission('sales-add')) router.replace('/dashboard');
-    if (mode === 'edit' && !hasPermission('sales-edit')) router.replace('/dashboard');
-  }, [hasPermission, mode, router]);
+    const addPermission = kind === 'returns' ? 'returns-add' : 'sales-add';
+    const editPermission = kind === 'returns' ? 'returns-edit' : 'sales-edit';
+    if (mode === 'create' && !hasPermission(addPermission)) router.replace('/dashboard');
+    if (mode === 'edit' && !hasPermission(editPermission)) router.replace('/dashboard');
+  }, [hasPermission, kind, mode, router]);
 
   useEffect(() => {
     void loadOptions();
@@ -168,7 +172,9 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
   async function loadInvoices() {
     setListLoading(true);
     try {
-      const response = await api.salesInvoices({ perPage: 20 });
+      const response = kind === 'returns'
+        ? await api.returnInvoices({ perPage: 20 })
+        : await api.salesInvoices({ perPage: 20 });
       setInvoices(response.data as Record<string, any>[]);
     } catch (error) {
       toast.error('Invoice list failed', { description: errorMessage(error) });
@@ -202,7 +208,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
     }
 
     const availableQty = warehouseStockForProduct(product, warehouseId);
-    if (availableQty <= 0) {
+    if (kind === 'sales' && availableQty <= 0) {
       toast.error('No stock available', {
         description: `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`,
       });
@@ -235,7 +241,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
 
   function resetForm() {
     setForm({
-      ...emptyForm(),
+      ...emptyForm(kind),
       customerId: idValue(customers[0]?.id),
       warehouseId: idValue(warehouses[0]?.id),
       billerId: idValue(billers[0]?.id),
@@ -245,25 +251,31 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const payload = buildPayload(form, lines, products, totals);
+    const payload = buildPayload(form, lines, products, totals, kind);
     if (!payload) return;
 
     setSaving(true);
     try {
-      const batchError = await fillBatchIds(payload.lines, products, payload.warehouse_id);
+      const batchError = kind === 'sales'
+        ? await fillBatchIds(payload.lines, products, payload.warehouse_id)
+        : null;
       if (batchError) {
         toast.error('Invalid batch no', { description: batchError });
         return;
       }
 
-      const response = editingId
-        ? await api.updateSalesInvoice(editingId, payload)
-        : await api.createSalesInvoice(payload);
-      toast.success(response.message || (editingId ? 'Sales invoice updated' : 'Sales invoice created'));
+      const response = kind === 'returns'
+        ? editingId
+          ? await api.updateReturnInvoice(editingId, payload as ReturnInvoicePayload)
+          : await api.createReturnInvoice(payload as ReturnInvoicePayload)
+        : editingId
+          ? await api.updateSalesInvoice(editingId, payload as SalesInvoicePayload)
+          : await api.createSalesInvoice(payload as SalesInvoicePayload);
+      toast.success(response.message || (editingId ? `${labels.singular} updated` : `${labels.singular} created`));
       setEditingId(null);
       resetForm();
       void loadInvoices();
-      router.push('/sales-invoices');
+      router.push(labels.basePath);
     } catch (error) {
       toast.error('Save failed', { description: errorMessage(error) });
     } finally {
@@ -273,7 +285,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
 
   async function openInvoice(id: number, mode: 'view' | 'edit') {
     try {
-      const response = await api.salesInvoice(id);
+      const response = kind === 'returns' ? await api.returnInvoice(id) : await api.salesInvoice(id);
       const invoice = response.data as Record<string, any>;
       setSelectedInvoice(invoice);
       if (mode === 'edit') fillFormFromInvoice(invoice);
@@ -318,9 +330,9 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
     <form onSubmit={save} className="grid gap-6">
       {mode === 'index' ? <section className="grid gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Sales invoices</h2>
+            <h2 className="text-lg font-semibold">{labels.plural}</h2>
           <div className="flex gap-2">
-            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href="/sales-invoices/create">Create invoice</Link>
+            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${labels.basePath}/create`}>Create invoice</Link>
             <Button type="button" variant="secondary" onClick={() => void loadInvoices()} disabled={listLoading}>
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
@@ -345,8 +357,8 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
                   <td className="px-4 py-3">{money(numberValue(invoice.grand_total))}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.paid_amount))}</td>
                   <td className="px-4 py-3 text-right">
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`/sales-invoices/${invoice.id}`}>Details</Link>
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`/sales-invoices/${invoice.id}/edit`}>Edit</Link>
+                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}`}>Details</Link>
+                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}/edit`}>Edit</Link>
                   </td>
                 </tr>
               ))}
@@ -358,24 +370,24 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
       {mode === 'details' ? (
         <section className="grid gap-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold tracking-tight">Sales Invoice Details</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{labels.singularTitle} Details</h1>
             <div className="flex gap-2">
-              <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href="/sales-invoices">Back</Link>
-              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`/sales-invoices/${invoiceId}/edit`}>Edit</Link> : null}
+              <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={labels.basePath}>Back</Link>
+              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${labels.basePath}/${invoiceId}/edit`}>Edit</Link> : null}
             </div>
           </div>
-          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
+          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
         </section>
       ) : null}
       {mode !== 'details' && mode !== 'index' ? <>
       <div className="flex flex-wrap items-center justify-start gap-2">
-        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href="/sales-invoices">Back to list</Link>
+        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={labels.basePath}>Back to list</Link>
         <Button type="button" variant="secondary" disabled={saving} onClick={resetForm}>Reset</Button>
       </div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? 'Edit Sales Invoice' : 'Sales Invoice'}</h1>
-          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update invoice fields and line items' : 'Create a completed sale with optional cash payment'}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? `Edit ${labels.singularTitle}` : labels.singularTitle}</h1>
+          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update invoice fields and line items' : labels.description}</p>
         </div>
         <div className="flex gap-2">
           <Button type="button" variant="secondary" disabled={loading} onClick={() => void loadOptions()}>
@@ -476,25 +488,25 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
       </section>
 
       <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Adjustments and Payment</h2>
+        <h2 className="text-base font-semibold">{kind === 'returns' ? 'Adjustments' : 'Adjustments and Payment'}</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
-          <Field label="Order discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field>
-          <Field label="Shipping cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field>
-          <Field label="Payment status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
+          {kind === 'sales' ? <Field label="Order discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Shipping cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Payment status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
             { value: 'unpaid', label: 'Unpaid' },
             { value: 'partial', label: 'Partial cash' },
             { value: 'paid', label: 'Paid cash' },
-          ]} /></Field>
-          {form.paymentMode === 'partial' ? <Field label="Paid amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
-          <Field label="Payment note"><Input value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field>
+          ]} /></Field> : null}
+          {kind === 'sales' && form.paymentMode === 'partial' ? <Field label="Paid amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Payment note"><Input value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field> : null}
         </div>
       </section>
 
       <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="text-base font-semibold">Notes</h2>
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Sale note"><Textarea value={form.saleNote} onChange={(event) => setValue('saleNote', event.target.value)} /></Field>
+          <Field label={kind === 'returns' ? 'Return note' : 'Sale note'}><Textarea value={form.saleNote} onChange={(event) => setValue('saleNote', event.target.value)} /></Field>
           <Field label="Staff note"><Textarea value={form.staffNote} onChange={(event) => setValue('staffNote', event.target.value)} /></Field>
         </div>
       </section>
@@ -517,14 +529,14 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId }: { mode?: Invoic
   );
 }
 
-function InvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
+function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
   return (
     <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex flex-wrap gap-6">
         <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
         <Summary label="Customer" value={String(invoice.customer?.name ?? '-')} />
         <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
-        <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} />
+        {kind === 'sales' ? <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} /> : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -653,8 +665,9 @@ function buildPayload(
   form: FormState,
   lines: InvoiceLine[],
   products: Product[],
-  totals: ReturnType<typeof calculateTotals>
-): SalesInvoicePayload | null {
+  totals: ReturnType<typeof calculateTotals>,
+  kind: InvoiceKind
+): SalesInvoicePayload | ReturnInvoicePayload | null {
   if (!form.referenceNo.trim()) {
     toast.error('Missing reference', { description: 'Reference no is required.' });
     return null;
@@ -685,13 +698,11 @@ function buildPayload(
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
 
-  return {
+  const basePayload = {
     reference_no: form.referenceNo.trim(),
     customer_id: Number(form.customerId),
     warehouse_id: Number(form.warehouseId),
     biller_id: Number(form.billerId),
-    sale_status: 1,
-    payment_status: paymentStatus(form.paymentMode),
     lines: invoiceLines.map(({ line, product, values }) => ({
       product_id: product?.id as number,
       product_code: product?.code ?? null,
@@ -706,6 +717,21 @@ function buildPayload(
       subtotal: values.subtotal,
     })),
     order_tax_rate: numberValue(form.orderTaxRate),
+    sale_note: nullableText(form.saleNote),
+    staff_note: nullableText(form.staffNote),
+  };
+
+  if (kind === 'returns') {
+    return {
+      ...basePayload,
+      return_note: nullableText(form.saleNote),
+    };
+  }
+
+  return {
+    ...basePayload,
+    sale_status: 1,
+    payment_status: paymentStatus(form.paymentMode),
     order_discount: numberValue(form.orderDiscount),
     coupon_discount: 0,
     coupon_active: false,
@@ -714,8 +740,6 @@ function buildPayload(
     paying_amount: paidAmount,
     paid_amount: paidAmount,
     payment_note: nullableText(form.paymentNote),
-    sale_note: nullableText(form.saleNote),
-    staff_note: nullableText(form.staffNote),
   };
 }
 
@@ -867,8 +891,29 @@ function nullableText(value: string) {
   return text ? text : null;
 }
 
-function generateReference() {
+function invoiceLabels(kind: InvoiceKind) {
+  if (kind === 'returns') {
+    return {
+      basePath: '/return-invoices',
+      singular: 'Return invoice',
+      singularTitle: 'Return Invoice',
+      plural: 'Return invoices',
+      description: 'Record returned sold products and add quantities back to stock',
+    };
+  }
+
+  return {
+    basePath: '/sales-invoices',
+    singular: 'Sales invoice',
+    singularTitle: 'Sales Invoice',
+    plural: 'Sales invoices',
+    description: 'Create a completed sale with optional cash payment',
+  };
+}
+
+function generateReference(kind: InvoiceKind = 'sales') {
   const date = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
-  return `sr-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const prefix = kind === 'returns' ? 'rr' : 'sr';
+  return `${prefix}-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }

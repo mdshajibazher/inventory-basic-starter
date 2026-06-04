@@ -4,7 +4,7 @@ import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
-import { api, type SalesInvoicePayload } from '@/src/lib/api';
+import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/src/lib/api';
 import type { Branch, Customer, Product, Tax, Warehouse } from '@/src/types';
 
 type ProductOptions = {
@@ -57,8 +57,11 @@ const emptyLine = (): InvoiceLine => ({
   taxRate: '0',
 });
 
-const initialForm = {
-  referenceNo: generateReference(),
+type InvoiceScreenMode = 'index' | 'create' | 'details' | 'edit';
+type InvoiceKind = 'sales' | 'returns';
+
+const initialForm = (kind: InvoiceKind = 'sales') => ({
+  referenceNo: generateReference(kind),
   customerId: null as number | null,
   warehouseId: null as number | null,
   billerId: null as number | null,
@@ -70,18 +73,18 @@ const initialForm = {
   paymentNote: '',
   saleNote: '',
   staffNote: '',
-};
+});
+type FormState = ReturnType<typeof initialForm>;
 
-type InvoiceScreenMode = 'index' | 'create' | 'details' | 'edit';
-
-export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: InvoiceScreenMode; invoiceId?: number }) {
+export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' }: { mode?: InvoiceScreenMode; invoiceId?: number; kind?: InvoiceKind }) {
   const { hasPermission } = useAuth();
+  const labels = invoiceLabels(kind);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(() => initialForm(kind));
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
   const [selectedInvoice, setSelectedInvoice] = useState<Record<string, any> | null>(null);
@@ -159,7 +162,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
   async function loadInvoices() {
     setListLoading(true);
     try {
-      const response = await api.salesInvoices({ perPage: 20 });
+      const response = kind === 'returns'
+        ? await api.returnInvoices({ perPage: 20 })
+        : await api.salesInvoices({ perPage: 20 });
       setInvoices(response.data as Record<string, any>[]);
     } catch (error) {
       Alert.alert('Invoice list failed', error instanceof Error ? error.message : 'Try again.');
@@ -192,7 +197,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
     }
 
     const availableQty = warehouseStockForProduct(product, form.warehouseId);
-    if (availableQty <= 0) {
+    if (kind === 'sales' && availableQty <= 0) {
       Alert.alert('No stock available', `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`);
       return;
     }
@@ -223,8 +228,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
 
   function resetForm() {
     setForm({
-      ...initialForm,
-      referenceNo: generateReference(),
+      ...initialForm(kind),
       customerId: customers[0]?.id ?? null,
       warehouseId: warehouses[0]?.id ?? null,
       billerId: billers[0]?.id ?? null,
@@ -233,25 +237,31 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
   }
 
   async function saveInvoice() {
-    const payload = buildPayload(form, lines, products, totals);
+    const payload = buildPayload(form, lines, products, totals, kind);
     if (!payload) return;
 
     setSaving(true);
     try {
-      const batchError = await fillBatchIds(payload.lines, products, payload.warehouse_id);
+      const batchError = kind === 'sales'
+        ? await fillBatchIds(payload.lines, products, payload.warehouse_id)
+        : null;
       if (batchError) {
         Alert.alert('Invalid batch no', batchError);
         return;
       }
 
-      const response = editingId
-        ? await api.updateSalesInvoice(editingId, payload)
-        : await api.createSalesInvoice(payload);
+      const response = kind === 'returns'
+        ? editingId
+          ? await api.updateReturnInvoice(editingId, payload as ReturnInvoicePayload)
+          : await api.createReturnInvoice(payload as ReturnInvoicePayload)
+        : editingId
+          ? await api.updateSalesInvoice(editingId, payload as SalesInvoicePayload)
+          : await api.createSalesInvoice(payload as SalesInvoicePayload);
       Alert.alert(editingId ? 'Invoice updated' : 'Invoice created', response.message);
       setEditingId(null);
       resetForm();
       void loadInvoices();
-      router.push('/(drawer)/sales-invoices');
+      router.push(labels.indexRoute);
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
@@ -261,7 +271,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
 
   async function openInvoice(id: number, mode: 'view' | 'edit') {
     try {
-      const response = await api.salesInvoice(id);
+      const response = kind === 'returns' ? await api.returnInvoice(id) : await api.salesInvoice(id);
       const invoice = response.data as Record<string, any>;
       setSelectedInvoice(invoice);
       if (mode === 'edit') fillFormFromInvoice(invoice);
@@ -283,7 +293,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
       paymentMode: paymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
       paidAmount: String(invoice.paid_amount ?? '0'),
       paymentNote: invoice.payments?.[0]?.payment_note ?? '',
-      saleNote: invoice.sale_note ?? '',
+      saleNote: invoice.return_note ?? invoice.sale_note ?? '',
       staffNote: invoice.staff_note ?? '',
     });
     const nextLines = (invoice.products ?? []).map((line: Record<string, any>) => {
@@ -302,7 +312,13 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
     setLines(nextLines.length ? nextLines : [emptyLine()]);
   }
 
-  if (!hasPermission('sales-add')) {
+  const allowed = kind === 'returns'
+    ? (mode === 'create' && hasPermission('returns-add')) ||
+      (mode === 'edit' && hasPermission('returns-edit')) ||
+      ((mode === 'index' || mode === 'details') && (hasPermission('returns-index') || hasPermission('returns-add') || hasPermission('returns-edit') || hasPermission('returns-show')))
+    : hasPermission('sales-add');
+
+  if (!allowed) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -310,9 +326,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text variant="headlineSmall">{editingId ? 'Edit Sales Invoice' : 'Sales Invoice'}</Text>
+          <Text variant="headlineSmall">{editingId ? `Edit ${labels.title}` : labels.title}</Text>
           <Text variant="bodyMedium" style={styles.muted}>
-            {editingId ? 'Update invoice fields and line items' : 'Create a completed sale with optional cash payment'}
+            {editingId ? 'Update invoice fields and line items' : labels.description}
           </Text>
         </View>
         <Button mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>
@@ -322,9 +338,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
 
       {mode === 'index' ? <View style={styles.panel}>
         <View style={styles.sectionHeader}>
-          <Text variant="titleMedium">Sales invoices</Text>
+          <Text variant="titleMedium">{labels.plural}</Text>
           <View style={styles.rowActions}>
-            <Button mode="contained" onPress={() => router.push('/(drawer)/sales-invoices-create')}>Create</Button>
+            <Button mode="contained" onPress={() => router.push(labels.createRoute)}>Create</Button>
             <Button mode="outlined" loading={listLoading} disabled={listLoading} onPress={() => void loadInvoices()}>Refresh</Button>
           </View>
         </View>
@@ -334,8 +350,8 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
               <Text variant="titleSmall">{invoice.reference_no}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.customer?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
             </View>
-            <Button compact onPress={() => router.push({ pathname: '/(drawer)/sales-invoices-detail', params: { id: String(invoice.id) } })}>Details</Button>
-            <Button compact onPress={() => router.push({ pathname: '/(drawer)/sales-invoices-edit', params: { id: String(invoice.id) } })}>Edit</Button>
+            <Button compact onPress={() => router.push({ pathname: labels.detailRoute, params: { id: String(invoice.id) } })}>Details</Button>
+            <Button compact onPress={() => router.push({ pathname: labels.editRoute, params: { id: String(invoice.id) } })}>Edit</Button>
           </View>
         ))}
         {!invoices.length ? <Text style={styles.muted}>No invoices found.</Text> : null}
@@ -343,16 +359,16 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
       {mode === 'details' ? (
         <View style={styles.panel}>
           <View style={styles.sectionHeader}>
-            <Text variant="titleMedium">Sales invoice details</Text>
-            <Button mode="outlined" onPress={() => router.push('/(drawer)/sales-invoices')}>Back</Button>
+            <Text variant="titleMedium">{labels.title} details</Text>
+            <Button mode="outlined" onPress={() => router.push(labels.indexRoute)}>Back</Button>
           </View>
-          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} /> : <Text style={styles.muted}>Loading invoice...</Text>}
+          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} /> : <Text style={styles.muted}>Loading invoice...</Text>}
         </View>
       ) : null}
 
       {mode !== 'index' && mode !== 'details' ? <>
       <View style={styles.topActions}>
-        <Button mode="outlined" disabled={saving} onPress={() => router.push('/(drawer)/sales-invoices')}>Back</Button>
+        <Button mode="outlined" disabled={saving} onPress={() => router.push(labels.indexRoute)}>Back</Button>
         <Button mode="outlined" disabled={saving} onPress={resetForm}>Reset</Button>
       </View>
       <View style={styles.panel}>
@@ -434,15 +450,15 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
       </View>
 
       <View style={styles.panel}>
-        <Text variant="titleMedium">Adjustments</Text>
+        <Text variant="titleMedium">{kind === 'returns' ? 'Adjustments' : 'Adjustments'}</Text>
         <View style={styles.formRow}>
           <TextInput mode="outlined" label="Order tax %" keyboardType="numeric" value={form.orderTaxRate} onChangeText={(value) => setValue('orderTaxRate', value)} style={styles.formField} />
-          <TextInput mode="outlined" label="Order discount" keyboardType="numeric" value={form.orderDiscount} onChangeText={(value) => setValue('orderDiscount', value)} style={styles.formField} />
-          <TextInput mode="outlined" label="Shipping cost" keyboardType="numeric" value={form.shippingCost} onChangeText={(value) => setValue('shippingCost', value)} style={styles.formField} />
+          {kind === 'sales' ? <TextInput mode="outlined" label="Order discount" keyboardType="numeric" value={form.orderDiscount} onChangeText={(value) => setValue('orderDiscount', value)} style={styles.formField} /> : null}
+          {kind === 'sales' ? <TextInput mode="outlined" label="Shipping cost" keyboardType="numeric" value={form.shippingCost} onChangeText={(value) => setValue('shippingCost', value)} style={styles.formField} /> : null}
         </View>
       </View>
 
-      <View style={styles.panel}>
+      {kind === 'sales' ? <View style={styles.panel}>
         <Text variant="titleMedium">Payment</Text>
         <SelectField
           label="Payment status"
@@ -460,11 +476,11 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId }: { mode?: Invo
           <TextInput mode="outlined" label="Paid amount" keyboardType="numeric" value={form.paidAmount} onChangeText={(value) => setValue('paidAmount', value)} />
         ) : null}
         <TextInput mode="outlined" label="Payment note" value={form.paymentNote} onChangeText={(value) => setValue('paymentNote', value)} />
-      </View>
+      </View> : null}
 
       <View style={styles.panel}>
         <Text variant="titleMedium">Notes</Text>
-        <TextInput mode="outlined" label="Sale note" multiline value={form.saleNote} onChangeText={(value) => setValue('saleNote', value)} />
+        <TextInput mode="outlined" label={kind === 'returns' ? 'Return note' : 'Sale note'} multiline value={form.saleNote} onChangeText={(value) => setValue('saleNote', value)} />
         <TextInput mode="outlined" label="Staff note" multiline value={form.staffNote} onChangeText={(value) => setValue('staffNote', value)} />
       </View>
 
@@ -505,12 +521,13 @@ export default function SalesInvoicesIndexScreen() {
   return <SalesInvoicesScreen mode="index" />;
 }
 
-function InvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
+function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
   return (
     <View style={styles.detailBox}>
       <Text variant="titleSmall">{invoice.reference_no}</Text>
       <Text style={styles.muted}>{invoice.customer?.name ?? '-'}</Text>
       <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
+      {kind === 'sales' ? <Text>Paid: {money(numberValue(invoice.paid_amount))}</Text> : null}
       {(invoice.products ?? []).map((line: Record<string, any>) => (
         <Text key={line.id} style={styles.muted}>{line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))} | {money(numberValue(line.total))}</Text>
       ))}
@@ -661,11 +678,12 @@ function SearchableSelectField<T>({
 }
 
 function buildPayload(
-  form: typeof initialForm,
+  form: FormState,
   lines: InvoiceLine[],
   products: Product[],
-  totals: ReturnType<typeof calculateTotals>
-): SalesInvoicePayload | null {
+  totals: ReturnType<typeof calculateTotals>,
+  kind: InvoiceKind
+): SalesInvoicePayload | ReturnInvoicePayload | null {
   if (!form.referenceNo.trim()) {
     Alert.alert('Missing reference', 'Reference no is required.');
     return null;
@@ -696,13 +714,11 @@ function buildPayload(
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
 
-  return {
+  const basePayload = {
     reference_no: form.referenceNo.trim(),
     customer_id: form.customerId,
     warehouse_id: form.warehouseId,
     biller_id: form.billerId,
-    sale_status: 1,
-    payment_status: paymentStatus(form.paymentMode),
     lines: invoiceLines.map(({ line, product, values }) => ({
       product_id: product?.id as number,
       product_code: product?.code ?? null,
@@ -717,6 +733,21 @@ function buildPayload(
       subtotal: values.subtotal,
     })),
     order_tax_rate: numberValue(form.orderTaxRate),
+    sale_note: nullableText(form.saleNote),
+    staff_note: nullableText(form.staffNote),
+  };
+
+  if (kind === 'returns') {
+    return {
+      ...basePayload,
+      return_note: nullableText(form.saleNote),
+    };
+  }
+
+  return {
+    ...basePayload,
+    sale_status: 1,
+    payment_status: paymentStatus(form.paymentMode),
     order_discount: numberValue(form.orderDiscount),
     coupon_discount: 0,
     coupon_active: false,
@@ -725,12 +756,10 @@ function buildPayload(
     paying_amount: paidAmount,
     paid_amount: paidAmount,
     payment_note: nullableText(form.paymentNote),
-    sale_note: nullableText(form.saleNote),
-    staff_note: nullableText(form.staffNote),
   };
 }
 
-function calculateTotals(lines: InvoiceLine[], form: typeof initialForm) {
+function calculateTotals(lines: InvoiceLine[], form: FormState) {
   const lineTotals = lines.map(calculateLine);
   const totalQty = round2(lineTotals.reduce((sum, line) => sum + line.qty, 0));
   const lineDiscount = round2(lineTotals.reduce((sum, line) => sum + line.discount, 0));
@@ -866,10 +895,35 @@ function nullableText(value: string) {
   return text ? text : null;
 }
 
-function generateReference() {
+function invoiceLabels(kind: InvoiceKind) {
+  if (kind === 'returns') {
+    return {
+      title: 'Return Invoice',
+      plural: 'Return invoices',
+      description: 'Record returned sold products and add quantities back to stock',
+      indexRoute: '/(drawer)/return-invoices' as const,
+      createRoute: '/(drawer)/return-invoices-create' as const,
+      detailRoute: '/(drawer)/return-invoices-detail' as const,
+      editRoute: '/(drawer)/return-invoices-edit' as const,
+    };
+  }
+
+  return {
+    title: 'Sales Invoice',
+    plural: 'Sales invoices',
+    description: 'Create a completed sale with optional cash payment',
+    indexRoute: '/(drawer)/sales-invoices' as const,
+    createRoute: '/(drawer)/sales-invoices-create' as const,
+    detailRoute: '/(drawer)/sales-invoices-detail' as const,
+    editRoute: '/(drawer)/sales-invoices-edit' as const,
+  };
+}
+
+function generateReference(kind: InvoiceKind = 'sales') {
   const date = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
-  return `sr-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const prefix = kind === 'returns' ? 'rr' : 'sr';
+  return `${prefix}-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 const styles = StyleSheet.create({
