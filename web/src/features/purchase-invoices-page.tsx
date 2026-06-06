@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
@@ -594,9 +595,9 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
         <Button type="button" variant="secondary" className="h-10 w-full justify-between overflow-hidden px-3 text-left font-normal" onClick={() => { setQuery(''); setDebouncedQuery(''); setOpen(true); }}>
           <span className="truncate">{valueLabel}</span>
         </Button>
-        {open ? (
-          <div className="fixed inset-0 z-50 grid place-items-start bg-black/30 p-4 pt-20">
-            <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white p-3 shadow-xl">
+        {open ? createPortal(
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={() => setOpen(false)}>
+            <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white p-3 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="font-medium">{label}</div>
                 <Button type="button" variant="ghost" className="h-8 px-2" onClick={() => setOpen(false)}>Close</Button>
@@ -616,7 +617,8 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
                 })}
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         ) : null}
       </div>
     </Field>
