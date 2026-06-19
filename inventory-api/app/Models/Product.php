@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class Product extends Model
 {
@@ -115,5 +116,28 @@ class Product extends Model
     public function stockMovements(): HasMany
     {
         return $this->hasMany(StockMovement::class);
+    }
+
+    public function productPurchases(): HasMany
+    {
+        return $this->hasMany(ProductPurchase::class);
+    }
+
+    public function productSales(): HasMany
+    {
+        return $this->hasMany(ProductSale::class);
+    }
+
+    public function productReturns(): HasMany
+    {
+        return $this->hasMany(ProductReturn::class);
+    }
+
+    public function unitIdLocked(): bool
+    {
+        return $this->productPurchases()->exists()
+            || $this->productSales()->exists()
+            || $this->productReturns()->exists()
+            || DB::table('purchase_product_return')->where('product_id', $this->id)->exists();
     }
 }

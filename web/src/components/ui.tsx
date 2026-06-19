@@ -97,15 +97,17 @@ export function Select({
   onValueChange,
   options,
   placeholder = 'Select',
+  disabled = false,
 }: {
   value: string;
   onValueChange: (value: string) => void;
   options: { value: string; label: string }[];
   placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
-    <SelectPrimitive.Root value={value} onValueChange={onValueChange}>
-      <SelectPrimitive.Trigger className="flex h-10 w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 text-left text-sm outline-none focus:border-black">
+    <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+      <SelectPrimitive.Trigger className="flex h-10 w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 text-left text-sm outline-none focus:border-black disabled:cursor-not-allowed disabled:opacity-50">
         <SelectPrimitive.Value placeholder={placeholder} />
         <SelectPrimitive.Icon>
           <ChevronDown className="h-4 w-4" />

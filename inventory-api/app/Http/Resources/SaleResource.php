@@ -13,6 +13,7 @@ class SaleResource extends JsonResource
         return [
             'id' => $this->id,
             'reference_no' => $this->reference_no,
+            'sale_date' => $this->sale_date?->toDateString(),
             'user_id' => $this->user_id,
             'cash_register_id' => $this->cash_register_id,
             'customer_id' => $this->customer_id,

@@ -11,6 +11,7 @@ class ProductSale extends Model
 
     protected $fillable = [
         'sale_id',
+        'date',
         'product_id',
         'variant_id',
         'product_batch_id',
@@ -21,12 +22,15 @@ class ProductSale extends Model
         'tax_rate',
         'tax',
         'total',
+        'unit_cost',
+        'total_cost',
     ];
 
     protected function casts(): array
     {
         return [
             'sale_id' => 'integer',
+            'date' => 'date',
             'product_id' => 'integer',
             'variant_id' => 'integer',
             'product_batch_id' => 'integer',
@@ -37,6 +41,8 @@ class ProductSale extends Model
             'tax_rate' => 'float',
             'tax' => 'float',
             'total' => 'float',
+            'unit_cost' => 'float',
+            'total_cost' => 'float',
         ];
     }
 

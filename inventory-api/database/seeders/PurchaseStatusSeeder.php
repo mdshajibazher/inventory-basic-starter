@@ -2,21 +2,19 @@
 
 namespace Database\Seeders;
 
+use App\Models\PurchaseStatus;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
 
 class PurchaseStatusSeeder extends Seeder
 {
     public function run(): void
     {
         foreach ($this->statuses() as $status) {
-            DB::table('purchase_statuses')->updateOrInsert(
+            PurchaseStatus::query()->updateOrCreate(
                 ['value' => $status['value']],
                 [
-                    'id' => (int) $status['value'],
+                    'value' => $status['value'],
                     'label' => $status['label'],
-                    'updated_at' => now(),
-                    'created_at' => now(),
                 ]
             );
         }

@@ -13,6 +13,7 @@ class PurchaseResource extends JsonResource
         return [
             'id' => $this->id,
             'reference_no' => $this->reference_no,
+            'purchase_date' => $this->purchase_date?->toDateString(),
             'user_id' => $this->user_id,
             'warehouse_id' => $this->warehouse_id,
             'supplier_id' => $this->supplier_id,

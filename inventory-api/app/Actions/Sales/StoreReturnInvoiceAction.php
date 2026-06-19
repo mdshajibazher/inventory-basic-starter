@@ -10,8 +10,10 @@ use App\Models\ProductReturn;
 use App\Models\ProductVariant;
 use App\Models\ProductWarehouse;
 use App\Models\ReturnInvoice;
+use App\Models\StockMovement;
 use App\Models\Unit;
 use App\Models\User;
+use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -38,12 +40,18 @@ class StoreReturnInvoiceAction
             $documentPath = $document?->store('return/documents', 'public') ?? $returnInvoice?->document;
 
             if ($returnInvoice) {
+                $existingLineIds = $returnInvoice->products()->pluck('id')->all();
                 $this->reverseStock($returnInvoice);
+                StockMovement::query()
+                    ->where('source_type', 'product_return')
+                    ->whereIn('source_id', $existingLineIds)
+                    ->delete();
                 ProductReturn::query()->where('return_id', $returnInvoice->id)->delete();
             }
 
             $attributes = [
                 'reference_no' => $data['reference_no'],
+                'return_date' => $data['return_date'] ?? now()->toDateString(),
                 'user_id' => $user->id,
                 'cash_register_id' => $cashRegister?->id,
                 'customer_id' => $data['customer_id'],
@@ -72,22 +80,45 @@ class StoreReturnInvoiceAction
             foreach ($data['product_id'] as $index => $productId) {
                 $product = Product::query()->lockForUpdate()->findOrFail($productId);
                 $unit = $this->resolveSaleUnit($data['sale_unit'][$index] ?? null, $product);
-                $baseQuantity = $this->baseQuantity((float) $data['qty'][$index], $unit);
+                $qty = (float) $data['qty'][$index];
+                $baseQuantity = $this->baseQuantity($qty, $unit);
+                $cost = $this->costSnapshot($product, $qty, $baseQuantity);
                 [$variantId, $batchId] = $this->incrementStock($product, $data, $index, $baseQuantity);
 
-                ProductReturn::create([
+                $productReturn = ProductReturn::create([
                     'return_id' => $returnInvoice->id,
+                    'date' => $returnInvoice->return_date?->toDateString(),
                     'product_id' => $product->id,
                     'variant_id' => $variantId,
                     'product_batch_id' => $batchId,
-                    'qty' => (float) $data['qty'][$index],
+                    'qty' => $qty,
                     'sale_unit_id' => $unit?->id ?? 0,
                     'net_unit_price' => (float) $data['net_unit_price'][$index],
                     'discount' => (float) $data['discount'][$index],
                     'tax_rate' => (float) ($data['tax_rate'][$index] ?? 0),
                     'tax' => (float) $data['tax'][$index],
                     'total' => $totals['lines'][$index],
+                    'unit_cost' => $cost['unit_cost'],
+                    'total_cost' => $cost['total_cost'],
                 ]);
+
+                if ($product->type !== 'digital') {
+                    app(ProductStockService::class)->recordMovement([
+                        'product_id' => $product->id,
+                        'warehouse_id' => $data['warehouse_id'],
+                        'product_batch_id' => $batchId,
+                        'variant_id' => $variantId,
+                        'unit_id' => $unit?->id,
+                        'user_id' => $user->id,
+                        'source_type' => 'product_return',
+                        'source_id' => $productReturn->id,
+                        'type' => 'product_return',
+                        'quantity' => (float) $data['qty'][$index],
+                        'quantity_base' => $baseQuantity,
+                        'reference_no' => $returnInvoice->reference_no,
+                        'movement_date' => $returnInvoice->return_date?->toDateString(),
+                    ]);
+                }
             }
 
             return $returnInvoice->load($this->relations());
@@ -159,6 +190,16 @@ class StoreReturnInvoiceAction
         }
 
         return $qty;
+    }
+
+    private function costSnapshot(Product $product, float $qty, float $baseQuantity): array
+    {
+        $totalCost = round((float) $product->cost * $baseQuantity, 2);
+
+        return [
+            'unit_cost' => $qty > 0 ? round($totalCost / $qty, 2) : 0,
+            'total_cost' => $totalCost,
+        ];
     }
 
     private function incrementStock(Product $product, array $data, int|string $index, float $quantity): array

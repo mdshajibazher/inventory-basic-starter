@@ -12,6 +12,7 @@ class ReturnInvoice extends Model
 
     protected $fillable = [
         'reference_no',
+        'return_date',
         'user_id',
         'cash_register_id',
         'customer_id',
@@ -35,6 +36,7 @@ class ReturnInvoice extends Model
     {
         return [
             'user_id' => 'integer',
+            'return_date' => 'date',
             'cash_register_id' => 'integer',
             'customer_id' => 'integer',
             'warehouse_id' => 'integer',

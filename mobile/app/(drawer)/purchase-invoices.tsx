@@ -5,14 +5,15 @@ import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, T
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type PurchaseInvoicePayload } from '@/src/lib/api';
-import type { Product, PurchaseStatus, Supplier, Tax, Warehouse } from '@/src/types';
+import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/src/types';
 
-type ProductOptions = { taxes?: Tax[] };
+type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
 
 type InvoiceLine = {
   key: string;
   productId: number | null;
+  unitId: number | null;
   qty: string;
   received: string;
   cost: string;
@@ -61,6 +62,7 @@ const fallbackPurchaseStatuses: PurchaseStatus[] = [
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: null,
+  unitId: null,
   qty: '1',
   received: '1',
   cost: '0',
@@ -72,6 +74,7 @@ const emptyLine = (): InvoiceLine => ({
 
 const initialForm = {
   referenceNo: generateReference(),
+  purchaseDate: todayDate(),
   supplierId: null as number | null,
   warehouseId: null as number | null,
   purchaseStatusId: PURCHASE_STATUS_RECEIVED,
@@ -93,6 +96,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
   const [products, setProducts] = useState<Product[]>([]);
   const [purchaseStatuses, setPurchaseStatuses] = useState<PurchaseStatus[]>(fallbackPurchaseStatuses);
   const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [form, setForm] = useState(initialForm);
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
@@ -147,6 +151,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
       setProducts(nextProducts);
       setPurchaseStatuses(nextPurchaseStatuses);
       setTaxes(productOptions.taxes ?? []);
+      setUnits(productOptions.units ?? []);
       setForm((current) => ({
         ...current,
         supplierId: current.supplierId ?? nextSuppliers[0]?.id ?? null,
@@ -205,6 +210,21 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     );
   }
 
+  function selectLineUnit(lineKey: string, unitId: number) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => item.id === line.productId);
+      if (!product) return { ...line, unitId };
+
+      return {
+        ...line,
+        unitId,
+        cost: String(unitCostForProductUnit(product, unitId, units)),
+      };
+    }));
+  }
+
   function setPurchaseStatus(statusId: number) {
     setValue('purchaseStatusId', statusId);
     if (isReceivedQuantitySyncedStatus(statusId)) {
@@ -218,14 +238,18 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     setLines((current) =>
       current.map((line) =>
         line.key === lineKey
-          ? {
-              ...line,
-              productId: product.id,
-              cost: String(product.purchase_price ?? product.cost ?? 0),
-              taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
-              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
-              expiredDate: isBatchProduct(product) ? line.expiredDate : '',
-            }
+          ? (() => {
+              const unitId = normalizeId(product.purchase_unit_id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'purchase');
+              return {
+                ...line,
+                productId: product.id,
+                unitId,
+                cost: String(unitCostForProductUnit(product, unitId, units)),
+                taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+                batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
+                expiredDate: isBatchProduct(product) ? line.expiredDate : '',
+              };
+            })()
           : line
       )
     );
@@ -235,6 +259,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     setForm({
       ...initialForm,
       referenceNo: generateReference(),
+      purchaseDate: todayDate(),
       supplierId: suppliers[0]?.id ?? null,
       warehouseId: warehouses[0]?.id ?? null,
     });
@@ -282,6 +307,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
+      purchaseDate: String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
       supplierId: Number(invoice.supplier_id),
       warehouseId: Number(invoice.warehouse_id),
       purchaseStatusId: Number(invoice.purchase_status_id ?? invoice.status),
@@ -299,6 +325,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: Number(line.product_id ?? product?.id ?? 0) || null,
+        unitId: normalizeId(line.purchase_unit_id ?? line.unit?.id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'purchase'),
         qty: String(line.qty ?? '1'),
         received: String(line.received ?? line.qty ?? '1'),
         cost: String(line.net_unit_cost ?? '0'),
@@ -337,6 +364,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
           <View key={invoice.id} style={styles.listItem}>
             <View style={styles.listItemText}>
               <Text variant="titleSmall">{invoice.reference_no}</Text>
+              <Text variant="bodySmall" style={styles.muted}>Purchase date: {String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.supplier?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
             </View>
             <Button compact onPress={() => router.push({ pathname: '/(drawer)/purchase-invoices-detail', params: { id: String(invoice.id) } })}>Details</Button>
@@ -363,6 +391,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
       <View style={styles.panel}>
         <Text variant="titleMedium">Invoice</Text>
         <TextInput mode="outlined" label="Reference no" value={form.referenceNo} onChangeText={(value) => setValue('referenceNo', value)} />
+        <DatePickerField label="Purchase date" value={form.purchaseDate} onChange={(value) => setValue('purchaseDate', value)} />
         <SearchableSelectField
           label="Supplier"
           valueLabel={selectedSupplier?.name ?? 'Select supplier'}
@@ -406,6 +435,8 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
         </View>
         {lines.map((line, index) => {
           const product = products.find((item) => item.id === line.productId);
+          const unitOptions = productOptionsForFamily(product, units);
+          const selectedUnit = unitOptions.find((unit) => unit.id === line.unitId);
           const lineRequiresBatch = isBatchProduct(product);
           const lineTotal = calculateLine(line, form.purchaseStatusId).subtotal;
           return (
@@ -421,7 +452,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
                 search={searchProducts}
                 keyFor={(item) => item.id}
                 labelFor={(item) => `${item.name} (${item.code})`}
-                detailFor={(item) => `Cost ${money(numberValue(item.purchase_price ?? item.cost))} | Qty ${money(numberValue(item.qty ?? item.quantity))}`}
+                detailFor={(item) => `Cost ${money(baseUnitCostForProduct(item))} | Qty ${money(numberValue(item.qty ?? item.quantity))}`}
                 onSelect={(item) => {
                   setProducts((current) => upsertById(current, item));
                   selectProduct(line.key, item);
@@ -430,6 +461,17 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
               <View style={styles.formRow}>
                 <TextInput mode="outlined" label="Qty" keyboardType="numeric" value={line.qty} onChangeText={(value) => updateLine(line.key, 'qty', value)} style={styles.formField} />
                 {showReceived ? <TextInput mode="outlined" label="Received" keyboardType="numeric" value={line.received} onChangeText={(value) => updateLine(line.key, 'received', value)} style={styles.formField} /> : null}
+                {product ? (
+                  <SelectField
+                    label="Unit"
+                    valueLabel={selectedUnit ? `${selectedUnit.unit_name} (${selectedUnit.unit_code})` : 'Select unit'}
+                    options={unitOptions}
+                    keyFor={(unit) => unit.id}
+                    labelFor={(unit) => `${unit.unit_name} (${unit.unit_code})`}
+                    onSelect={(unit) => selectLineUnit(line.key, unit.id)}
+                    style={styles.formField}
+                  />
+                ) : null}
                 <TextInput mode="outlined" label="Unit cost" keyboardType="numeric" value={line.cost} onChangeText={(value) => updateLine(line.key, 'cost', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Discount" keyboardType="numeric" value={line.discount} onChangeText={(value) => updateLine(line.key, 'discount', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
@@ -506,6 +548,7 @@ function PurchaseInvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
   return (
     <View style={styles.detailBox}>
       <Text variant="titleSmall">{invoice.reference_no}</Text>
+      <Text>Purchase date: {String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
       <Text style={styles.muted}>{invoice.supplier?.name ?? '-'}</Text>
       <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
       {(invoice.products ?? []).map((line: Record<string, any>) => (
@@ -633,6 +676,7 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
   return {
     reference_no: form.referenceNo.trim(),
+    purchase_date: form.purchaseDate,
     supplier_id: form.supplierId,
     warehouse_id: form.warehouseId,
     status: form.purchaseStatusId,
@@ -645,7 +689,7 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
       received: normalizedReceived(form.purchaseStatusId, line),
       batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
-      purchase_unit: product?.purchase_unit_id ?? null,
+      purchase_unit: line.unitId,
       net_unit_cost: values.cost,
       discount: values.discount,
       tax_rate: values.taxRate,
@@ -746,10 +790,97 @@ function isInvoiceProductSupported(product: Product) {
   return !product.is_variant && product.type !== 'digital';
 }
 
+function normalizeId(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function defaultProductUnit(product: Product | undefined, familyUnits: Unit[], kind: 'sale' | 'purchase' | 'stock') {
+  if (!product) return null;
+  const preferredId = kind === 'sale'
+    ? product.sale_unit_id
+    : kind === 'purchase'
+      ? product.purchase_unit_id
+      : product.unit_id ?? product.unit?.id;
+  const fallbackId = product.unit_id ?? product.unit?.id;
+  const preferred = familyUnits.find((unit) => unit.id === preferredId);
+  const fallback = familyUnits.find((unit) => unit.id === fallbackId);
+  return preferred?.id ?? fallback?.id ?? familyUnits[0]?.id ?? null;
+}
+
+function productOptionsForFamily(product: Product | undefined, units: Unit[]) {
+  if (!product) return [];
+  const productUnitId = product.unit_id ?? product.unit?.id ?? product.purchase_unit_id ?? product.sale_unit_id ?? null;
+  const rootId = rootUnitId(productUnitId, units);
+  if (!rootId) return [];
+
+  return units.filter((unit) => rootUnitId(unit.id, units) === rootId);
+}
+
+function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
+  let current = unitId ?? null;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return current;
+    visited.add(current);
+    const unit = units.find((item) => item.id === current);
+    if (!unit?.base_unit) return current;
+    current = unit.base_unit;
+  }
+
+  return null;
+}
+
 function upsertById<T extends { id: number }>(items: T[], item: T) {
   return items.some((current) => current.id === item.id)
     ? items.map((current) => (current.id === item.id ? item : current))
     : [item, ...items];
+}
+
+function baseUnitCostForProduct(product: Product) {
+  return numberValue(product.cost);
+}
+
+function unitCostForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
+  const baseCost = baseUnitCostForProduct(product);
+  const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
+  const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
+
+  return round2(baseCost * factor);
+}
+
+function unitConversionFactorFromBase(unitId: number | null | undefined, baseUnitId: number | null | undefined, units: Unit[]) {
+  if (!unitId || !baseUnitId || unitId === baseUnitId) return 1;
+
+  const unitFactor = unitRootFactor(unitId, units);
+  const baseFactor = unitRootFactor(baseUnitId, units);
+
+  if (!unitFactor || !baseFactor || unitFactor.rootId !== baseFactor.rootId || baseFactor.factor <= 0) return 1;
+
+  return unitFactor.factor / baseFactor.factor;
+}
+
+function unitRootFactor(unitId: number, units: Unit[]) {
+  let current: number | null | undefined = unitId;
+  let factor = 1;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    const unit = units.find((item) => item.id === current);
+    if (!unit) return null;
+    if (!unit.base_unit) return { rootId: current, factor };
+
+    const operationValue = numberValue(unit.operation_value || 1) || 1;
+    factor = unit.operator === '/' ? factor / operationValue : factor * operationValue;
+    current = unit.base_unit;
+  }
+
+  return null;
 }
 
 function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
@@ -872,6 +1003,14 @@ function formatDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function todayDate() {
+  return formatDate(new Date());
+}
+
+function dateOnly(value: unknown) {
+  return typeof value === 'string' ? value.slice(0, 10) : null;
 }
 
 function startOfMonth(date: Date) {

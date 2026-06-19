@@ -12,6 +12,7 @@ class ProductSaleResource extends JsonResource
         return [
             'id' => $this->id,
             'sale_id' => $this->sale_id,
+            'date' => $this->date?->toDateString(),
             'product_id' => $this->product_id,
             'variant_id' => $this->variant_id,
             'product_batch_id' => $this->product_batch_id,

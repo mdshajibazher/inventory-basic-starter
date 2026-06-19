@@ -160,6 +160,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="accounts"
+        options={{
+          title: 'Accounts',
+          drawerLabel: 'Accounts',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="cash-multiple" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('accounts-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="products"
         options={{
           title: 'Products',
@@ -168,6 +179,28 @@ export default function DrawerLayout() {
             <MaterialCommunityIcons name="package-variant-closed" size={size} color={color} />
           ),
           drawerItemStyle: hasPermission('products-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="product-stocks"
+        options={{
+          title: 'Product Stock',
+          drawerLabel: 'Product Stock',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="package-variant" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('product-stocks-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="profit-report"
+        options={{
+          title: 'Profit Report',
+          drawerLabel: 'Profit Report',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="chart-line" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('reports-profit') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       {['products-create', 'products-edit'].map((name) => (
@@ -311,7 +344,8 @@ function AppDrawerContent({
   const activeRoute = state.routeNames[state.index];
   const peopleRouteNames = ['customers', 'suppliers', 'users'];
   const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices'];
-  const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'warehouses', 'categories'];
+  const reportRouteNames = ['profit-report'];
+  const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'accounts', 'warehouses', 'categories'];
   const [peopleExpanded, setPeopleExpanded] = useState(
     peopleRouteNames.includes(activeRoute)
   );
@@ -342,6 +376,7 @@ function AppDrawerContent({
     item('units', 'Units', 'scale-balance', hasPermission('units-index')),
     item('taxes', 'Taxes', 'percent-outline', hasPermission('taxes-index')),
     item('currencies', 'Currencies', 'currency-usd', hasPermission('currencies-index')),
+    item('accounts', 'Accounts', 'cash-multiple', hasPermission('accounts-index')),
     item('warehouses', 'Warehouses', 'warehouse', hasPermission('warehouses-index')),
     item('categories', 'Categories', 'shape-outline', hasPermission('categories-index')),
   ].filter(Boolean);
@@ -358,10 +393,15 @@ function AppDrawerContent({
     item('purchase-invoices', 'Purchase Invoice', 'receipt-text-plus-outline', hasPermission('purchases-add')),
   ].filter(Boolean);
 
+  const reportItems = [
+    item('profit-report', 'Profit Report', 'chart-line', hasPermission('reports-profit')),
+  ].filter(Boolean);
+
   return (
     <DrawerContentScrollView>
       {item('dashboard', 'Dashboard', 'view-dashboard-outline')}
       {item('products', 'Products', 'package-variant-closed', hasPermission('products-index'))}
+      {item('product-stocks', 'Product Stock', 'package-variant', hasPermission('product-stocks-index'))}
 
       {salesItems.length ? (
         <View style={styles.drawerSection}>
@@ -374,6 +414,20 @@ function AppDrawerContent({
             onPress={() => navigation.navigate('sales-invoices', { refreshKey: Date.now() })}
           />
           <View style={styles.drawerSubItems}>{salesItems}</View>
+        </View>
+      ) : null}
+
+      {reportItems.length ? (
+        <View style={styles.drawerSection}>
+          <DrawerItem
+            label="Reports"
+            focused={reportRouteNames.includes(activeRoute)}
+            icon={({ color, size }) => (
+              <MaterialCommunityIcons name="chart-box-outline" size={size} color={color} />
+            )}
+            onPress={() => navigation.navigate('profit-report', { refreshKey: Date.now() })}
+          />
+          <View style={styles.drawerSubItems}>{reportItems}</View>
         </View>
       ) : null}
 

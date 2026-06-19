@@ -14,6 +14,7 @@ use App\Models\Purchase;
 use App\Models\Unit;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -35,6 +36,7 @@ class StorePurchaseInvoiceAction
 
             $purchase = Purchase::create([
                 'reference_no' => $data['reference_no'],
+                'purchase_date' => $data['purchase_date'] ?? now()->toDateString(),
                 'user_id' => $user->id,
                 'warehouse_id' => $warehouseId,
                 'supplier_id' => $data['supplier_id'],
@@ -55,6 +57,10 @@ class StorePurchaseInvoiceAction
                 'note' => $data['note'] ?? null,
             ]);
 
+            logger([
+                'data' => $data
+            ]);
+
             foreach ($data['product_id'] as $index => $productId) {
                 $product = Product::query()->lockForUpdate()->findOrFail($productId);
                 $unit = $this->resolvePurchaseUnit($data['purchase_unit'][$index] ?? null, $product, $index);
@@ -73,8 +79,9 @@ class StorePurchaseInvoiceAction
                     $variantId = $this->findVariantId($product, $data, $index);
                 }
 
-                ProductPurchase::create([
+                $productPurchase = ProductPurchase::create([
                     'purchase_id' => $purchase->id,
+                    'date' => $purchase->purchase_date?->toDateString(),
                     'product_id' => $product->id,
                     'product_batch_id' => $batchId,
                     'variant_id' => $variantId,
@@ -87,6 +94,24 @@ class StorePurchaseInvoiceAction
                     'tax' => (float) $data['tax'][$index],
                     'total' => $lineTotal,
                 ]);
+
+                if ($baseReceived > 0 && $product->type !== 'digital') {
+                    app(ProductStockService::class)->recordMovement([
+                        'product_id' => $product->id,
+                        'warehouse_id' => $warehouseId,
+                        'product_batch_id' => $batchId,
+                        'variant_id' => $variantId,
+                        'unit_id' => $unit->id,
+                        'user_id' => $user->id,
+                        'source_type' => 'product_purchase',
+                        'source_id' => $productPurchase->id,
+                        'type' => 'purchase',
+                        'quantity' => $received,
+                        'quantity_base' => $baseReceived,
+                        'reference_no' => $purchase->reference_no,
+                        'movement_date' => $purchase->purchase_date?->toDateString(),
+                    ]);
+                }
             }
 
             $this->createPaymentIfNeeded($purchase, $data, $user, $paidAmount);
@@ -193,6 +218,9 @@ class StorePurchaseInvoiceAction
 
     private function resolvePurchaseUnit(mixed $purchaseUnit, Product $product, int|string $index): Unit
     {
+        logger([
+            'purchaseUnit' => $purchaseUnit
+        ]);
         if ($purchaseUnit === null || $purchaseUnit === '') {
             $unit = $product->purchase_unit_id ? Unit::find($product->purchase_unit_id) : null;
         } elseif (is_numeric($purchaseUnit)) {

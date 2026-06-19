@@ -7,18 +7,20 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/lib/api';
-import type { Branch, Customer, Product, Tax, Warehouse } from '@/lib/types';
+import type { Branch, Customer, Product, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
 
 type ProductOptions = {
   taxes?: Tax[];
+  units?: Unit[];
 };
 
 type InvoiceLine = {
   key: string;
   productId: string;
+  unitId: string;
   batchNo: string;
   qty: string;
   price: string;
@@ -30,6 +32,7 @@ type PaymentMode = 'unpaid' | 'partial' | 'paid';
 
 type FormState = {
   referenceNo: string;
+  invoiceDate: string;
   customerId: string;
   warehouseId: string;
   billerId: string;
@@ -57,6 +60,7 @@ type SearchableSelectProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: 'none',
+  unitId: 'none',
   batchNo: '',
   qty: '1',
   price: '0',
@@ -66,6 +70,7 @@ const emptyLine = (): InvoiceLine => ({
 
 const emptyForm = (kind: InvoiceKind = 'sales'): FormState => ({
   referenceNo: generateReference(kind),
+  invoiceDate: todayDate(),
   customerId: 'none',
   warehouseId: 'none',
   billerId: 'none',
@@ -91,6 +96,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
   const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [form, setForm] = useState<FormState>(() => emptyForm(kind));
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
@@ -140,6 +146,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       setBillers(nextBillers);
       setProducts(nextProducts);
       setTaxes(productOptions.taxes ?? []);
+      setUnits(productOptions.units ?? []);
       setForm((current) => ({
         ...current,
         customerId: current.customerId === 'none' ? idValue(nextCustomers[0]?.id) : current.customerId,
@@ -192,12 +199,30 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
     setLines((current) => current.map((line) => (line.key === key ? { ...line, [field]: value } : line)));
   }
 
+  function selectLineUnit(lineKey: string, unitId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => String(item.id) === line.productId);
+      if (kind === 'returns' || !product) return { ...line, unitId };
+
+      return {
+        ...line,
+        unitId,
+        price: String(unitPriceForProductUnit(product, nullableId(unitId), units)),
+      };
+    }));
+  }
+
   function selectWarehouse(warehouse: Warehouse) {
     setWarehouses((current) => upsertById(current, warehouse));
     setForm((current) => ({ ...current, warehouseId: String(warehouse.id) }));
+    if (kind === 'returns') return;
+
     setLines((current) => current.map((line) => {
       const product = products.find((item) => String(item.id) === line.productId);
-      return product ? { ...line, price: String(unitPriceForProduct(product, warehouse.id)) } : line;
+      const unitId = nullableId(line.unitId) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+      return product ? { ...line, price: String(unitPriceForProductUnit(product, unitId, units)) } : line;
     }));
   }
 
@@ -218,17 +243,20 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
 
     setProducts((current) => upsertById(current, product));
     setLines((current) =>
-      current.map((line) =>
-        line.key === lineKey
-          ? {
-              ...line,
-              productId: String(product.id),
-              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
-              price: String(unitPriceForProduct(product, warehouseId)),
-              taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
-            }
-          : line
-      )
+      current.map((line) => {
+        if (line.key !== lineKey) return line;
+
+        const unitId = product.sale_unit_id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+
+        return {
+          ...line,
+          productId: String(product.id),
+          unitId: idValue(unitId),
+          batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
+          price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
+          taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+        };
+      })
     );
   }
 
@@ -299,6 +327,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
+      invoiceDate: String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? todayDate()),
       customerId: idValue(invoice.customer_id),
       warehouseId: idValue(invoice.warehouse_id),
       billerId: idValue(invoice.biller_id),
@@ -317,6 +346,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: String(line.product_id ?? product?.id ?? 'none'),
+        unitId: idValue(line.sale_unit_id ?? line.unit?.id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale')),
         batchNo: line.batch?.batch_no ?? '',
         qty: String(line.qty ?? '1'),
         price: String(line.net_unit_price ?? '0'),
@@ -343,6 +373,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
               <tr>
+                <th className="px-4 py-3">{kind === 'returns' ? 'Return date' : 'Sale date'}</th>
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Total</th>
@@ -353,6 +384,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             <tbody className="divide-y divide-neutral-100">
               {invoices.map((invoice) => (
                 <tr key={invoice.id}>
+                  <td className="px-4 py-3">{String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</td>
                   <td className="px-4 py-3 font-medium">{invoice.reference_no}</td>
                   <td className="px-4 py-3">{invoice.customer?.name ?? '-'}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.grand_total))}</td>
@@ -363,7 +395,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                   </td>
                 </tr>
               ))}
-              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={5}>No invoices found</td></tr> : null}
+              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={6}>No invoices found</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -403,6 +435,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         <h2 className="text-base font-semibold">Invoice</h2>
         <div className="grid gap-4 md:grid-cols-4">
           <Field label="Reference no"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
+          <Field label={kind === 'returns' ? 'Return date' : 'Sale date'}><Input type="date" value={form.invoiceDate} onChange={(event) => setValue('invoiceDate', event.target.value)} /></Field>
           <SearchableSelect
             label="Customer"
             valueLabel={selectedCustomer?.name ?? 'Select customer'}
@@ -444,7 +477,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', 'Qty', 'Unit', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -464,12 +497,17 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                       labelFor={(product) => `${product.name} (${product.code})`}
                       detailFor={(product) => {
                         const warehouseId = nullableId(form.warehouseId);
-                        return `Price ${money(unitPriceForProduct(product, warehouseId))} | Qty ${money(warehouseStockForProduct(product, warehouseId))}`;
+                        return `Base price ${money(baseUnitPriceForProduct(product))} | Qty ${money(warehouseStockForProduct(product, warehouseId))}`;
                       }}
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
+                  <td className="px-3 py-2">
+                    {product && product.type !== 'combo' ? (
+                      <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
+                    ) : null}
+                  </td>
                   {hasBatchLine ? <td className="px-3 py-2">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : null}</td> : null}
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
@@ -535,6 +573,7 @@ function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind:
     <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex flex-wrap gap-6">
         <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
+        <Summary label={kind === 'returns' ? 'Return date' : 'Sale date'} value={String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')} />
         <Summary label="Customer" value={String(invoice.customer?.name ?? '-')} />
         <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
         {kind === 'sales' ? <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} /> : null}
@@ -702,6 +741,7 @@ function buildPayload(
 
   const basePayload = {
     reference_no: form.referenceNo.trim(),
+    sale_date: kind === 'sales' ? form.invoiceDate : undefined,
     customer_id: Number(form.customerId),
     warehouse_id: Number(form.warehouseId),
     biller_id: Number(form.billerId),
@@ -711,7 +751,7 @@ function buildPayload(
       product_batch_id: null,
       batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       qty: values.qty,
-      sale_unit: product?.type === 'combo' ? 'n/a' : product?.sale_unit_id ?? null,
+      sale_unit: product?.type === 'combo' ? 'n/a' : nullableId(line.unitId),
       net_unit_price: values.price,
       discount: values.discount,
       tax_rate: values.taxRate,
@@ -726,6 +766,7 @@ function buildPayload(
   if (kind === 'returns') {
     return {
       ...basePayload,
+      return_date: form.invoiceDate,
       return_note: nullableText(form.saleNote),
     };
   }
@@ -786,6 +827,14 @@ function paymentModeFromStatus(status: number, paidAmount: number): PaymentMode 
   return 'unpaid';
 }
 
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function dateOnly(value: unknown) {
+  return typeof value === 'string' ? value.slice(0, 10) : null;
+}
+
 function taxForProduct(product: Product, taxes: Tax[]) {
   return taxes.find((tax) => tax.id === product.tax_id)?.rate ?? 0;
 }
@@ -823,16 +872,91 @@ function nullableId(value?: string | null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function unitPriceForProduct(product: Product, warehouseId?: number | null) {
-  const warehousePrice = warehouseId
-    ? product.warehouse_prices?.find((item) => Number(item.warehouse_id) === warehouseId)
-    : null;
+function defaultProductUnit(product: Product | undefined, familyUnits: Unit[], kind: 'sale' | 'purchase' | 'stock') {
+  if (!product) return null;
+  const preferredId = kind === 'sale'
+    ? product.sale_unit_id
+    : kind === 'purchase'
+      ? product.purchase_unit_id
+      : product.unit_id ?? product.unit?.id;
+  const fallbackId = product.unit_id ?? product.unit?.id;
+  const preferred = familyUnits.find((unit) => unit.id === preferredId);
+  const fallback = familyUnits.find((unit) => unit.id === fallbackId);
+  return preferred?.id ?? fallback?.id ?? familyUnits[0]?.id ?? null;
+}
 
-  if (product.is_diffPrice && warehousePrice?.price != null && warehousePrice.price !== '') {
-    return numberValue(warehousePrice.price);
+function productOptionsForFamily(product: Product | undefined, units: Unit[]) {
+  if (!product) return [];
+  const productUnitId = product.unit_id ?? product.unit?.id ?? product.sale_unit_id ?? product.purchase_unit_id ?? null;
+  const rootId = rootUnitId(productUnitId, units);
+  if (!rootId) return [];
+
+  return units.filter((unit) => rootUnitId(unit.id, units) === rootId);
+}
+
+function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
+  let current = unitId ?? null;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return current;
+    visited.add(current);
+    const unit = units.find((item) => item.id === current);
+    if (!unit?.base_unit) return current;
+    current = unit.base_unit;
   }
 
-  return numberValue(product.selling_price ?? product.price);
+  return null;
+}
+
+function unitSelectOptions(units: Unit[]) {
+  return units.length
+    ? units.map((unit) => ({ value: String(unit.id), label: `${unit.unit_name} (${unit.unit_code})` }))
+    : [{ value: 'none', label: 'Select unit' }];
+}
+
+function baseUnitPriceForProduct(product: Product) {
+  return numberValue(product.price);
+}
+
+function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
+  const basePrice = baseUnitPriceForProduct(product);
+  const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
+  const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
+
+  return round2(basePrice * factor);
+}
+
+function unitConversionFactorFromBase(unitId: number | null | undefined, baseUnitId: number | null | undefined, units: Unit[]) {
+  if (!unitId || !baseUnitId || unitId === baseUnitId) return 1;
+
+  const unitFactor = unitRootFactor(unitId, units);
+  const baseFactor = unitRootFactor(baseUnitId, units);
+
+  if (!unitFactor || !baseFactor || unitFactor.rootId !== baseFactor.rootId || baseFactor.factor <= 0) return 1;
+
+  return unitFactor.factor / baseFactor.factor;
+}
+
+function unitRootFactor(unitId: number, units: Unit[]) {
+  let current: number | null | undefined = unitId;
+  let factor = 1;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    const unit = units.find((item) => item.id === current);
+    if (!unit) return null;
+    if (!unit.base_unit) return { rootId: current, factor };
+
+    const operationValue = numberValue(unit.operation_value || 1) || 1;
+    factor = unit.operator === '/' ? factor / operationValue : factor * operationValue;
+    current = unit.base_unit;
+  }
+
+  return null;
 }
 
 function warehouseStockForProduct(product: Product, warehouseId?: number | null) {

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\BranchController;
 use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\CategoryController;
@@ -8,14 +9,17 @@ use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ProfitReportController;
 use App\Http\Controllers\Api\PurchaseInvoiceController;
 use App\Http\Controllers\Api\PurchaseStatusController;
 use App\Http\Controllers\Api\ReturnInvoiceController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesInvoiceController;
+use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TaxController;
 use App\Http\Controllers\Api\UnitController;
+use App\Http\Controllers\Api\UnitGroupController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WarehouseController;
 use Illuminate\Support\Facades\Route;
@@ -86,8 +90,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/units', [UnitController::class, 'index'])->middleware('permission:units-index');
     Route::post('/units', [UnitController::class, 'store'])->middleware('permission:units-add');
     Route::get('/units/{unit}', [UnitController::class, 'show'])->middleware('permission:units-index');
-    Route::match(['put', 'patch'], '/units/{unit}', [UnitController::class, 'update'])->middleware('permission:units-edit');
     Route::delete('/units/{unit}', [UnitController::class, 'destroy'])->middleware('permission:units-delete');
+    Route::get('/unit-groups', [UnitGroupController::class, 'index'])->middleware('permission:units-index|units-add');
+
+    Route::get('/accounts', [AccountController::class, 'index'])->middleware('permission:accounts-index');
+    Route::post('/accounts', [AccountController::class, 'store'])->middleware('permission:accounts-add');
+    Route::get('/accounts/{account}', [AccountController::class, 'show'])->middleware('permission:accounts-index');
+    Route::match(['put', 'patch'], '/accounts/{account}', [AccountController::class, 'update'])->middleware('permission:accounts-edit');
+    Route::delete('/accounts/{account}', [AccountController::class, 'destroy'])->middleware('permission:accounts-delete');
+
     Route::get('/products/options', [ProductController::class, 'options'])->middleware('permission:products-index|products-add|products-edit');
     Route::get('/check-batch-availability/{product_id}/{batch_no}/{warehouse_id}', [ProductController::class, 'checkBatchAvailability'])
         ->whereNumber('product_id')
@@ -98,6 +109,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/products/{product}', [ProductController::class, 'show'])->middleware('permission:products-index|products-edit');
     Route::match(['put', 'patch'], '/products/{product}', [ProductController::class, 'update'])->middleware('permission:products-edit');
     Route::delete('/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:products-delete');
+
+    Route::get('/product-stocks', [StockController::class, 'index'])->middleware('permission:product-stocks-index');
+    Route::get('/products/{product}/stock-history', [StockController::class, 'history'])->middleware('permission:product-stocks-index');
+    Route::post('/products/{product}/stock-adjustments', [StockController::class, 'storeAdjustment'])->middleware('permission:product-stocks-adjust');
+    Route::match(['put', 'patch'], '/stock-adjustments/{movement}', [StockController::class, 'updateAdjustment'])->middleware('permission:product-stocks-adjust');
+    Route::delete('/stock-adjustments/{movement}', [StockController::class, 'destroyAdjustment'])->middleware('permission:product-stocks-adjust');
 
     Route::get('/sales-invoices', [SalesInvoiceController::class, 'index'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::post('/sales-invoices', [SalesInvoiceController::class, 'store'])->middleware('permission:sales-add');
@@ -113,5 +130,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::match(['put', 'patch'], '/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'update'])->middleware('permission:purchases-edit');
 
+    Route::get('/reports/profit', ProfitReportController::class)->middleware('permission:reports-profit');
     Route::get('/dashboard', [DashboardController::class, 'index']);
 });

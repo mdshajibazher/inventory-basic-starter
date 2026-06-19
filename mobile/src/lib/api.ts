@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { tokenStorage } from './storage';
-import type { PaginatedResponse } from '../types';
+import type { PaginatedResponse, ProfitReport } from '../types';
 
 const DEFAULT_API_URL = 'http://10.0.2.2:8000/api';
 
@@ -72,6 +72,7 @@ type SupplierPayload = BranchPayload;
 type UnitPayload = {
   unit_code: string;
   unit_name: string;
+  unit_group_id?: number | null;
   base_unit?: number | null;
   operator?: string | null;
   operation_value?: number | null;
@@ -96,6 +97,27 @@ type WarehousePayload = {
   email?: string | null;
   address: string;
   is_active?: boolean;
+};
+
+type AccountPayload = {
+  account_no: string;
+  name: string;
+  initial_balance?: number | null;
+  total_balance?: number | null;
+  note?: string | null;
+  is_default?: boolean;
+  is_active?: boolean;
+};
+
+export type StockAdjustmentPayload = {
+  warehouse_id: number;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  unit_id: number;
+  direction: 'increase' | 'decrease';
+  qty: number;
+  movement_date?: string | null;
+  note?: string | null;
 };
 
 export type CustomerPayload = {
@@ -192,6 +214,7 @@ export type SalesInvoiceLinePayload = {
 
 export type SalesInvoicePayload = {
   reference_no: string;
+  sale_date?: string | null;
   customer_id: number;
   warehouse_id: number;
   biller_id: number;
@@ -214,6 +237,7 @@ export type SalesInvoicePayload = {
 };
 
 export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
+  return_date?: string | null;
   return_note?: string | null;
 };
 
@@ -234,6 +258,7 @@ export type PurchaseInvoiceLinePayload = {
 
 export type PurchaseInvoicePayload = {
   reference_no: string;
+  purchase_date?: string | null;
   supplier_id: number;
   warehouse_id: number;
   status: number;
@@ -395,6 +420,7 @@ function appendNullableStringArray(formData: FormData, key: string, values: (str
 function salesInvoiceFormData(payload: SalesInvoicePayload) {
   const formData = new FormData();
   formData.append('reference_no', payload.reference_no);
+  appendNullableString(formData, 'sale_date', payload.sale_date);
   formData.append('customer_id', String(payload.customer_id));
   formData.append('warehouse_id', String(payload.warehouse_id));
   formData.append('biller_id', String(payload.biller_id));
@@ -429,6 +455,7 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
 function returnInvoiceFormData(payload: ReturnInvoicePayload) {
   const formData = new FormData();
   formData.append('reference_no', payload.reference_no);
+  appendNullableString(formData, 'return_date', payload.return_date);
   formData.append('customer_id', String(payload.customer_id));
   formData.append('warehouse_id', String(payload.warehouse_id));
   formData.append('biller_id', String(payload.biller_id));
@@ -453,6 +480,7 @@ function returnInvoiceFormData(payload: ReturnInvoicePayload) {
 function purchaseInvoiceFormData(payload: PurchaseInvoicePayload) {
   const formData = new FormData();
   formData.append('reference_no', payload.reference_no);
+  appendNullableString(formData, 'purchase_date', payload.purchase_date);
   formData.append('supplier_id', String(payload.supplier_id));
   formData.append('warehouse_id', String(payload.warehouse_id));
   formData.append('status', String(payload.status));
@@ -717,6 +745,8 @@ export const api = {
       `/units${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
     ),
 
+  unitGroups: () => request<{ data: unknown[] }>('/unit-groups'),
+
   createUnit: (payload: UnitPayload) =>
     request<{ data: unknown }>('/units', {
       method: 'POST',
@@ -800,6 +830,28 @@ export const api = {
       method: 'DELETE',
     }),
 
+  accounts: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/accounts${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
+    ),
+
+  createAccount: (payload: AccountPayload) =>
+    request<{ data: unknown }>('/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAccount: (id: number, payload: AccountPayload) =>
+    request<{ data: unknown }>(`/accounts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAccount: (id: number) =>
+    request<{ message: string }>(`/accounts/${id}`, {
+      method: 'DELETE',
+    }),
+
   customers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(
       `/customers${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
@@ -832,6 +884,38 @@ export const api = {
     ),
 
   product: (id: number) => request<{ data: unknown }>(`/products/${id}`),
+
+  productStocks: (params: { page?: number; perPage?: number; search?: string; warehouseId?: number } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`
+    ),
+
+  profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
+    request<ProfitReport>(
+      `/reports/profit${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`
+    ),
+
+  productStockHistory: (productId: number, params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/products/${productId}/stock-history${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createStockAdjustment: (productId: number, payload: StockAdjustmentPayload) =>
+    request<{ data: unknown; message: string }>(`/products/${productId}/stock-adjustments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateStockAdjustment: (movementId: number, payload: StockAdjustmentPayload) =>
+    request<{ data: unknown; message: string }>(`/stock-adjustments/${movementId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteStockAdjustment: (movementId: number) =>
+    request<{ message: string }>(`/stock-adjustments/${movementId}`, {
+      method: 'DELETE',
+    }),
 
   checkBatchAvailability: (productId: number, batchNo: string, warehouseId: number) =>
     request<{ data: BatchAvailabilityResponse }>(

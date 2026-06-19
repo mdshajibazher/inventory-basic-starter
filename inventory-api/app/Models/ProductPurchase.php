@@ -9,6 +9,7 @@ class ProductPurchase extends Model
 {
     protected $fillable = [
         'purchase_id',
+        'date',
         'product_id',
         'product_batch_id',
         'variant_id',
@@ -26,6 +27,7 @@ class ProductPurchase extends Model
     {
         return [
             'purchase_id' => 'integer',
+            'date' => 'date',
             'product_id' => 'integer',
             'product_batch_id' => 'integer',
             'variant_id' => 'integer',

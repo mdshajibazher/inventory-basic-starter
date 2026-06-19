@@ -80,13 +80,22 @@ export type Unit = {
   id: number;
   unit_code: string;
   unit_name: string;
+  unit_group_id?: number | null;
+  unit_group_title?: string | null;
   base_unit?: number | null;
   base_unit_name?: string | null;
   operator?: string | null;
   operation_value?: number | string | null;
   is_active?: boolean | number | null;
+  can_delete?: boolean;
+  unit_group?: UnitGroup | null;
   base?: Pick<Unit, 'id' | 'unit_name'> | null;
   related_units?: Unit[];
+};
+
+export type UnitGroup = {
+  id: number;
+  title: string;
 };
 
 export type PaginationMeta = {
@@ -114,6 +123,7 @@ export type Product = {
   brand_id?: number | null;
   category_id: number;
   unit_id?: number | null;
+  unit_id_locked?: boolean;
   purchase_unit_id?: number | null;
   sale_unit_id?: number | null;
   cost: string | number;
@@ -192,6 +202,56 @@ export type Warehouse = {
   is_active?: boolean | number | null;
 };
 
+export type ProfitReportSummary = {
+  gross_sales: number;
+  sales_discounts: number;
+  coupon_discounts: number;
+  shipping: number;
+  returns: number;
+  cost_of_goods_sold: number;
+  return_cost: number;
+  tax_collected: number;
+  tax_returned: number;
+  net_revenue: number;
+  net_profit: number;
+  margin_percent: number;
+};
+
+export type ProfitReportProduct = {
+  product_id: number;
+  code: string;
+  name: string;
+  qty_sold: number;
+  qty_returned: number;
+  net_sales: number;
+  net_returns: number;
+  cost: number;
+  profit: number;
+  margin_percent: number;
+};
+
+export type ProfitReport = {
+  summary: ProfitReportSummary;
+  products: ProfitReportProduct[];
+  filters: {
+    start_date: string;
+    end_date: string;
+    warehouse: Pick<Warehouse, 'id' | 'name'> | null;
+    search: string;
+  };
+};
+
+export type Account = {
+  id: number;
+  account_no: string;
+  name: string;
+  initial_balance?: number | string | null;
+  total_balance: number | string;
+  note?: string | null;
+  is_default?: boolean | number | null;
+  is_active?: boolean | number | null;
+};
+
 export type PurchaseStatus = {
   id: number;
   value: string;
@@ -227,13 +287,50 @@ export type Customer = {
 
 export type StockMovement = {
   id: number;
-  type: 'in' | 'out';
+  product_id?: number;
+  warehouse_id?: number | null;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  unit_id?: number | null;
+  type: string;
   quantity: number;
+  quantity_base?: number;
   before_quantity: number;
   after_quantity: number;
+  reference_no?: string | null;
   note?: string | null;
+  movement_date?: string | null;
+  is_editable?: boolean;
   created_at: string;
-  product?: Pick<Product, 'id' | 'name' | 'sku'>;
+  product?: Pick<Product, 'id' | 'name' | 'sku' | 'code'>;
+  warehouse?: Pick<Warehouse, 'id' | 'name'> | null;
+  batch?: { id: number; batch_no: string; expired_date?: string | null } | null;
+  variant?: { id: number; name: string } | null;
+  unit?: Pick<Unit, 'id' | 'unit_code' | 'unit_name'> | null;
+};
+
+export type ProductStockBreakdown = {
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  variant_id?: number | null;
+  product_batch_id?: number | null;
+  batch_no?: string | null;
+  expired_date?: string | null;
+  qty: number;
+};
+
+export type ProductStock = {
+  id: number;
+  product_id: number;
+  name: string;
+  code: string;
+  type: string;
+  current_stock: number;
+  unit?: Unit | null;
+  is_variant?: boolean | number | null;
+  is_batch?: boolean | number | null;
+  variants?: ProductVariant[];
+  stocks?: ProductStockBreakdown[];
 };
 
 export type DashboardSummary = {

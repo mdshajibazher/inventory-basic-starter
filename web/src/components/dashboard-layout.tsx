@@ -19,6 +19,8 @@ import {
   UserCircle,
   Users,
   Warehouse,
+  PackageSearch,
+  ChartNoAxesCombined,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,6 +38,8 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
+  { href: '/product-stocks', label: 'Product Stock', icon: PackageSearch, permission: 'product-stocks-index' },
+  { href: '/reports/profit', label: 'Profit Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
   { href: '/sales-invoices', label: 'Sales Invoice', icon: ReceiptText, permission: 'sales-add' },
   { href: '/return-invoices', label: 'Return Invoice', icon: ReceiptText, permission: 'returns-add' },
   { href: '/purchase-invoices', label: 'Purchase Invoice', icon: ReceiptText, permission: 'purchases-add' },
@@ -54,6 +58,7 @@ const settingsItems: NavItem[] = [
   { href: '/units', label: 'Units', icon: Ruler, permission: 'units-index' },
   { href: '/taxes', label: 'Taxes', icon: Percent, permission: 'taxes-index' },
   { href: '/currencies', label: 'Currencies', icon: CircleDollarSign, permission: 'currencies-index' },
+  { href: '/accounts', label: 'Accounts', icon: CircleDollarSign, permission: 'accounts-index' },
   { href: '/warehouses', label: 'Warehouses', icon: Warehouse, permission: 'warehouses-index' },
   { href: '/roles', label: 'Roles', icon: Shield, permission: 'users-index' },
   { href: '/profile', label: 'Profile', icon: UserCircle },

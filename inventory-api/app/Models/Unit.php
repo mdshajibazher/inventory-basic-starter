@@ -11,6 +11,7 @@ class Unit extends Model
     protected $fillable = [
         'unit_code',
         'unit_name',
+        'unit_group_id',
         'base_unit',
         'operator',
         'operation_value',
@@ -20,10 +21,16 @@ class Unit extends Model
     protected function casts(): array
     {
         return [
+            'unit_group_id' => 'integer',
             'base_unit' => 'integer',
             'operation_value' => 'float',
             'is_active' => 'boolean',
         ];
+    }
+
+    public function unitGroup(): BelongsTo
+    {
+        return $this->belongsTo(UnitGroup::class);
     }
 
     public function baseUnit(): BelongsTo
@@ -39,5 +46,27 @@ class Unit extends Model
     public function products(): HasMany
     {
         return $this->hasMany(Product::class);
+    }
+
+    public function productPurchases(): HasMany
+    {
+        return $this->hasMany(ProductPurchase::class, 'purchase_unit_id');
+    }
+
+    public function productSales(): HasMany
+    {
+        return $this->hasMany(ProductSale::class, 'sale_unit_id');
+    }
+
+    public function productReturns(): HasMany
+    {
+        return $this->hasMany(ProductReturn::class, 'sale_unit_id');
+    }
+
+    public function isUsedInInvoices(): bool
+    {
+        return $this->productPurchases()->exists()
+            || $this->productSales()->exists()
+            || $this->productReturns()->exists();
     }
 }

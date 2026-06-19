@@ -12,7 +12,7 @@ class UserSeeder extends Seeder
      */
     public function run()
     {
-        \App\User::insert(array(
+        \App\User::upsert(array(
             array('id' => '1','name' => 'admin','email' => 'admin@gmail.com','password' => '$2y$10$DWAHTfjcvwCpOCXaJg11MOhsqns03uvlwiSUOQwkHL2YYrtrXPcL6','remember_token' => 'k6eDmUm2DRRZXXoEADexL5HZYNG3uzbdIcfyoD2ph8CMMOZcoNi0vHwwliRK','phone' => '01711111111','company_name' => 'lioncoders','role_id' => '1','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '1','is_deleted' => '0','created_at' => '2018-06-02 09:24:15','updated_at' => '2018-09-05 06:14:15'),
             array('id' => '3','name' => 'dhiman da','email' => 'dhiman@gmail.com','password' => '$2y$10$Fef6vu5E67nm11hX7V5a2u1ThNCQ6n9DRCvRF9TD7stk.Pmt2R6O.','remember_token' => '5ehQM6JIfiQfROgTbB5let0Z93vjLHS7rd9QD5RPNgOxli3xdo7fykU7vtTt','phone' => '01700000000','company_name' => 'lioncoders','role_id' => '1','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '0','is_deleted' => '1','created_at' => '2018-06-14 04:00:31','updated_at' => '2020-11-05 13:06:51'),
             array('id' => '6','name' => 'Test One','email' => 'test@gmail.com','password' => '$2y$10$TDAeHcVqHyCmurki0wjLZeIl1SngKX3WLOhyTiCoZG3souQfqv.LS','remember_token' => 'KpW1gYYlOFacumklO2IcRfSsbC3KcWUZzOI37gqoqM388Xie6KdhaOHIFEYm','phone' => '01733333333','company_name' => '212312','role_id' => '4','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '0','is_deleted' => '1','created_at' => '2018-06-23 09:05:33','updated_at' => '2018-06-23 09:13:45'),
@@ -25,6 +25,6 @@ class UserSeeder extends Seeder
             array('id' => '19','name' => 'Lorem Ipsum','email' => 'shakalaka@gmail.com','password' => '$2y$10$ketLWT0Ib/JXpo00eJlxoeSw.7leS8V1CUGInfbyOWT4F5.Xuo7S2','remember_token' => NULL,'phone' => '01788888888','company_name' => 'Digital image','role_id' => '5','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '1','is_deleted' => '0','created_at' => '2020-11-09 06:07:16','updated_at' => '2020-11-09 06:07:16'),
             array('id' => '21','name' => 'Dolor Sit','email' => 'modon@gmail.com','password' => '$2y$10$7VpoeGMkP8QCvL5zLwFW..6MYJ5MRumDLDoX.TTQtClS561rpFHY.','remember_token' => NULL,'phone' => '01799999999','company_name' => 'modon company','role_id' => '5','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '1','is_deleted' => '0','created_at' => '2020-11-13 13:12:08','updated_at' => '2020-11-13 13:12:08'),
             array('id' => '22','name' => 'Dhiman','email' => 'dhiman@gmail.com','password' => '$2y$10$3mPygsC6wwnDtw/Sg85IpuExtUhgaHx52Lwp7Rz0.FNfuFdfKVpRq','remember_token' => NULL,'phone' => '01111111101','company_name' => 'lioncoders','role_id' => '5','biller_id' => NULL,'warehouse_id' => NULL,'is_active' => '1','is_deleted' => '0','created_at' => '2020-11-15 12:14:58','updated_at' => '2020-11-15 12:14:58')
-        ));
+        ),['email']);
     }
 }

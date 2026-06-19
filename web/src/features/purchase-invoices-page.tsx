@@ -7,17 +7,18 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type PurchaseInvoicePayload } from '@/lib/api';
-import type { Product, PurchaseStatus, Supplier, Tax, Warehouse } from '@/lib/types';
+import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
 
-type ProductOptions = { taxes?: Tax[] };
+type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
 
 type InvoiceLine = {
   key: string;
   productId: string;
+  unitId: string;
   qty: string;
   received: string;
   cost: string;
@@ -29,6 +30,7 @@ type InvoiceLine = {
 
 type FormState = {
   referenceNo: string;
+  purchaseDate: string;
   supplierId: string;
   warehouseId: string;
   purchaseStatusId: string;
@@ -67,6 +69,7 @@ const fallbackPurchaseStatuses: PurchaseStatus[] = [
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: 'none',
+  unitId: 'none',
   qty: '1',
   received: '1',
   cost: '0',
@@ -78,6 +81,7 @@ const emptyLine = (): InvoiceLine => ({
 
 const emptyForm = (): FormState => ({
   referenceNo: generateReference(),
+  purchaseDate: todayDate(),
   supplierId: 'none',
   warehouseId: 'none',
   purchaseStatusId: '1',
@@ -100,6 +104,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   const [products, setProducts] = useState<Product[]>([]);
   const [purchaseStatuses, setPurchaseStatuses] = useState<PurchaseStatus[]>(fallbackPurchaseStatuses);
   const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
@@ -153,6 +158,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
       setProducts(nextProducts);
       setPurchaseStatuses(nextPurchaseStatuses);
       setTaxes(productOptions.taxes ?? []);
+      setUnits(productOptions.units ?? []);
       setForm((current) => ({
         ...current,
         supplierId: current.supplierId === 'none' ? idValue(nextSuppliers[0]?.id) : current.supplierId,
@@ -217,6 +223,21 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
     );
   }
 
+  function selectLineUnit(lineKey: string, unitId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => String(item.id) === line.productId);
+      if (!product) return { ...line, unitId };
+
+      return {
+        ...line,
+        unitId,
+        cost: String(unitCostForProductUnit(product, nullableId(unitId), units)),
+      };
+    }));
+  }
+
   function setPurchaseStatus(value: string) {
     setValue('purchaseStatusId', value);
     const statusId = Number(value);
@@ -233,14 +254,18 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
     setLines((current) =>
       current.map((line) =>
         line.key === lineKey
-          ? {
-              ...line,
-              productId: String(product.id),
-              cost: String(product.purchase_price ?? product.cost ?? 0),
-              taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
-              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
-              expiredDate: isBatchProduct(product) ? line.expiredDate : '',
-            }
+          ? (() => {
+              const unitId = product.purchase_unit_id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'purchase');
+              return {
+                ...line,
+                productId: String(product.id),
+                unitId: idValue(unitId),
+                cost: String(unitCostForProductUnit(product, unitId, units)),
+                taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+                batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
+                expiredDate: isBatchProduct(product) ? line.expiredDate : '',
+              };
+            })()
           : line
       )
     );
@@ -297,6 +322,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
+      purchaseDate: String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
       supplierId: idValue(invoice.supplier_id),
       warehouseId: idValue(invoice.warehouse_id),
       purchaseStatusId: idValue(invoice.purchase_status_id ?? invoice.status),
@@ -314,6 +340,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: String(line.product_id ?? product?.id ?? 'none'),
+        unitId: idValue(line.purchase_unit_id ?? line.unit?.id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'purchase')),
         qty: String(line.qty ?? '1'),
         received: String(line.received ?? line.qty ?? '1'),
         cost: String(line.net_unit_cost ?? '0'),
@@ -342,6 +369,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
               <tr>
+                <th className="px-4 py-3">Purchase date</th>
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Supplier</th>
                 <th className="px-4 py-3">Status</th>
@@ -352,6 +380,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
             <tbody className="divide-y divide-neutral-100">
               {invoices.map((invoice) => (
                 <tr key={invoice.id}>
+                  <td className="px-4 py-3">{String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</td>
                   <td className="px-4 py-3 font-medium">{invoice.reference_no}</td>
                   <td className="px-4 py-3">{invoice.supplier?.name ?? '-'}</td>
                   <td className="px-4 py-3">{invoice.purchase_status?.label ?? invoice.status}</td>
@@ -362,7 +391,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                   </td>
                 </tr>
               ))}
-              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={5}>No invoices found</td></tr> : null}
+              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={6}>No invoices found</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -402,6 +431,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
         <h2 className="text-base font-semibold">Invoice</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Reference no"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
+          <Field label="Purchase date"><Input type="date" value={form.purchaseDate} onChange={(event) => setValue('purchaseDate', event.target.value)} /></Field>
           <SearchableSelect
             label="Supplier"
             valueLabel={selectedSupplier?.name ?? 'Select supplier'}
@@ -444,7 +474,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           <table className="w-full min-w-[1120px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', ...(showReceived ? ['Received'] : []), 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', 'Qty', ...(showReceived ? ['Received'] : []), 'Unit', 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -462,12 +492,17 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                       search={searchProducts}
                       keyFor={(product) => product.id}
                       labelFor={(product) => `${product.name} (${product.code})`}
-                      detailFor={(product) => `Cost ${money(numberValue(product.purchase_price ?? product.cost))} | Qty ${money(numberValue(product.qty ?? product.quantity))}`}
+                      detailFor={(product) => `Cost ${money(baseUnitCostForProduct(product))} | Qty ${money(numberValue(product.qty ?? product.quantity))}`}
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
                   {showReceived ? <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.received} onChange={(event) => updateLine(line.key, 'received', event.target.value)} /></td> : null}
+                  <td className="px-3 py-2">
+                    {product ? (
+                      <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.cost} onChange={(event) => updateLine(line.key, 'cost', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></td>
@@ -535,6 +570,7 @@ function PurchaseInvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
     <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
       <div className="flex flex-wrap gap-6">
         <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
+        <Summary label="Purchase date" value={String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')} />
         <Summary label="Supplier" value={String(invoice.supplier?.name ?? '-')} />
         <Summary label="Status" value={String(invoice.purchase_status?.label ?? invoice.status ?? '-')} />
         <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
@@ -666,6 +702,7 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
   return {
     reference_no: form.referenceNo.trim(),
+    purchase_date: form.purchaseDate,
     supplier_id: Number(form.supplierId),
     warehouse_id: Number(form.warehouseId),
     status: statusId,
@@ -678,7 +715,7 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
       received: normalizedReceived(statusId, line),
       batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
-      purchase_unit: product?.purchase_unit_id ?? null,
+      purchase_unit: nullableId(line.unitId),
       net_unit_cost: values.cost,
       discount: values.discount,
       tax_rate: values.taxRate,
@@ -751,6 +788,14 @@ function paymentStatus(mode: PaymentMode) {
   return 1;
 }
 
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function dateOnly(value: unknown) {
+  return typeof value === 'string' ? value.slice(0, 10) : null;
+}
+
 function paymentPaidAmount(mode: PaymentMode, paidAmount: string, grandTotal: number) {
   if (mode === 'paid') return grandTotal;
   if (mode === 'partial') return Math.min(numberValue(paidAmount), grandTotal);
@@ -794,6 +839,93 @@ function nullableId(value?: string | null) {
   if (!value || value === 'none') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function defaultProductUnit(product: Product | undefined, familyUnits: Unit[], kind: 'sale' | 'purchase' | 'stock') {
+  if (!product) return null;
+  const preferredId = kind === 'sale'
+    ? product.sale_unit_id
+    : kind === 'purchase'
+      ? product.purchase_unit_id
+      : product.unit_id ?? product.unit?.id;
+  const fallbackId = product.unit_id ?? product.unit?.id;
+  const preferred = familyUnits.find((unit) => unit.id === preferredId);
+  const fallback = familyUnits.find((unit) => unit.id === fallbackId);
+  return preferred?.id ?? fallback?.id ?? familyUnits[0]?.id ?? null;
+}
+
+function productOptionsForFamily(product: Product | undefined, units: Unit[]) {
+  if (!product) return [];
+  const productUnitId = product.unit_id ?? product.unit?.id ?? product.purchase_unit_id ?? product.sale_unit_id ?? null;
+  const rootId = rootUnitId(productUnitId, units);
+  if (!rootId) return [];
+
+  return units.filter((unit) => rootUnitId(unit.id, units) === rootId);
+}
+
+function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
+  let current = unitId ?? null;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return current;
+    visited.add(current);
+    const unit = units.find((item) => item.id === current);
+    if (!unit?.base_unit) return current;
+    current = unit.base_unit;
+  }
+
+  return null;
+}
+
+function unitSelectOptions(units: Unit[]) {
+  return units.length
+    ? units.map((unit) => ({ value: String(unit.id), label: `${unit.unit_name} (${unit.unit_code})` }))
+    : [{ value: 'none', label: 'Select unit' }];
+}
+
+function baseUnitCostForProduct(product: Product) {
+  return numberValue(product.cost);
+}
+
+function unitCostForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
+  const baseCost = baseUnitCostForProduct(product);
+  const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
+  const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
+
+  return round2(baseCost * factor);
+}
+
+function unitConversionFactorFromBase(unitId: number | null | undefined, baseUnitId: number | null | undefined, units: Unit[]) {
+  if (!unitId || !baseUnitId || unitId === baseUnitId) return 1;
+
+  const unitFactor = unitRootFactor(unitId, units);
+  const baseFactor = unitRootFactor(baseUnitId, units);
+
+  if (!unitFactor || !baseFactor || unitFactor.rootId !== baseFactor.rootId || baseFactor.factor <= 0) return 1;
+
+  return unitFactor.factor / baseFactor.factor;
+}
+
+function unitRootFactor(unitId: number, units: Unit[]) {
+  let current: number | null | undefined = unitId;
+  let factor = 1;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    const unit = units.find((item) => item.id === current);
+    if (!unit) return null;
+    if (!unit.base_unit) return { rootId: current, factor };
+
+    const operationValue = numberValue(unit.operation_value || 1) || 1;
+    factor = unit.operator === '/' ? factor / operationValue : factor * operationValue;
+    current = unit.base_unit;
+  }
+
+  return null;
 }
 
 function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {

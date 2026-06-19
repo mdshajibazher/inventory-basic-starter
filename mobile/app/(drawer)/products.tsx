@@ -118,7 +118,7 @@ const emptyForm: ProductForm = {
   removeImage: false,
 };
 
-function productToForm(product: Product): ProductForm {
+function productToForm(product: Product, options?: ProductOptions): ProductForm {
   return {
     type: product.type ?? 'standard',
     name: product.name,
@@ -126,9 +126,9 @@ function productToForm(product: Product): ProductForm {
     barcodeSymbology: product.barcode_symbology ?? 'C128',
     brandId: product.brand_id ?? null,
     categoryId: product.category_id,
-    unitId: product.unit_id ?? null,
-    saleUnitId: product.sale_unit_id ?? null,
-    purchaseUnitId: product.purchase_unit_id ?? null,
+    unitId: resolveUnitId(product, 'unit_id', 'unit', options),
+    saleUnitId: resolveUnitId(product, 'sale_unit_id', 'sale_unit', options),
+    purchaseUnitId: resolveUnitId(product, 'purchase_unit_id', 'purchase_unit', options),
     cost: String(product.cost ?? '0'),
     price: String(product.price ?? '0'),
     qty: String(product.qty ?? '0'),
@@ -161,6 +161,46 @@ function productToForm(product: Product): ProductForm {
     imageFile: null,
     removeImage: false,
   };
+}
+
+type ProductUnitRelation = Unit | number | string | null | undefined;
+
+function normalizeId(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveUnitId(product: Product, idKey: keyof Product, relationKey: keyof Product, options?: ProductOptions) {
+  const rawProduct = product as Record<string, unknown>;
+  const relation = rawProduct[relationKey] as ProductUnitRelation;
+  const directId = normalizeId(rawProduct[idKey] as number | string | null | undefined);
+  const relationId = typeof relation === 'object' ? normalizeId(relation?.id) : normalizeId(relation);
+
+  if (directId) return directId;
+  if (relationId) return relationId;
+
+  if (typeof relation === 'string') {
+    const normalizedRelation = relation.trim().toLowerCase();
+    return options?.units.find((unit) => (
+      unit.unit_name.toLowerCase() === normalizedRelation ||
+      unit.unit_code.toLowerCase() === normalizedRelation
+    ))?.id ?? null;
+  }
+
+  return null;
+}
+
+function mergeProductUnits(units: Unit[], product: Product): Unit[] {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+
+  [product.unit, product.sale_unit, product.purchase_unit].forEach((unit) => {
+    if (unit?.id && !byId.has(unit.id)) {
+      byId.set(unit.id, unit);
+    }
+  });
+
+  return Array.from(byId.values());
 }
 
 function toNumber(value: string, fallback = 0) {
@@ -457,10 +497,15 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
 
         if (productResponse) {
           const product = productResponse.data as Product;
+          const editOptions = {
+            ...nextOptions,
+            units: mergeProductUnits(nextOptions.units, product),
+          };
           setEditingProduct(product);
           setSelectedBrand(product.brand ?? null);
           setSelectedCategory(product.category ?? null);
-          setForm(defaultsForOptions(productToForm(product), nextOptions));
+          setOptions(editOptions);
+          setForm(defaultsForOptions(productToForm(product, editOptions), editOptions, { defaultUnits: false }));
         } else {
           resetCreateForm(nextOptions);
         }
@@ -484,16 +529,20 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
     return () => clearTimeout(timeout);
   }, [search]);
 
-  function defaultsForOptions(current: ProductForm, nextOptions = options): ProductForm {
+  function defaultsForOptions(
+    current: ProductForm,
+    nextOptions = options,
+    { defaultUnits = true }: { defaultUnits?: boolean } = {}
+  ): ProductForm {
     const firstUnitId = nextOptions.units[0]?.id ?? null;
 
     return {
       ...current,
       type: current.type || nextOptions.types[0] || 'standard',
       barcodeSymbology: current.barcodeSymbology || nextOptions.barcode_symbologies[0] || 'C128',
-      unitId: current.unitId ?? firstUnitId,
-      saleUnitId: current.saleUnitId ?? firstUnitId,
-      purchaseUnitId: current.purchaseUnitId ?? firstUnitId,
+      unitId: current.unitId ?? (defaultUnits ? firstUnitId : null),
+      saleUnitId: current.saleUnitId ?? (defaultUnits ? firstUnitId : null),
+      purchaseUnitId: current.purchaseUnitId ?? (defaultUnits ? firstUnitId : null),
       warehousePrices: mergeWarehousePrices(current.warehousePrices, nextOptions.warehouses),
     };
   }
@@ -715,6 +764,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
   const selectedTax = options.taxes.find((tax) => tax.id === form.taxId);
   const selectedTaxMethod = options.tax_methods.find((method) => method.id === form.taxMethod);
   const isStandard = form.type === 'standard';
+  const unitIdLocked = mode === 'edit' && Boolean(editingProduct?.unit_id_locked);
 
   if (mode === 'index' && !hasPermission('products-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
@@ -774,7 +824,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                 <DataTable.Title style={styles.nameColumn}>Brand</DataTable.Title>
                 <DataTable.Title style={styles.nameColumn}>Category</DataTable.Title>
                 <DataTable.Title numeric style={styles.numberColumn}>Qty</DataTable.Title>
-                <DataTable.Title numeric style={styles.numberColumn}>Price</DataTable.Title>
+                <DataTable.Title numeric style={styles.numberColumn}>Base Unit Price</DataTable.Title>
                 <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
               </DataTable.Header>
 
@@ -881,14 +931,15 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
 
           
               <SelectField
-                label="Product Unit *"
-                valueLabel={selectedUnit?.unit_name ?? 'Select product unit'}
-                disabled={!isStandard}
+                label="Product Base Unit *"
+                valueLabel={selectedUnit?.unit_name ?? 'Select product base unit'}
+                disabled={!isStandard || unitIdLocked}
                 options={options.units}
                 keyFor={(unit) => unit.id}
                 labelFor={(unit) => unit.unit_name}
                 onSelect={(unit) => updateForm('unitId', unit.id)}
               />
+              <HelperText type="info" visible={unitIdLocked}>Base unit is locked because this product has purchase, sale, or return history.</HelperText>
               <SelectField
                 label="Sale Unit"
                 valueLabel={selectedSaleUnit?.unit_name ?? 'Select sale unit'}
@@ -911,7 +962,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
 
       
               <TextInput mode="outlined" label="Product Cost *" value={form.cost} keyboardType="numeric" disabled={!isStandard} onChangeText={(value) => updateForm('cost', value)} style={styles.formField} />
-              <TextInput mode="outlined" label="Product Price *" value={form.price} keyboardType="numeric" onChangeText={(value) => updateForm('price', value)} style={styles.formField} />
+              <TextInput mode="outlined" label="Base Unit Price *" value={form.price} keyboardType="numeric" onChangeText={(value) => updateForm('price', value)} style={styles.formField} />
               <TextInput mode="outlined" label="Alert Quantity" value={form.alertQuantity} keyboardType="numeric" onChangeText={(value) => updateForm('alertQuantity', value)} style={styles.formField} />
       
 
@@ -956,7 +1007,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                       <TextInput
                         dense
                         mode="outlined"
-                        label="Price"
+                        label="Base Unit Price"
                         value={warehousePrice.price}
                         keyboardType="numeric"
                         onChangeText={(value) => updateWarehousePrice(index, value)}

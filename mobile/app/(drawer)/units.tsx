@@ -17,11 +17,12 @@ import {
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
-import type { PaginationMeta, Unit } from '@/src/types';
+import type { PaginationMeta, Unit, UnitGroup } from '@/src/types';
 
 type UnitForm = {
   unitCode: string;
   unitName: string;
+  unitGroupId: number | null;
   baseUnit: number | null;
   operator: string | null;
   operationValue: string;
@@ -35,6 +36,7 @@ type RouteParams = {
 const emptyForm: UnitForm = {
   unitCode: '',
   unitName: '',
+  unitGroupId: null,
   baseUnit: null,
   operator: '*',
   operationValue: '1',
@@ -44,23 +46,11 @@ const emptyForm: UnitForm = {
 const perPage = 15;
 const operatorOptions = ['*', '/'];
 
-function unitToForm(unit: Unit): UnitForm {
-  return {
-    unitCode: unit.unit_code,
-    unitName: unit.unit_name,
-    baseUnit: unit.base_unit ?? null,
-    operator: unit.operator ?? null,
-    operationValue: unit.operation_value === null || unit.operation_value === undefined
-      ? ''
-      : String(unit.operation_value),
-    isActive: Boolean(unit.is_active),
-  };
-}
-
 export default function UnitsScreen() {
   const { hasPermission } = useAuth();
   const route = useRoute();
   const [units, setUnits] = useState<Unit[]>([]);
+  const [unitGroups, setUnitGroups] = useState<UnitGroup[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -68,15 +58,19 @@ export default function UnitsScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [groupMenuVisible, setGroupMenuVisible] = useState(false);
   const [baseMenuVisible, setBaseMenuVisible] = useState(false);
   const [operatorMenuVisible, setOperatorMenuVisible] = useState(false);
-  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [form, setForm] = useState<UnitForm>(emptyForm);
   const requestIdRef = useRef(0);
   const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
   const canAdd = hasPermission('units-add');
-  const canEdit = hasPermission('units-edit');
   const canDelete = hasPermission('units-delete');
+
+  const selectedGroup = useMemo(
+    () => unitGroups.find((group) => group.id === form.unitGroupId),
+    [unitGroups, form.unitGroupId]
+  );
 
   const selectedBase = useMemo(
     () => units.find((unit) => unit.id === form.baseUnit),
@@ -109,6 +103,22 @@ export default function UnitsScreen() {
   }, [load, page, refreshKey]);
 
   useEffect(() => {
+    let mounted = true;
+
+    api.unitGroups()
+      .then((response) => {
+        if (mounted) setUnitGroups(response.data as UnitGroup[]);
+      })
+      .catch((error) => {
+        if (mounted) Alert.alert('Unit groups failed', error instanceof Error ? error.message : 'Try again.');
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSearch(search.trim());
       setPage(1);
@@ -131,28 +141,26 @@ export default function UnitsScreen() {
   }
 
   function openCreateModal() {
-    setEditingUnit(null);
     setForm(emptyForm);
-    setModalVisible(true);
-  }
-
-  function openEditModal(unit: Unit) {
-    setEditingUnit(unit);
-    setForm(unitToForm(unit));
     setModalVisible(true);
   }
 
   function closeModal() {
     setModalVisible(false);
+    setGroupMenuVisible(false);
     setBaseMenuVisible(false);
     setOperatorMenuVisible(false);
-    setEditingUnit(null);
     setForm(emptyForm);
   }
 
   async function saveUnit() {
     if (!form.unitCode.trim() || !form.unitName.trim()) {
       Alert.alert('Missing fields', 'Unit code and unit name are required.');
+      return;
+    }
+
+    if (!form.unitGroupId) {
+      Alert.alert('Missing unit group', 'Unit group is required.');
       return;
     }
 
@@ -167,6 +175,7 @@ export default function UnitsScreen() {
     const payload = {
       unit_code: form.unitCode.trim(),
       unit_name: form.unitName.trim(),
+      unit_group_id: form.unitGroupId,
       base_unit: form.baseUnit,
       operator: hasBaseUnit ? form.operator : '*',
       operation_value: hasBaseUnit ? Number(operationValue) : 1,
@@ -175,16 +184,10 @@ export default function UnitsScreen() {
 
     setSaving(true);
     try {
-      if (editingUnit) {
-        await api.updateUnit(editingUnit.id, payload);
-      } else {
-        await api.createUnit(payload);
-      }
+      await api.createUnit(payload);
 
       closeModal();
-      if (editingUnit) {
-        await load(page);
-      } else if (page === 1) {
+      if (page === 1) {
         await load(1);
       } else {
         setPage(1);
@@ -233,6 +236,9 @@ export default function UnitsScreen() {
           <Text variant="bodyMedium" style={styles.muted}>
             {units.length} shown from {pagination?.total ?? units.length}
           </Text>
+          <Text variant="bodySmall" style={styles.warning}>
+            Units cannot be edited after creation. Used units cannot be deleted.
+          </Text>
         </View>
         {canAdd ? (
           <Button mode="contained" onPress={openCreateModal}>
@@ -255,6 +261,7 @@ export default function UnitsScreen() {
           <DataTable.Header>
             <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
             <DataTable.Title style={styles.nameColumn}>Unit</DataTable.Title>
+            <DataTable.Title style={styles.groupColumn}>Group</DataTable.Title>
             <DataTable.Title style={styles.baseColumn}>Base</DataTable.Title>
             <DataTable.Title style={styles.operatorColumn}>Operator</DataTable.Title>
             <DataTable.Title numeric style={styles.valueColumn}>
@@ -268,6 +275,9 @@ export default function UnitsScreen() {
             <DataTable.Row key={unit.id}>
               <DataTable.Cell style={styles.codeColumn}>{unit.unit_code}</DataTable.Cell>
               <DataTable.Cell style={styles.nameColumn}>{unit.unit_name}</DataTable.Cell>
+              <DataTable.Cell style={styles.groupColumn}>
+                {unit.unit_group_title ?? unit.unit_group?.title ?? '-'}
+              </DataTable.Cell>
               <DataTable.Cell style={styles.baseColumn}>
                 {unit.base_unit_name ?? unit.base?.unit_name ?? 'Base unit'}
               </DataTable.Cell>
@@ -280,16 +290,15 @@ export default function UnitsScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
-                  {canEdit ? (
-                    <Button compact mode="text" onPress={() => openEditModal(unit)}>
-                      Edit
-                    </Button>
-                  ) : null}
-                  {canDelete ? (
+                  {canDelete && unit.can_delete !== false ? (
                     <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(unit)}>
                       Delete
                     </Button>
-                  ) : null}
+                  ) : (
+                    <Text variant="bodySmall" style={styles.muted}>
+                      {unit.can_delete === false ? 'In use' : '-'}
+                    </Text>
+                  )}
                 </View>
               </DataTable.Cell>
             </DataTable.Row>
@@ -331,7 +340,7 @@ export default function UnitsScreen() {
           onDismiss={closeModal}
           contentContainerStyle={styles.modal}
         >
-          <Text variant="titleLarge">{editingUnit ? 'Edit Unit' : 'Add Unit'}</Text>
+          <Text variant="titleLarge">Add Unit</Text>
 
           <TextInput
             mode="outlined"
@@ -345,6 +354,34 @@ export default function UnitsScreen() {
             value={form.unitName}
             onChangeText={(value) => updateForm('unitName', value)}
           />
+
+          <Menu
+            visible={groupMenuVisible}
+            onDismiss={() => setGroupMenuVisible(false)}
+            anchor={
+              <Button
+                mode="outlined"
+                contentStyle={styles.menuButton}
+                onPress={() => setGroupMenuVisible(true)}
+              >
+                {selectedGroup?.title ?? 'Select unit group'}
+              </Button>
+            }
+          >
+            {unitGroups.map((group) => (
+              <Menu.Item
+                key={group.id}
+                title={group.title}
+                onPress={() => {
+                  updateForm('unitGroupId', group.id);
+                  setGroupMenuVisible(false);
+                }}
+              />
+            ))}
+          </Menu>
+          <HelperText type="info" visible={unitGroups.length === 0}>
+            Unit groups are required before saving units.
+          </HelperText>
 
           <Menu
             visible={baseMenuVisible}
@@ -458,6 +495,10 @@ const styles = StyleSheet.create({
   muted: {
     color: '#666666',
   },
+  warning: {
+    marginTop: 4,
+    color: '#a15c00',
+  },
   searchbar: {
     height: 44,
     borderWidth: 1,
@@ -479,6 +520,9 @@ const styles = StyleSheet.create({
   },
   nameColumn: {
     flex: 1.2,
+  },
+  groupColumn: {
+    flex: 1,
   },
   baseColumn: {
     flex: 1.1,

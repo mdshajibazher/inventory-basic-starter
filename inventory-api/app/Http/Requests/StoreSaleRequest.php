@@ -24,6 +24,7 @@ class StoreSaleRequest extends FormRequest
         ]);
         return [
             'reference_no' => ['required', 'string', 'max:191', Rule::unique('sales', 'reference_no')->ignore($saleId)],
+            'sale_date' => ['nullable', 'date'],
             'customer_id' => ['required', 'integer', Rule::exists('customers', 'id')->where('is_active', true)],
             'warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('is_active', true)],
             'biller_id' => ['required', 'integer', Rule::exists('billers', 'id')->where('is_active', true)],

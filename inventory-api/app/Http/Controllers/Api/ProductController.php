@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -165,6 +166,7 @@ class ProductController extends Controller
     public function update(Request $request, Product $product)
     {
         $data = $this->validatedData($request, $product);
+        $this->enforceUnitIdLock($product, $data);
 
         if ($request->boolean('remove_image') && $product->image) {
             $this->deleteStoredImage($product->image);
@@ -281,6 +283,24 @@ class ProductController extends Controller
             'warehouse_id',
             'diff_price',
         ])->all();
+    }
+
+    private function enforceUnitIdLock(Product $product, array $data): void
+    {
+        if (! array_key_exists('unit_id', $data)) {
+            return;
+        }
+
+        $currentUnitId = (int) ($product->unit_id ?? 0);
+        $nextUnitId = (int) ($data['unit_id'] ?? 0);
+
+        if ($currentUnitId === $nextUnitId || ! $product->unitIdLocked()) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'unit_id' => ['The product base unit cannot be changed after purchases, sales, or returns exist.'],
+        ]);
     }
 
     private function relations(): array

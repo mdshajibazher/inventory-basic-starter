@@ -10,6 +10,7 @@ class Purchase extends Model
 {
     protected $fillable = [
         'reference_no',
+        'purchase_date',
         'user_id',
         'warehouse_id',
         'supplier_id',
@@ -34,6 +35,7 @@ class Purchase extends Model
     {
         return [
             'user_id' => 'integer',
+            'purchase_date' => 'date',
             'warehouse_id' => 'integer',
             'supplier_id' => 'integer',
             'item' => 'integer',

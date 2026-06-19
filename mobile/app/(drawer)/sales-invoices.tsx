@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/src/lib/api';
-import type { Branch, Customer, Product, Tax, Warehouse } from '@/src/types';
+import type { Branch, Customer, Product, Tax, Unit, Warehouse } from '@/src/types';
 
 type ProductOptions = {
   taxes?: Tax[];
+  units?: Unit[];
 };
 
 type InvoiceLine = {
   key: string;
   productId: number | null;
+  unitId: number | null;
   batchNo: string;
   qty: string;
   price: string;
@@ -50,6 +52,7 @@ type SearchableSelectFieldProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: null,
+  unitId: null,
   batchNo: '',
   qty: '1',
   price: '0',
@@ -62,6 +65,7 @@ type InvoiceKind = 'sales' | 'returns';
 
 const initialForm = (kind: InvoiceKind = 'sales') => ({
   referenceNo: generateReference(kind),
+  invoiceDate: todayDate(),
   customerId: null as number | null,
   warehouseId: null as number | null,
   billerId: null as number | null,
@@ -84,6 +88,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
   const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [form, setForm] = useState(() => initialForm(kind));
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
@@ -136,6 +141,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       setBillers(nextBillers);
       setProducts(nextProducts);
       setTaxes(productOptions.taxes ?? []);
+      setUnits(productOptions.units ?? []);
       setForm((current) => ({
         ...current,
         customerId: current.customerId ?? nextCustomers[0]?.id ?? null,
@@ -181,12 +187,30 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     setLines((current) => current.map((line) => (line.key === key ? { ...line, [field]: value } : line)));
   }
 
+  function selectLineUnit(lineKey: string, unitId: number) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => item.id === line.productId);
+      if (kind === 'returns' || !product) return { ...line, unitId };
+
+      return {
+        ...line,
+        unitId,
+        price: String(unitPriceForProductUnit(product, unitId, units)),
+      };
+    }));
+  }
+
   function selectWarehouse(warehouse: Warehouse) {
     setWarehouses((current) => upsertById(current, warehouse));
     setForm((current) => ({ ...current, warehouseId: warehouse.id }));
+    if (kind === 'returns') return;
+
     setLines((current) => current.map((line) => {
       const product = products.find((item) => item.id === line.productId);
-      return product ? { ...line, price: String(unitPriceForProduct(product, warehouse.id)) } : line;
+      const unitId = line.unitId ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+      return product ? { ...line, price: String(unitPriceForProductUnit(product, unitId, units)) } : line;
     }));
   }
 
@@ -204,17 +228,20 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
 
     setProducts((current) => upsertById(current, product));
     setLines((current) =>
-      current.map((line) =>
-        line.key === lineKey
-          ? {
-              ...line,
-              productId: product.id,
-              batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
-              price: String(unitPriceForProduct(product, form.warehouseId)),
-              taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
-            }
-          : line
-      )
+      current.map((line) => {
+        if (line.key !== lineKey) return line;
+
+        const unitId = normalizeId(product.sale_unit_id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+
+        return {
+          ...line,
+          productId: product.id,
+          unitId,
+          batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
+          price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
+          taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+        };
+      })
     );
   }
 
@@ -229,6 +256,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
   function resetForm() {
     setForm({
       ...initialForm(kind),
+      invoiceDate: todayDate(),
       customerId: customers[0]?.id ?? null,
       warehouseId: warehouses[0]?.id ?? null,
       billerId: billers[0]?.id ?? null,
@@ -284,6 +312,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
+      invoiceDate: String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? todayDate()),
       customerId: Number(invoice.customer_id),
       warehouseId: Number(invoice.warehouse_id),
       billerId: Number(invoice.biller_id),
@@ -302,6 +331,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: Number(line.product_id ?? product?.id ?? 0) || null,
+        unitId: normalizeId(line.sale_unit_id ?? line.unit?.id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale'),
         qty: String(line.qty ?? '1'),
         batchNo: line.batch?.batch_no ?? '',
         price: String(line.net_unit_price ?? '0'),
@@ -348,6 +378,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           <View key={invoice.id} style={styles.listItem}>
             <View style={styles.listItemText}>
               <Text variant="titleSmall">{invoice.reference_no}</Text>
+              <Text variant="bodySmall" style={styles.muted}>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.customer?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
             </View>
             <Button compact onPress={() => router.push({ pathname: labels.detailRoute, params: { id: String(invoice.id) } })}>Details</Button>
@@ -374,6 +405,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       <View style={styles.panel}>
         <Text variant="titleMedium">Invoice</Text>
         <TextInput mode="outlined" label="Reference no" value={form.referenceNo} onChangeText={(value) => setValue('referenceNo', value)} />
+        <DatePickerField label={kind === 'returns' ? 'Return date' : 'Sale date'} value={form.invoiceDate} onChange={(value) => setValue('invoiceDate', value)} />
         <SearchableSelectField
           label="Customer"
           valueLabel={selectedCustomer?.name ?? 'Select customer'}
@@ -414,6 +446,8 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         </View>
         {lines.map((line, index) => {
           const product = products.find((item) => item.id === line.productId);
+          const unitOptions = productOptionsForFamily(product, units);
+          const selectedUnit = unitOptions.find((unit) => unit.id === line.unitId);
           const lineRequiresBatch = isBatchProduct(product);
           const lineTotal = calculateLine(line).subtotal;
           return (
@@ -431,7 +465,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
                 search={searchProducts}
                 keyFor={(item) => item.id}
                 labelFor={(item) => `${item.name} (${item.code})`}
-                detailFor={(item) => `Price ${money(unitPriceForProduct(item, form.warehouseId))} | Qty ${money(warehouseStockForProduct(item, form.warehouseId))}`}
+                detailFor={(item) => `Base price ${money(baseUnitPriceForProduct(item))} | Qty ${money(warehouseStockForProduct(item, form.warehouseId))}`}
                 onSelect={(item) => {
                   selectProduct(line.key, item);
                 }}
@@ -439,6 +473,17 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
               <View style={styles.formRow}>
                 <TextInput mode="outlined" label="Qty" keyboardType="numeric" value={line.qty} onChangeText={(value) => updateLine(line.key, 'qty', value)} style={styles.formField} />
                 {lineRequiresBatch ? <TextInput mode="outlined" label="Batch no *" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} /> : null}
+                {product && product.type !== 'combo' ? (
+                  <SelectField
+                    label="Unit"
+                    valueLabel={selectedUnit ? `${selectedUnit.unit_name} (${selectedUnit.unit_code})` : 'Select unit'}
+                    options={unitOptions}
+                    keyFor={(unit) => unit.id}
+                    labelFor={(unit) => `${unit.unit_name} (${unit.unit_code})`}
+                    onSelect={(unit) => selectLineUnit(line.key, unit.id)}
+                    style={styles.formField}
+                  />
+                ) : null}
                 <TextInput mode="outlined" label="Unit price" keyboardType="numeric" value={line.price} onChangeText={(value) => updateLine(line.key, 'price', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Discount" keyboardType="numeric" value={line.discount} onChangeText={(value) => updateLine(line.key, 'discount', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
@@ -525,6 +570,7 @@ function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind:
   return (
     <View style={styles.detailBox}>
       <Text variant="titleSmall">{invoice.reference_no}</Text>
+      <Text>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
       <Text style={styles.muted}>{invoice.customer?.name ?? '-'}</Text>
       <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
       {kind === 'sales' ? <Text>Paid: {money(numberValue(invoice.paid_amount))}</Text> : null}
@@ -716,6 +762,7 @@ function buildPayload(
 
   const basePayload = {
     reference_no: form.referenceNo.trim(),
+    sale_date: kind === 'sales' ? form.invoiceDate : undefined,
     customer_id: form.customerId,
     warehouse_id: form.warehouseId,
     biller_id: form.billerId,
@@ -725,7 +772,7 @@ function buildPayload(
       product_batch_id: null,
       batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
       qty: values.qty,
-      sale_unit: product?.type === 'combo' ? 'n/a' : product?.sale_unit_id ?? null,
+      sale_unit: product?.type === 'combo' ? 'n/a' : line.unitId,
       net_unit_price: values.price,
       discount: values.discount,
       tax_rate: values.taxRate,
@@ -740,6 +787,7 @@ function buildPayload(
   if (kind === 'returns') {
     return {
       ...basePayload,
+      return_date: form.invoiceDate,
       return_note: nullableText(form.saleNote),
     };
   }
@@ -819,16 +867,91 @@ function isBatchProduct(product?: Product | null) {
   return product?.is_batch === true || String(product?.is_batch) === '1';
 }
 
-function unitPriceForProduct(product: Product, warehouseId?: number | null) {
-  const warehousePrice = warehouseId
-    ? product.warehouse_prices?.find((item) => Number(item.warehouse_id) === warehouseId)
-    : null;
+function normalizeId(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
 
-  if (product.is_diffPrice && warehousePrice?.price != null && warehousePrice.price !== '') {
-    return numberValue(warehousePrice.price);
+function defaultProductUnit(product: Product | undefined, familyUnits: Unit[], kind: 'sale' | 'purchase' | 'stock') {
+  if (!product) return null;
+  const preferredId = kind === 'sale'
+    ? product.sale_unit_id
+    : kind === 'purchase'
+      ? product.purchase_unit_id
+      : product.unit_id ?? product.unit?.id;
+  const fallbackId = product.unit_id ?? product.unit?.id;
+  const preferred = familyUnits.find((unit) => unit.id === preferredId);
+  const fallback = familyUnits.find((unit) => unit.id === fallbackId);
+  return preferred?.id ?? fallback?.id ?? familyUnits[0]?.id ?? null;
+}
+
+function productOptionsForFamily(product: Product | undefined, units: Unit[]) {
+  if (!product) return [];
+  const productUnitId = product.unit_id ?? product.unit?.id ?? product.sale_unit_id ?? product.purchase_unit_id ?? null;
+  const rootId = rootUnitId(productUnitId, units);
+  if (!rootId) return [];
+
+  return units.filter((unit) => rootUnitId(unit.id, units) === rootId);
+}
+
+function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
+  let current = unitId ?? null;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return current;
+    visited.add(current);
+    const unit = units.find((item) => item.id === current);
+    if (!unit?.base_unit) return current;
+    current = unit.base_unit;
   }
 
-  return numberValue(product.selling_price ?? product.price);
+  return null;
+}
+
+function baseUnitPriceForProduct(product: Product) {
+  return numberValue(product.price);
+}
+
+function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
+  const basePrice = baseUnitPriceForProduct(product);
+  const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
+  const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
+
+  return round2(basePrice * factor);
+}
+
+function unitConversionFactorFromBase(unitId: number | null | undefined, baseUnitId: number | null | undefined, units: Unit[]) {
+  if (!unitId || !baseUnitId || unitId === baseUnitId) return 1;
+
+  const unitFactor = unitRootFactor(unitId, units);
+  const baseFactor = unitRootFactor(baseUnitId, units);
+
+  if (!unitFactor || !baseFactor || unitFactor.rootId !== baseFactor.rootId || baseFactor.factor <= 0) return 1;
+
+  return unitFactor.factor / baseFactor.factor;
+}
+
+function unitRootFactor(unitId: number, units: Unit[]) {
+  let current: number | null | undefined = unitId;
+  let factor = 1;
+  const visited = new Set<number>();
+
+  while (current) {
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    const unit = units.find((item) => item.id === current);
+    if (!unit) return null;
+    if (!unit.base_unit) return { rootId: current, factor };
+
+    const operationValue = numberValue(unit.operation_value || 1) || 1;
+    factor = unit.operator === '/' ? factor / operationValue : factor * operationValue;
+    current = unit.base_unit;
+  }
+
+  return null;
 }
 
 function warehouseStockForProduct(product: Product, warehouseId?: number | null) {
@@ -877,6 +1000,73 @@ function upsertById<T extends { id: number }>(items: T[], item: T) {
     : [item, ...items];
 }
 
+function DatePickerField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [visible, setVisible] = useState(false);
+  const selectedDate = parseDate(value);
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate ?? new Date()));
+  const days = calendarDays(visibleMonth);
+
+  function openPicker() {
+    setVisibleMonth(startOfMonth(selectedDate ?? new Date()));
+    setVisible(true);
+  }
+
+  function selectDate(date: Date) {
+    onChange(formatDate(date));
+    setVisible(false);
+  }
+
+  return (
+    <View>
+      <TextInput
+        dense
+        mode="outlined"
+        label={label}
+        value={value}
+        placeholder="YYYY-MM-DD"
+        editable={false}
+        right={<TextInput.Icon icon="calendar" onPress={openPicker} />}
+        onPressIn={openPicker}
+      />
+      <Portal>
+        <Modal visible={visible} onDismiss={() => setVisible(false)} contentContainerStyle={styles.datePickerModal}>
+          <View style={styles.datePickerHeader}>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, -1))}>Prev</Button>
+            <Text variant="titleMedium">{visibleMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</Text>
+            <Button compact mode="text" onPress={() => setVisibleMonth(addMonths(visibleMonth, 1))}>Next</Button>
+          </View>
+          <View style={styles.datePickerWeekdays}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+              <Text key={day} variant="labelSmall" style={styles.datePickerWeekday}>{day}</Text>
+            ))}
+          </View>
+          <View style={styles.datePickerGrid}>
+            {days.map((date) => {
+              const isCurrentMonth = date.getMonth() === visibleMonth.getMonth();
+              const isSelected = selectedDate ? formatDate(date) === formatDate(selectedDate) : false;
+
+              return (
+                <Pressable key={date.toISOString()} onPress={() => selectDate(date)} style={[styles.datePickerDay, isSelected && styles.datePickerDaySelected]}>
+                  <Text
+                    variant="bodyMedium"
+                    style={[
+                      styles.datePickerDayText,
+                      !isCurrentMonth && styles.datePickerDayMuted,
+                      isSelected && styles.datePickerDayTextSelected,
+                    ]}
+                  >
+                    {date.getDate()}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Modal>
+      </Portal>
+    </View>
+  );
+}
+
 function numberValue(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -893,6 +1083,48 @@ function money(value: number) {
 function nullableText(value: string) {
   const text = value.trim();
   return text ? text : null;
+}
+
+function parseDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function todayDate() {
+  return formatDate(new Date());
+}
+
+function dateOnly(value: unknown) {
+  return typeof value === 'string' ? value.slice(0, 10) : null;
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function calendarDays(month: Date) {
+  const start = startOfMonth(month);
+  start.setDate(start.getDate() - start.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
 }
 
 function invoiceLabels(kind: InvoiceKind) {
@@ -1055,6 +1287,52 @@ const styles = StyleSheet.create({
     flexBasis: '46%',
     flexGrow: 1,
     flexShrink: 1,
+  },
+  datePickerModal: {
+    alignSelf: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 14,
+    width: '92%',
+    maxWidth: 360,
+  },
+  datePickerHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  datePickerWeekdays: {
+    flexDirection: 'row',
+    marginBottom: 6,
+  },
+  datePickerWeekday: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#666666',
+  },
+  datePickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  datePickerDay: {
+    alignItems: 'center',
+    aspectRatio: 1,
+    flexBasis: '14.2857%',
+    justifyContent: 'center',
+    borderRadius: 6,
+  },
+  datePickerDaySelected: {
+    backgroundColor: '#111111',
+  },
+  datePickerDayText: {
+    color: '#222222',
+  },
+  datePickerDayMuted: {
+    color: '#aaaaaa',
+  },
+  datePickerDayTextSelected: {
+    color: '#ffffff',
   },
   lineTotal: {
     textAlign: 'right',

@@ -49,6 +49,10 @@ class DatabaseSeeder extends Seeder
             'warehouses-add',
             'warehouses-edit',
             'warehouses-delete',
+            'accounts-index',
+            'accounts-add',
+            'accounts-edit',
+            'accounts-delete',
             'customers-index',
             'customers-add',
             'customers-edit',
@@ -72,6 +76,8 @@ class DatabaseSeeder extends Seeder
             'purchases-show',
             'purchases-edit',
             'purchases-delete',
+            'product-stocks-index',
+            'product-stocks-adjust',
         ];
 
         $userPermissions = [
@@ -142,7 +148,7 @@ class DatabaseSeeder extends Seeder
         // $user->syncPermissions($permissions->keys()->all());
 
         $drinks = Category::query()->firstOrCreate(
-            ['name' => 'Drinks'],
+            ['name' => 'Test'],
             ['is_active' => true]
         );
 
@@ -157,12 +163,14 @@ class DatabaseSeeder extends Seeder
         );
 
         $this->call(WarehouseSeeder::class);
+        $this->call(UnitGroupSeeder::class);
         $this->call(UnitSeeder::class);
         $this->call(TaxSeeder::class);
         $this->call(PurchaseStatusSeeder::class);
         $this->call(BillerSeeder::class);
         $this->call(SupplierSeeder::class);
         $this->call(BrandSeeder::class);
+        $this->call(AccountSeeder::class);
         $this->call(CustomerSeeder::class);
         // $this->call(ProductSeeder::class);
 

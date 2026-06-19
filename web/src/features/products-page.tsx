@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, GripVertical, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -198,10 +199,15 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
 
         if (productResponse) {
           const product = productResponse.data as Product;
+          const editOptions = {
+            ...nextOptions,
+            units: mergeProductUnits(nextOptions.units, product),
+          };
           setEditing(product);
           setSelectedBrand(product.brand ?? null);
           setSelectedCategory(product.category ?? null);
-          setForm(defaultsForOptions(productToForm(product), nextOptions));
+          setOptions(editOptions);
+          setForm(defaultsForOptions(productToForm(product, editOptions), editOptions, { defaultUnits: false }));
         } else {
           resetCreateForm(nextOptions);
         }
@@ -365,6 +371,8 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
     }
   }
 
+  const unitIdLocked = mode === 'edit' && Boolean(editing?.unit_id_locked);
+
   const productForm = (
     <form onSubmit={save} className="grid min-w-0 gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -397,13 +405,20 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
             setValue('categoryId', category.id);
           }}
         />
-        <Field label="Product unit"><Select value={idValue(form.unitId)} onValueChange={(value) => setValue('unitId', nullableId(value))} options={unitOptions(options.units)} /></Field>
+        <Field label="Product Base Unit" hint={unitIdLocked ? 'Base unit is locked because this product has purchase, sale, or return history.' : undefined}>
+          <Select
+            value={idValue(form.unitId)}
+            onValueChange={(value) => setValue('unitId', nullableId(value))}
+            options={unitOptions(options.units)}
+            disabled={unitIdLocked}
+          />
+        </Field>
         <Field label="Sale unit"><Select value={idValue(form.saleUnitId)} onValueChange={(value) => setValue('saleUnitId', nullableId(value))} options={unitOptions(options.units)} /></Field>
         <Field label="Purchase unit"><Select value={idValue(form.purchaseUnitId)} onValueChange={(value) => setValue('purchaseUnitId', nullableId(value))} options={unitOptions(options.units)} /></Field>
         <Field label="Tax"><Select value={idValue(form.taxId)} onValueChange={(value) => setValue('taxId', nullableId(value))} options={[{ value: 'none', label: 'No tax' }, ...options.taxes.map((tax) => ({ value: String(tax.id), label: `${tax.name} (${tax.rate}%)` }))]} /></Field>
         <Field label="Tax method"><Select value={String(form.taxMethod)} onValueChange={(value) => setValue('taxMethod', Number(value))} options={options.tax_methods.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
         <Field label="Cost"><Input type="number" step="0.01" value={form.cost} onChange={(event) => setValue('cost', event.target.value)} /></Field>
-        <Field label="Price"><Input type="number" step="0.01" value={form.price} onChange={(event) => setValue('price', event.target.value)} /></Field>
+        <Field label="Base Unit Price"><Input type="number" step="0.01" value={form.price} onChange={(event) => setValue('price', event.target.value)} /></Field>
         <Field label="Quantity"><Input type="number" step="0.01" value={form.qty} onChange={(event) => setValue('qty', event.target.value)} /></Field>
         <Field label="Alert quantity"><Input type="number" step="0.01" value={form.alertQuantity} onChange={(event) => setValue('alertQuantity', event.target.value)} /></Field>
         <Field label="Image"><Input type="file" accept="image/*" onChange={(event) => setValue('imageFile', event.target.files?.[0] ?? null)} /></Field>
@@ -523,7 +538,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
             <div className="overflow-hidden rounded-md border border-neutral-200">
               <div className="hidden grid-cols-[minmax(0,1fr)_minmax(180px,1fr)] border-b border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-500 sm:grid">
                 <div className="px-3 py-2">Warehouse</div>
-                <div className="px-3 py-2">Price</div>
+                <div className="px-3 py-2">Base Unit Price</div>
               </div>
               <div className="divide-y divide-neutral-100">
                 {form.warehousePrices.map((warehousePrice, index) => (
@@ -533,7 +548,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                       <span className="block truncate">{warehousePrice.warehouseName}</span>
                     </div>
                     <div>
-                      <span className="mb-1 block text-xs font-medium text-neutral-500 sm:hidden">Price</span>
+                      <span className="mb-1 block text-xs font-medium text-neutral-500 sm:hidden">Base Unit Price</span>
                       <Input
                         type="number"
                         step="0.01"
@@ -583,7 +598,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Code', 'Brand', 'Category', 'Qty', 'Price', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}
+                {['Product', 'Code', 'Brand', 'Category', 'Qty', 'Base Unit Price', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -621,7 +636,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   );
 }
 
-function productToForm(product: Product): ProductForm {
+function productToForm(product: Product, options?: ProductOptions): ProductForm {
   return {
     ...emptyForm,
     type: product.type ?? 'standard',
@@ -630,9 +645,9 @@ function productToForm(product: Product): ProductForm {
     barcodeSymbology: product.barcode_symbology ?? 'C128',
     brandId: product.brand_id ?? null,
     categoryId: product.category_id,
-    unitId: product.unit_id ?? null,
-    saleUnitId: product.sale_unit_id ?? null,
-    purchaseUnitId: product.purchase_unit_id ?? null,
+    unitId: resolveUnitId(product, 'unit_id', 'unit', options),
+    saleUnitId: resolveUnitId(product, 'sale_unit_id', 'sale_unit', options),
+    purchaseUnitId: resolveUnitId(product, 'purchase_unit_id', 'purchase_unit', options),
     cost: String(product.cost ?? '0'),
     price: String(product.price ?? '0'),
     qty: String(product.qty ?? '0'),
@@ -663,6 +678,46 @@ function productToForm(product: Product): ProductForm {
     })),
     isActive: Boolean(product.is_active),
   };
+}
+
+type ProductUnitRelation = Unit | number | string | null | undefined;
+
+function normalizeId(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveUnitId(product: Product, idKey: keyof Product, relationKey: keyof Product, options?: ProductOptions) {
+  const rawProduct = product as Record<string, unknown>;
+  const relation = rawProduct[relationKey] as ProductUnitRelation;
+  const directId = normalizeId(rawProduct[idKey] as number | string | null | undefined);
+  const relationId = typeof relation === 'object' ? normalizeId(relation?.id) : normalizeId(relation);
+
+  if (directId) return directId;
+  if (relationId) return relationId;
+
+  if (typeof relation === 'string') {
+    const normalizedRelation = relation.trim().toLowerCase();
+    return options?.units.find((unit) => (
+      unit.unit_name.toLowerCase() === normalizedRelation ||
+      unit.unit_code.toLowerCase() === normalizedRelation
+    ))?.id ?? null;
+  }
+
+  return null;
+}
+
+function mergeProductUnits(units: Unit[], product: Product): Unit[] {
+  const byId = new Map(units.map((unit) => [unit.id, unit]));
+
+  [product.unit, product.sale_unit, product.purchase_unit].forEach((unit) => {
+    if (unit?.id && !byId.has(unit.id)) {
+      byId.set(unit.id, unit);
+    }
+  });
+
+  return Array.from(byId.values());
 }
 
 function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, labelFor, detailFor, onSelect }: SearchableSelectProps<T>) {
@@ -697,15 +752,21 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
     };
   }, [debouncedQuery, open, search]);
 
+  function openSearch() {
+    setQuery('');
+    setDebouncedQuery('');
+    setOpen(true);
+  }
+
   return (
     <Field label={label}>
       <div className="relative">
-        <Button type="button" variant="secondary" className="h-10 w-full justify-between overflow-hidden px-3 text-left font-normal" onClick={() => { setQuery(''); setDebouncedQuery(''); setOpen(true); }}>
+        <Button type="button" variant="secondary" className="h-10 w-full justify-between overflow-hidden px-3 text-left font-normal" onClick={openSearch}>
           <span className="truncate">{valueLabel}</span>
         </Button>
-        {open ? (
-          <div className="fixed inset-0 z-50 grid place-items-start bg-black/30 p-4 pt-20">
-            <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white p-3 shadow-xl">
+        {open ? createPortal(
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={() => setOpen(false)}>
+            <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white p-3 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="font-medium">{label}</div>
                 <Button type="button" variant="ghost" className="h-8 px-2" onClick={() => setOpen(false)}>Close</Button>
@@ -725,21 +786,26 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
                 })}
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         ) : null}
       </div>
     </Field>
   );
 }
 
-function defaultsForOptions(form: ProductForm, options: ProductOptions) {
+function defaultsForOptions(
+  form: ProductForm,
+  options: ProductOptions,
+  { defaultUnits = true }: { defaultUnits?: boolean } = {}
+) {
   return {
     ...form,
     type: form.type || options.types[0] || 'standard',
     barcodeSymbology: form.barcodeSymbology || options.barcode_symbologies[0] || 'C128',
-    unitId: form.unitId ?? options.units[0]?.id ?? null,
-    saleUnitId: form.saleUnitId ?? options.units[0]?.id ?? null,
-    purchaseUnitId: form.purchaseUnitId ?? options.units[0]?.id ?? null,
+    unitId: form.unitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
+    saleUnitId: form.saleUnitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
+    purchaseUnitId: form.purchaseUnitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
     warehousePrices: mergeWarehousePrices(form.warehousePrices, options.warehouses),
   };
 }

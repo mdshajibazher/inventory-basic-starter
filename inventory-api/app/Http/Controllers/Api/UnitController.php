@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UnitResource;
 use App\Models\Unit;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -16,7 +17,7 @@ class UnitController extends Controller
 
         return UnitResource::collection(
             Unit::query()
-                ->with('baseUnit:id,unit_name')
+                ->with('baseUnit:id,unit_name', 'unitGroup:id,title')
                 ->where('is_active', true)
                 ->when($request->filled('search'), function ($query) use ($request) {
                     $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
@@ -27,6 +28,9 @@ class UnitController extends Controller
                                 ->orWhere('unit_name', 'like', "%{$term}%")
                                 ->orWhere('operator', 'like', "%{$term}%")
                                 ->orWhere('operation_value', 'like', "%{$term}%")
+                                ->orWhereHas('unitGroup', function ($groupQuery) use ($term) {
+                                    $groupQuery->where('title', 'like', "%{$term}%");
+                                })
                                 ->orWhereHas('baseUnit', function ($baseQuery) use ($term) {
                                     $baseQuery->where('unit_name', 'like', "%{$term}%")
                                         ->orWhere('unit_code', 'like', "%{$term}%");
@@ -46,7 +50,7 @@ class UnitController extends Controller
 
         return response()->json([
             'message' => 'Unit created successfully.',
-            'data' => new UnitResource($unit->load('baseUnit:id,unit_name')),
+            'data' => new UnitResource($unit->load('baseUnit:id,unit_name', 'unitGroup:id,title')),
         ], 201);
     }
 
@@ -55,6 +59,7 @@ class UnitController extends Controller
         return response()->json([
             'data' => new UnitResource($unit->load([
                 'baseUnit:id,unit_name',
+                'unitGroup:id,title',
                 'relatedUnits:id,unit_code,unit_name,base_unit,is_active',
                 'products',
             ])),
@@ -67,12 +72,18 @@ class UnitController extends Controller
 
         return response()->json([
             'message' => 'Unit updated successfully.',
-            'data' => new UnitResource($unit->load('baseUnit:id,unit_name')),
+            'data' => new UnitResource($unit->load('baseUnit:id,unit_name', 'unitGroup:id,title')),
         ]);
     }
 
-    public function destroy(Unit $unit)
+    public function destroy(Unit $unit): JsonResponse
     {
+        if ($unit->isUsedInInvoices()) {
+            return response()->json([
+                'message' => 'Unit cannot be deleted because it is used in purchase, sales, or return invoices.',
+            ], 422);
+        }
+
         $unit->update(['is_active' => false]);
 
         return response()->json([
@@ -99,6 +110,7 @@ class UnitController extends Controller
                     ->where('is_active', true)
                     ->ignore($unit?->id),
             ],
+            'unit_group_id' => ['nullable', 'integer', 'exists:unit_groups,id'],
             'base_unit' => [
                 'nullable',
                 'integer',

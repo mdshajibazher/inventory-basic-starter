@@ -10,6 +10,7 @@ class Sale extends Model
 {
     protected $fillable = [
         'reference_no',
+        'sale_date',
         'user_id',
         'cash_register_id',
         'customer_id',
@@ -39,6 +40,7 @@ class Sale extends Model
     {
         return [
             'user_id' => 'integer',
+            'sale_date' => 'date',
             'cash_register_id' => 'integer',
             'customer_id' => 'integer',
             'warehouse_id' => 'integer',

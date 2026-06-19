@@ -7,8 +7,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSaleRequest;
 use App\Http\Resources\SaleResource;
 use App\Models\Payment;
+use App\Models\Product;
 use App\Models\ProductSale;
 use App\Models\Sale;
+use App\Models\Unit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -100,6 +102,7 @@ class SalesInvoiceController extends Controller
 
                 $sale->update([
                     'reference_no' => $data['reference_no'],
+                    'sale_date' => $data['sale_date'] ?? $sale->sale_date ?? now()->toDateString(),
                     'customer_id' => $data['customer_id'],
                     'warehouse_id' => $data['warehouse_id'],
                     'biller_id' => $data['biller_id'],
@@ -127,17 +130,26 @@ class SalesInvoiceController extends Controller
                 Payment::query()->where('sale_id', $sale->id)->delete();
 
                 foreach ($data['product_id'] as $index => $productId) {
+                    $product = Product::query()->findOrFail($productId);
+                    $unit = $this->resolveSaleUnit($data['sale_unit'][$index] ?? null, $product);
+                    $qty = (float) $data['qty'][$index];
+                    $baseQuantity = $this->baseQuantity($qty, $unit);
+                    $cost = $this->costSnapshot($product, $qty, $baseQuantity);
+
                     ProductSale::create([
                         'sale_id' => $sale->id,
+                        'date' => $sale->sale_date?->toDateString(),
                         'product_id' => $productId,
                         'product_batch_id' => $data['product_batch_id'][$index] ?? null,
-                        'qty' => (float) $data['qty'][$index],
-                        'sale_unit_id' => (int) ($data['sale_unit'][$index] ?? 0),
+                        'qty' => $qty,
+                        'sale_unit_id' => $unit?->id ?? 0,
                         'net_unit_price' => (float) $data['net_unit_price'][$index],
                         'discount' => (float) $data['discount'][$index],
                         'tax_rate' => (float) ($data['tax_rate'][$index] ?? 0),
                         'tax' => (float) $data['tax'][$index],
                         'total' => $totals['lines'][$index],
+                        'unit_cost' => $cost['unit_cost'],
+                        'total_cost' => $cost['total_cost'],
                     ]);
                 }
 
@@ -199,6 +211,50 @@ class SalesInvoiceController extends Controller
             'coupon_discount' => round($couponDiscount, 2),
             'shipping_cost' => round($shippingCost, 2),
             'grand_total' => round($totalPrice + $orderTax + $shippingCost - $orderDiscount - $couponDiscount, 2),
+        ];
+    }
+
+    private function resolveSaleUnit(mixed $saleUnit, Product $product): ?Unit
+    {
+        if ($saleUnit === null || $saleUnit === '') {
+            return $product->sale_unit_id ? Unit::find($product->sale_unit_id) : null;
+        }
+
+        if ((string) $saleUnit === 'n/a') {
+            return null;
+        }
+
+        if (is_numeric($saleUnit)) {
+            return Unit::find((int) $saleUnit);
+        }
+
+        return Unit::query()->where('unit_name', $saleUnit)->first();
+    }
+
+    private function baseQuantity(float $qty, ?Unit $unit): float
+    {
+        if (! $unit) {
+            return $qty;
+        }
+
+        if ($unit->operator === '*') {
+            return $qty * (float) $unit->operation_value;
+        }
+
+        if ($unit->operator === '/' && (float) $unit->operation_value !== 0.0) {
+            return $qty / (float) $unit->operation_value;
+        }
+
+        return $qty;
+    }
+
+    private function costSnapshot(Product $product, float $qty, float $baseQuantity): array
+    {
+        $totalCost = round((float) $product->cost * $baseQuantity, 2);
+
+        return [
+            'unit_cost' => $qty > 0 ? round($totalCost / $qty, 2) : 0,
+            'total_cost' => $totalCost,
         ];
     }
 }

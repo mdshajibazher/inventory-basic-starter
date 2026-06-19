@@ -12,6 +12,7 @@ class ProductReturnResource extends JsonResource
         return [
             'id' => $this->id,
             'return_id' => $this->return_id,
+            'date' => $this->date?->toDateString(),
             'product_id' => $this->product_id,
             'variant_id' => $this->variant_id,
             'product_batch_id' => $this->product_batch_id,

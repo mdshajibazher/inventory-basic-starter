@@ -18,6 +18,7 @@ use App\Models\ProductWarehouse;
 use App\Models\Sale;
 use App\Models\Unit;
 use App\Models\User;
+use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -45,6 +46,7 @@ class StoreSalesInvoiceAction
 
             $sale = Sale::create([
                 'reference_no' => $data['reference_no'],
+                'sale_date' => $data['sale_date'] ?? now()->toDateString(),
                 'user_id' => $user->id,
                 'cash_register_id' => $cashRegister?->id,
                 'customer_id' => $data['customer_id'],
@@ -73,7 +75,9 @@ class StoreSalesInvoiceAction
             foreach ($data['product_id'] as $index => $productId) {
                 $product = Product::query()->lockForUpdate()->findOrFail($productId);
                 $unit = $this->resolveSaleUnit($data['sale_unit'][$index] ?? null, $product);
-                $baseQuantity = $this->baseQuantity((float) $data['qty'][$index], $unit);
+                $qty = (float) $data['qty'][$index];
+                $baseQuantity = $this->baseQuantity($qty, $unit);
+                $cost = $this->costSnapshot($product, $qty, $baseQuantity);
                 $variantId = null;
                 $batchId = null;
 
@@ -81,7 +85,8 @@ class StoreSalesInvoiceAction
                     if ($product->type === 'combo') {
                         $this->deductComboStock($product, (float) $data['qty'][$index], (int) $data['warehouse_id'], "product_id.{$index}");
                     } elseif ($unit === null && (string) ($data['sale_unit'][$index] ?? '') === 'n/a') {
-                        $baseQuantity = (float) $data['qty'][$index];
+                        $baseQuantity = $qty;
+                        $cost = $this->costSnapshot($product, $qty, $baseQuantity);
                     }
 
                     if ($product->type !== 'combo') {
@@ -91,19 +96,40 @@ class StoreSalesInvoiceAction
                     [$variantId, $batchId] = $this->resolveItemReferences($product, $data, $index);
                 }
 
-                ProductSale::create([
+                $productSale = ProductSale::create([
                     'sale_id' => $sale->id,
+                    'date' => $sale->sale_date?->toDateString(),
                     'product_id' => $product->id,
                     'variant_id' => $variantId,
                     'product_batch_id' => $batchId,
-                    'qty' => (float) $data['qty'][$index],
+                    'qty' => $qty,
                     'sale_unit_id' => $unit?->id ?? 0,
                     'net_unit_price' => (float) $data['net_unit_price'][$index],
                     'discount' => (float) $data['discount'][$index],
                     'tax_rate' => (float) ($data['tax_rate'][$index] ?? 0),
                     'tax' => (float) $data['tax'][$index],
                     'total' => $totals['lines'][$index],
+                    'unit_cost' => $cost['unit_cost'],
+                    'total_cost' => $cost['total_cost'],
                 ]);
+
+                if ((int) $data['sale_status'] === 1 && $product->type !== 'digital') {
+                    app(ProductStockService::class)->recordMovement([
+                        'product_id' => $product->id,
+                        'warehouse_id' => $data['warehouse_id'],
+                        'product_batch_id' => $batchId,
+                        'variant_id' => $variantId,
+                        'unit_id' => $unit?->id,
+                        'user_id' => $user->id,
+                        'source_type' => 'product_sale',
+                        'source_id' => $productSale->id,
+                        'type' => 'product_sale',
+                        'quantity' => -1 * (float) $data['qty'][$index],
+                        'quantity_base' => -1 * $baseQuantity,
+                        'reference_no' => $sale->reference_no,
+                        'movement_date' => $sale->sale_date?->toDateString(),
+                    ]);
+                }
             }
 
             $this->createPaymentIfNeeded($sale, $data, $user, $cashRegister);
@@ -191,6 +217,16 @@ class StoreSalesInvoiceAction
         }
 
         return $qty;
+    }
+
+    private function costSnapshot(Product $product, float $qty, float $baseQuantity): array
+    {
+        $totalCost = $this->round((float) $product->cost * $baseQuantity);
+
+        return [
+            'unit_cost' => $qty > 0 ? $this->round($totalCost / $qty) : 0,
+            'total_cost' => $totalCost,
+        ];
     }
 
     private function deductProductStock(Product $product, array $data, int|string $index, float $quantity): array

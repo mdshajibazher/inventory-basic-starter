@@ -101,6 +101,7 @@ class PurchaseInvoiceController extends Controller
 
                 $purchase->update([
                     'reference_no' => $data['reference_no'],
+                    'purchase_date' => $data['purchase_date'] ?? $purchase->purchase_date ?? now()->toDateString(),
                     'warehouse_id' => $data['warehouse_id'],
                     'supplier_id' => $data['supplier_id'],
                     'item' => $totals['item'],
@@ -129,6 +130,7 @@ class PurchaseInvoiceController extends Controller
 
                     ProductPurchase::create([
                         'purchase_id' => $purchase->id,
+                        'date' => $purchase->purchase_date?->toDateString(),
                         'product_id' => $productId,
                         'qty' => $qty,
                         'recieved' => $received,

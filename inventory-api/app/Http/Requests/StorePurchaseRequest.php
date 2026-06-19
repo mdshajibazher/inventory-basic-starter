@@ -20,6 +20,7 @@ class StorePurchaseRequest extends FormRequest
 
         return [
             'reference_no' => ['required', 'string', 'max:191', Rule::unique('purchases', 'reference_no')->ignore($purchaseId)],
+            'purchase_date' => ['nullable', 'date'],
             'supplier_id' => ['required', 'integer', Rule::exists('suppliers', 'id')->where('is_active', true)],
             'warehouse_id' => ['nullable', 'integer', Rule::exists('warehouses', 'id')->where('is_active', true)],
             'status' => ['required_without:purchase_status_id', 'integer', 'exists:purchase_statuses,id'],
