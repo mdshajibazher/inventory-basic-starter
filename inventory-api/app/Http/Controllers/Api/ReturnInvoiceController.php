@@ -34,9 +34,12 @@ class ReturnInvoiceController extends Controller
 
         $returns = ReturnInvoice::query()
             ->with(['customer:id,name', 'warehouse:id,name', 'biller:id,name'])
+            ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
             ->when($search !== '', function ($query) use ($search) {
-                $query->where('reference_no', 'like', "%{$search}%")
-                    ->orWhereHas('customer', fn ($customer) => $customer->where('name', 'like', "%{$search}%"));
+                $query->where(function ($searchQuery) use ($search) {
+                    $searchQuery->where('reference_no', 'like', "%{$search}%")
+                        ->orWhereHas('customer', fn ($customer) => $customer->where('name', 'like', "%{$search}%"));
+                });
             })
             ->latest('id')
             ->paginate($perPage);

@@ -6,9 +6,13 @@ use App\Actions\Purchases\StorePurchaseInvoiceAction;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StorePurchaseRequest;
 use App\Http\Resources\PurchaseResource;
+use App\Models\Account;
 use App\Models\Payment;
+use App\Models\Product;
 use App\Models\ProductPurchase;
+use App\Models\ProductVariant;
 use App\Models\Purchase;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -24,11 +28,12 @@ class PurchaseInvoiceController extends Controller
         'warehouse:id,name',
         'user:id,name,email',
         'purchaseStatus:id,value,label',
-        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch',
+        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
+        'products.product.variants.variant:id,name',
         'products.unit:id,unit_code,unit_name',
         'products.batch:id,batch_no,expired_date',
         'products.variant:id,name',
-        'payments:id,purchase_id,payment_reference,amount,change,paying_method,payment_note',
+        'payments:id,purchase_id,supplier_id,account_id,payment_reference,payment_type,direction,amount,change,paying_method,payment_note',
     ];
 
     public function index(Request $request): JsonResponse
@@ -38,9 +43,13 @@ class PurchaseInvoiceController extends Controller
 
         $purchases = Purchase::query()
             ->with(['supplier:id,name', 'warehouse:id,name', 'purchaseStatus:id,value,label'])
+            ->when($request->filled('supplier_id'), fn ($query) => $query->where('supplier_id', $request->integer('supplier_id')))
+            ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
-                $query->where('reference_no', 'like', "%{$search}%")
-                    ->orWhereHas('supplier', fn ($supplier) => $supplier->where('name', 'like', "%{$search}%"));
+                $query->where(function ($searchQuery) use ($search) {
+                    $searchQuery->where('reference_no', 'like', "%{$search}%")
+                        ->orWhereHas('supplier', fn ($supplier) => $supplier->where('name', 'like', "%{$search}%"));
+                });
             })
             ->latest('id')
             ->paginate($perPage);
@@ -83,10 +92,10 @@ class PurchaseInvoiceController extends Controller
         }
     }
 
-    public function update(StorePurchaseRequest $request, Purchase $purchase): JsonResponse
+    public function update(StorePurchaseRequest $request, Purchase $purchase, PaymentService $payments): JsonResponse
     {
         try {
-            $purchase = DB::transaction(function () use ($request, $purchase) {
+            $purchase = DB::transaction(function () use ($request, $purchase, $payments) {
                 $data = $request->validated();
                 $totals = $this->calculateTotals($data);
                 $paidAmount = min((float) ($data['paid_amount'] ?? 0), $totals['grand_total']);
@@ -125,6 +134,7 @@ class PurchaseInvoiceController extends Controller
                 Payment::query()->where('purchase_id', $purchase->id)->delete();
 
                 foreach ($data['product_id'] as $index => $productId) {
+                    $product = Product::query()->findOrFail($productId);
                     $qty = (float) $data['qty'][$index];
                     $received = $this->receivedQuantity((int) $data['status'], $qty, (float) $data['received'][$index]);
 
@@ -132,6 +142,7 @@ class PurchaseInvoiceController extends Controller
                         'purchase_id' => $purchase->id,
                         'date' => $purchase->purchase_date?->toDateString(),
                         'product_id' => $productId,
+                        'variant_id' => $this->resolveVariantId($product, $data, $index),
                         'qty' => $qty,
                         'recieved' => $received,
                         'purchase_unit_id' => (int) $data['purchase_unit'][$index],
@@ -142,6 +153,8 @@ class PurchaseInvoiceController extends Controller
                         'total' => $this->receivedLineTotal((int) $data['status'], $qty, $received, $totals['lines'][$index]),
                     ]);
                 }
+
+                $this->createPaymentIfNeeded($purchase, $data, $request->user(), $paidAmount, $payments);
 
                 return $purchase->load(self::RELATIONS);
             });
@@ -207,6 +220,63 @@ class PurchaseInvoiceController extends Controller
         ];
     }
 
+    private function resolveVariantId(Product $product, array $data, int|string $index): ?int
+    {
+        if (! $product->is_variant || (empty($data['variant_id'][$index]) && empty($data['product_code'][$index]))) {
+            return null;
+        }
+
+        return ProductVariant::query()
+            ->where('product_id', $product->id)
+            ->when(
+                ! empty($data['variant_id'][$index]),
+                fn ($query) => $query->where('variant_id', $data['variant_id'][$index]),
+                fn ($query) => $query->where('item_code', $data['product_code'][$index])
+            )
+            ->value('variant_id');
+    }
+
+    private function createPaymentIfNeeded(Purchase $purchase, array $data, $user, float $paidAmount, PaymentService $payments): void
+    {
+        if ($paidAmount <= 0) {
+            $payments->recalculatePurchase($purchase->id);
+
+            return;
+        }
+
+        $account = ! empty($data['account_id'])
+            ? Account::query()->whereKey($data['account_id'])->first()
+            : Account::query()->where('is_default', true)->first();
+
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'paid_amount' => ['A default account is required before recording purchase payments.'],
+            ]);
+        }
+
+        $payments->record([
+            'purchase_id' => $purchase->id,
+            'account_id' => $account->id,
+            'supplier_id' => $purchase->supplier_id,
+            'payment_reference' => 'ppr-'.date('Ymd').'-'.date('His'),
+            'payment_type' => Payment::TYPE_PURCHASE_PAYMENT,
+            'direction' => Payment::DIRECTION_OUT,
+            'amount' => $paidAmount,
+            'change' => (float) ($data['paying_amount'] ?? $paidAmount) - $paidAmount,
+            'paying_method' => $this->paymentMethod((int) ($data['paid_by_id'] ?? 1)),
+            'payment_note' => $data['payment_note'] ?? null,
+        ], $user);
+    }
+
+    private function paymentMethod(int $paidById): string
+    {
+        return match ($paidById) {
+            1 => 'Cash',
+            2 => 'Gift Card',
+            default => 'Cheque',
+        };
+    }
+
     private function receivedQuantity(int $status, float $qty, float $requestedReceived): float
     {
         return match ($status) {
@@ -218,8 +288,13 @@ class PurchaseInvoiceController extends Controller
 
     private function receivedLineTotal(int $status, float $qty, float $received, float $lineTotal): float
     {
-        if (in_array($status, [3, 4], true)) return 0.0;
-        if ($status === 2) return $qty > 0 ? round($lineTotal * ($received / $qty), 2) : 0.0;
+        if (in_array($status, [3, 4], true)) {
+            return 0.0;
+        }
+        if ($status === 2) {
+            return $qty > 0 ? round($lineTotal * ($received / $qty), 2) : 0.0;
+        }
+
         return $lineTotal;
     }
 }

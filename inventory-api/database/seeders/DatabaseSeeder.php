@@ -53,6 +53,10 @@ class DatabaseSeeder extends Seeder
             'accounts-add',
             'accounts-edit',
             'accounts-delete',
+            'general-settings-index',
+            'general-settings-add',
+            'general-settings-edit',
+            'general-settings-delete',
             'customers-index',
             'customers-add',
             'customers-edit',
@@ -163,6 +167,7 @@ class DatabaseSeeder extends Seeder
         );
 
         $this->call(WarehouseSeeder::class);
+        $this->call(GeneralSettingsSeeder::class);
         $this->call(UnitGroupSeeder::class);
         $this->call(UnitSeeder::class);
         $this->call(TaxSeeder::class);
@@ -172,6 +177,7 @@ class DatabaseSeeder extends Seeder
         $this->call(BrandSeeder::class);
         $this->call(AccountSeeder::class);
         $this->call(CustomerSeeder::class);
+        $this->call(StandardProductDemoSeeder::class);
         // $this->call(ProductSeeder::class);
 
         // Product::query()->firstOrCreate(

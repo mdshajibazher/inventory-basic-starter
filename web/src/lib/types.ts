@@ -44,6 +44,27 @@ export type Brand = {
   is_active?: boolean | number | null;
 };
 
+export type GeneralSetting = {
+  id: number;
+  site_title: string;
+  site_logo?: string | null;
+  favicon?: string | null;
+  company_name?: string | null;
+  company_address?: string | null;
+  company_email?: string | null;
+  company_phone?: string | null;
+  currency?: string | null;
+  currency_position?: string | null;
+  staff_access?: string | null;
+  date_format?: string | null;
+  developed_by?: string | null;
+  invoice_format?: string | null;
+  state?: number | string | null;
+  theme?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type Branch = {
   id: number;
   name: string;
@@ -162,6 +183,7 @@ export type Product = {
 export type ProductWarehousePrice = {
   warehouse_id: number;
   warehouse_name?: string | null;
+  variant_id?: number | null;
   product_batch_id?: number | null;
   batch_no?: string | null;
   expired_date?: string | null;
@@ -252,6 +274,66 @@ export type Account = {
   is_active?: boolean | number | null;
 };
 
+export type PaymentType =
+  | 'sale_payment'
+  | 'customer_advance'
+  | 'purchase_payment'
+  | 'supplier_advance'
+  | 'sale_return_refund'
+  | 'purchase_return_refund';
+
+export type PaymentDirection = 'in' | 'out';
+
+export type ReferenceDocument = {
+  type: string;
+  id: number | null;
+  reference_no?: string | null;
+};
+
+export type Payment = {
+  id: number;
+  payment_reference: string;
+  payment_type: PaymentType;
+  direction: PaymentDirection;
+  amount: number | string;
+  change?: number | string | null;
+  paying_method: string;
+  payment_note?: string | null;
+  account_id: number;
+  customer_id?: number | null;
+  supplier_id?: number | null;
+  sale_id?: number | null;
+  purchase_id?: number | null;
+  sale_return_id?: number | null;
+  purchase_return_id?: number | null;
+  reference_document?: ReferenceDocument | null;
+  account?: Pick<Account, 'id' | 'name' | 'account_no'> | null;
+  customer?: Pick<Customer, 'id' | 'name' | 'email' | 'phone_number'> | null;
+  supplier?: Pick<Supplier, 'id' | 'name' | 'email' | 'phone_number'> | null;
+  sale?: InvoiceOption | null;
+  purchase?: InvoiceOption | null;
+  sale_return?: InvoiceOption | null;
+  purchase_return?: InvoiceOption | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type InvoiceOption = {
+  id: number;
+  reference_no: string;
+  customer_id?: number | null;
+  supplier_id?: number | null;
+  grand_total?: number | string | null;
+  due_amount?: number | string | null;
+  paid_amount?: number | string | null;
+  payment_status?: number | string | null;
+  sale_date?: string | null;
+  purchase_date?: string | null;
+  return_date?: string | null;
+  customer?: Pick<Customer, 'id' | 'name'> | null;
+  supplier?: Pick<Supplier, 'id' | 'name'> | null;
+};
+
 export type PurchaseStatus = {
   id: number;
   value: string;
@@ -283,6 +365,42 @@ export type Customer = {
   is_active?: boolean | number | null;
   customer_group?: CustomerGroup;
   user?: Pick<User, 'id' | 'name' | 'email'> | null;
+};
+
+export type CustomerLedgerRow = {
+  id: number;
+  type: 'sale' | 'return' | 'payment';
+  date: string;
+  bill?: string | null;
+  particular: string;
+  debit: number;
+  credit: number;
+  product_lines: string[];
+  balance: number;
+};
+
+export type CustomerLedgerReport = {
+  company: {
+    name: string;
+    address?: string | null;
+    email?: string | null;
+    phone?: string | null;
+  };
+  customer: Pick<Customer, 'id' | 'name' | 'company_name' | 'email' | 'phone_number'> & {
+    address?: string | null;
+  };
+  filters: {
+    from?: string | null;
+    to?: string | null;
+    printed_at: string;
+  };
+  opening_balance: number;
+  rows: CustomerLedgerRow[];
+  totals: {
+    debit: number;
+    credit: number;
+    closing_balance: number;
+  };
 };
 
 export type StockMovement = {

@@ -6,11 +6,14 @@ use App\Actions\Sales\StoreSalesInvoiceAction;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSaleRequest;
 use App\Http\Resources\SaleResource;
+use App\Models\Account;
 use App\Models\Payment;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\ProductSale;
 use App\Models\Sale;
 use App\Models\Unit;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,11 +29,12 @@ class SalesInvoiceController extends Controller
         'warehouse:id,name',
         'biller:id,name,company_name',
         'user:id,name,email',
-        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch',
+        'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
+        'products.product.variants.variant:id,name',
         'products.unit:id,unit_code,unit_name',
         'products.batch:id,batch_no,expired_date',
         'products.variant:id,name',
-        'payments:id,sale_id,payment_reference,amount,change,paying_method,payment_note',
+        'payments:id,sale_id,customer_id,account_id,payment_reference,payment_type,direction,amount,change,paying_method,payment_note',
     ];
 
     public function index(Request $request): JsonResponse
@@ -40,9 +44,13 @@ class SalesInvoiceController extends Controller
 
         $sales = Sale::query()
             ->with(['customer:id,name', 'warehouse:id,name', 'biller:id,name'])
+            ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
+            ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
-                $query->where('reference_no', 'like', "%{$search}%")
-                    ->orWhereHas('customer', fn ($customer) => $customer->where('name', 'like', "%{$search}%"));
+                $query->where(function ($searchQuery) use ($search) {
+                    $searchQuery->where('reference_no', 'like', "%{$search}%")
+                        ->orWhereHas('customer', fn ($customer) => $customer->where('name', 'like', "%{$search}%"));
+                });
             })
             ->latest('id')
             ->paginate($perPage);
@@ -85,10 +93,10 @@ class SalesInvoiceController extends Controller
         }
     }
 
-    public function update(StoreSaleRequest $request, Sale $sale): JsonResponse
+    public function update(StoreSaleRequest $request, Sale $sale, PaymentService $payments): JsonResponse
     {
         try {
-            $sale = DB::transaction(function () use ($request, $sale) {
+            $sale = DB::transaction(function () use ($request, $sale, $payments) {
                 $data = $request->validated();
                 $totals = $this->calculateTotals($data);
                 $documentPath = $sale->document;
@@ -140,6 +148,7 @@ class SalesInvoiceController extends Controller
                         'sale_id' => $sale->id,
                         'date' => $sale->sale_date?->toDateString(),
                         'product_id' => $productId,
+                        'variant_id' => $this->resolveVariantId($product, $data, $index),
                         'product_batch_id' => $data['product_batch_id'][$index] ?? null,
                         'qty' => $qty,
                         'sale_unit_id' => $unit?->id ?? 0,
@@ -152,6 +161,8 @@ class SalesInvoiceController extends Controller
                         'total_cost' => $cost['total_cost'],
                     ]);
                 }
+
+                $this->createPaymentIfNeeded($sale, $data, $request->user(), $payments);
 
                 return $sale->load(self::RELATIONS);
             });
@@ -212,6 +223,69 @@ class SalesInvoiceController extends Controller
             'shipping_cost' => round($shippingCost, 2),
             'grand_total' => round($totalPrice + $orderTax + $shippingCost - $orderDiscount - $couponDiscount, 2),
         ];
+    }
+
+    private function resolveVariantId(Product $product, array $data, int|string $index): ?int
+    {
+        if (! $product->is_variant || (empty($data['variant_id'][$index]) && empty($data['product_code'][$index]))) {
+            return null;
+        }
+
+        return ProductVariant::query()
+            ->where('product_id', $product->id)
+            ->when(
+                ! empty($data['variant_id'][$index]),
+                fn ($query) => $query->where('variant_id', $data['variant_id'][$index]),
+                fn ($query) => $query->where('item_code', $data['product_code'][$index])
+            )
+            ->value('variant_id');
+    }
+
+    private function createPaymentIfNeeded(Sale $sale, array $data, $user, PaymentService $payments): void
+    {
+        $paidAmount = (float) ($data['paid_amount'] ?? 0);
+
+        if ($paidAmount <= 0) {
+            $payments->recalculateSale($sale->id);
+
+            return;
+        }
+
+        $account = ! empty($data['account_id'])
+            ? Account::query()->whereKey($data['account_id'])->first()
+            : Account::query()->where('is_default', true)->first();
+
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'paid_amount' => ['A default account is required before recording sale payments.'],
+            ]);
+        }
+
+        $payments->record([
+            'sale_id' => $sale->id,
+            'cash_register_id' => $sale->cash_register_id,
+            'account_id' => $account->id,
+            'customer_id' => $sale->customer_id,
+            'payment_reference' => 'spr-'.date('Ymd').'-'.date('His'),
+            'payment_type' => Payment::TYPE_SALE_PAYMENT,
+            'direction' => Payment::DIRECTION_IN,
+            'amount' => $paidAmount,
+            'change' => (float) ($data['paying_amount'] ?? $paidAmount) - $paidAmount,
+            'paying_method' => $this->paymentMethod((int) ($data['paid_by_id'] ?? 1)),
+            'payment_note' => $data['payment_note'] ?? null,
+        ], $user);
+    }
+
+    private function paymentMethod(int $paidById): string
+    {
+        return match ($paidById) {
+            1 => 'Cash',
+            2 => 'Gift Card',
+            3 => 'Credit Card',
+            4 => 'Cheque',
+            5 => 'Paypal',
+            default => 'Deposit',
+        };
     }
 
     private function resolveSaleUnit(mixed $saleUnit, Product $product): ?Unit

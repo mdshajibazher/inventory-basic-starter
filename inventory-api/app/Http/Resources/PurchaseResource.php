@@ -27,6 +27,7 @@ class PurchaseResource extends JsonResource
             'order_discount' => $this->order_discount,
             'shipping_cost' => $this->shipping_cost,
             'grand_total' => $this->grand_total,
+            'due_amount' => max(round((float) $this->grand_total - (float) ($this->paid_amount ?? 0), 2), 0),
             'paid_amount' => $this->paid_amount,
             'status' => $this->status,
             'purchase_status_id' => $this->status,

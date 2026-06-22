@@ -50,6 +50,10 @@ class ProductController extends Controller
                         $subQuery->where('name', $likeOperator, "%{$term}%")
                             ->orWhere('code', $likeOperator, "%{$term}%")
                             ->orWhere('type', $likeOperator, "%{$term}%")
+                            ->orWhereHas('variants', function ($variantQuery) use ($term, $likeOperator) {
+                                $variantQuery->where('item_code', $likeOperator, "%{$term}%")
+                                    ->orWhereHas('variant', fn ($nameQuery) => $nameQuery->where('name', $likeOperator, "%{$term}%"));
+                            })
                             ->orWhereHas('category', fn ($categoryQuery) => $categoryQuery->where('name', $likeOperator, "%{$term}%"))
                             ->orWhereHas('brand', fn ($brandQuery) => $brandQuery->where('title', $likeOperator, "%{$term}%"));
                     });

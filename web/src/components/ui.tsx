@@ -63,11 +63,13 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 
 export function Modal({
   title,
+  description,
   open,
   onOpenChange,
   children,
 }: {
   title: string;
+  description?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
@@ -78,7 +80,10 @@ export function Modal({
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
           <div className="mb-5 flex items-center justify-between gap-4">
-            <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
+            <div>
+              <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
+              <Dialog.Description className="sr-only">{description ?? title}</Dialog.Description>
+            </div>
             <Dialog.Close asChild>
               <Button variant="ghost" className="h-8 w-8 px-0" aria-label="Close">
                 <X className="h-4 w-4" />
@@ -114,7 +119,7 @@ export function Select({
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
-        <SelectPrimitive.Content className="z-50 max-h-80 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg">
+        <SelectPrimitive.Content className="z-[80] max-h-80 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg">
           <SelectPrimitive.Viewport className="p-1">
             {options.map((option) => (
               <SelectPrimitive.Item

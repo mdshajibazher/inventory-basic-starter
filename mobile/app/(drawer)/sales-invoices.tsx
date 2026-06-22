@@ -5,7 +5,7 @@ import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, T
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/src/lib/api';
-import type { Branch, Customer, Product, Tax, Unit, Warehouse } from '@/src/types';
+import type { Branch, Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/src/types';
 
 type ProductOptions = {
   taxes?: Tax[];
@@ -15,6 +15,7 @@ type ProductOptions = {
 type InvoiceLine = {
   key: string;
   productId: number | null;
+  variantId: number | null;
   unitId: number | null;
   batchNo: string;
   qty: string;
@@ -52,6 +53,7 @@ type SearchableSelectFieldProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: null,
+  variantId: null,
   unitId: null,
   batchNo: '',
   qty: '1',
@@ -236,6 +238,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         return {
           ...line,
           productId: product.id,
+          variantId: null,
           unitId,
           batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
           price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
@@ -243,6 +246,22 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         };
       })
     );
+  }
+
+  function selectVariant(lineKey: string, variantId: number) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => item.id === line.productId);
+      const variant = productVariantById(product, variantId);
+      const unitId = line.unitId ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+
+      return {
+        ...line,
+        variantId,
+        price: product && kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units, variant)) : line.price,
+      };
+    }));
   }
 
   function addLine() {
@@ -331,6 +350,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: Number(line.product_id ?? product?.id ?? 0) || null,
+        variantId: normalizeId(line.variant_id ?? line.variant?.id),
         unitId: normalizeId(line.sale_unit_id ?? line.unit?.id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale'),
         qty: String(line.qty ?? '1'),
         batchNo: line.batch?.batch_no ?? '',
@@ -446,6 +466,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         </View>
         {lines.map((line, index) => {
           const product = products.find((item) => item.id === line.productId);
+          const selectedVariant = productVariantById(product, line.variantId);
           const unitOptions = productOptionsForFamily(product, units);
           const selectedUnit = unitOptions.find((unit) => unit.id === line.unitId);
           const lineRequiresBatch = isBatchProduct(product);
@@ -460,7 +481,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
               </View>
               <SearchableSelectField
                 label="Product"
-                valueLabel={product ? `${product.name} (${product.code})` : 'Select product'}
+                valueLabel={productLabel(product, selectedVariant)}
                 placeholder="Search products"
                 search={searchProducts}
                 keyFor={(item) => item.id}
@@ -473,6 +494,17 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
               <View style={styles.formRow}>
                 <TextInput mode="outlined" label="Qty" keyboardType="numeric" value={line.qty} onChangeText={(value) => updateLine(line.key, 'qty', value)} style={styles.formField} />
                 {lineRequiresBatch ? <TextInput mode="outlined" label="Batch no *" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} /> : null}
+                {isVariantProduct(product) ? (
+                  <SelectField
+                    label="Variant"
+                    valueLabel={selectedVariant ? `${selectedVariant.name} (${selectedVariant.item_code})` : 'Select variant'}
+                    options={product?.variants ?? []}
+                    keyFor={(variant) => variant.variant_id}
+                    labelFor={(variant) => `${variant.name} (${variant.item_code})`}
+                    onSelect={(variant) => selectVariant(line.key, variant.variant_id)}
+                    style={styles.formField}
+                  />
+                ) : null}
                 {product && product.type !== 'combo' ? (
                   <SelectField
                     label="Unit"
@@ -757,6 +789,10 @@ function buildPayload(
     Alert.alert('Missing batch no', 'Batch no is required for batch products.');
     return null;
   }
+  if (invoiceLines.some((item) => isVariantProduct(item.product) && !productVariantById(item.product, item.line.variantId))) {
+    Alert.alert('Missing variant', 'Variant is required for variant products.');
+    return null;
+  }
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
 
@@ -766,19 +802,24 @@ function buildPayload(
     customer_id: form.customerId,
     warehouse_id: form.warehouseId,
     biller_id: form.billerId,
-    lines: invoiceLines.map(({ line, product, values }) => ({
-      product_id: product?.id as number,
-      product_code: product?.code ?? null,
-      product_batch_id: null,
-      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
-      qty: values.qty,
-      sale_unit: product?.type === 'combo' ? 'n/a' : line.unitId,
-      net_unit_price: values.price,
-      discount: values.discount,
-      tax_rate: values.taxRate,
-      tax: values.tax,
-      subtotal: values.subtotal,
-    })),
+    lines: invoiceLines.map(({ line, product, values }) => {
+      const variant = productVariantById(product, line.variantId);
+
+      return {
+        product_id: product?.id as number,
+        product_code: variant?.item_code ?? product?.code ?? null,
+        variant_id: variant?.variant_id ?? null,
+        product_batch_id: null,
+        batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
+        qty: values.qty,
+        sale_unit: product?.type === 'combo' ? 'n/a' : line.unitId,
+        net_unit_price: values.price,
+        discount: values.discount,
+        tax_rate: values.taxRate,
+        tax: values.tax,
+        subtotal: values.subtotal,
+      };
+    }),
     order_tax_rate: numberValue(form.orderTaxRate),
     sale_note: nullableText(form.saleNote),
     staff_note: nullableText(form.staffNote),
@@ -860,7 +901,21 @@ function taxForProduct(product: Product, taxes: Tax[]) {
 }
 
 function isInvoiceProductSupported(product: Product) {
-  return !product.is_variant && product.type !== 'digital';
+  return product.type !== 'digital';
+}
+
+function isVariantProduct(product?: Product | null) {
+  return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function productVariantById(product: Product | undefined | null, variantId: number | null | undefined) {
+  if (!product || !variantId) return null;
+  return product.variants?.find((variant) => Number(variant.variant_id) === Number(variantId)) ?? null;
+}
+
+function productLabel(product: Product | undefined, variant?: ProductVariant | null) {
+  if (!product) return 'Select product';
+  return variant ? `${product.name} - ${variant.name} (${variant.item_code})` : `${product.name} (${product.code})`;
 }
 
 function isBatchProduct(product?: Product | null) {
@@ -914,8 +969,8 @@ function baseUnitPriceForProduct(product: Product) {
   return numberValue(product.price);
 }
 
-function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
-  const basePrice = baseUnitPriceForProduct(product);
+function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[], variant?: ProductVariant | null) {
+  const basePrice = baseUnitPriceForProduct(product) + numberValue(variant?.additional_price);
   const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
   const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
 

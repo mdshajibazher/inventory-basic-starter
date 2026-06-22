@@ -78,10 +78,11 @@ class ProductResource extends JsonResource
 
     private function warehousePrices()
     {
-        if ($this->is_batch && $this->relationLoaded('warehouseStocks')) {
+        if ($this->relationLoaded('warehouseStocks')) {
             return $this->warehouseStocks->map(fn ($warehousePrice) => [
                 'warehouse_id' => $warehousePrice->warehouse_id,
                 'warehouse_name' => $warehousePrice->warehouse?->name,
+                'variant_id' => $warehousePrice->variant_id,
                 'product_batch_id' => $warehousePrice->product_batch_id,
                 'batch_no' => $warehousePrice->batch?->batch_no,
                 'expired_date' => $warehousePrice->batch?->expired_date?->toDateString(),
@@ -93,6 +94,7 @@ class ProductResource extends JsonResource
         return $this->whenLoaded('warehousePrices', fn () => $this->warehousePrices->map(fn ($warehousePrice) => [
             'warehouse_id' => $warehousePrice->warehouse_id,
             'warehouse_name' => $warehousePrice->warehouse?->name,
+            'variant_id' => $warehousePrice->variant_id,
             'qty' => $warehousePrice->qty,
             'price' => $warehousePrice->price,
         ])->values());

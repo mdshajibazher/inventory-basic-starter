@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { api, type CustomerPayload } from '@/lib/api';
@@ -66,6 +67,7 @@ export function CustomersPage() {
   const canAdd = hasPermission('customers-add');
   const canEdit = hasPermission('customers-edit');
   const canDelete = hasPermission('customers-delete');
+  const canView = hasPermission('customers-index');
 
   const groupOptions = useMemo(
     () => groups.map((group) => ({ value: String(group.id), label: `${group.name} (${group.percentage}%)` })),
@@ -195,6 +197,11 @@ export function CustomersPage() {
                   <td className="px-4 py-3">{customer.user ? customer.user.name : '-'}</td>
                   <td className="px-4 py-3"><StatusBadge active={customer.is_active} /></td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
+                    {canView ? (
+                      <Link className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-black transition hover:bg-neutral-100" href={`/customers/${customer.id}/statement`}>
+                        Statement
+                      </Link>
+                    ) : null}
                     {canEdit ? <Button variant="ghost" onClick={() => openEdit(customer)}>Edit</Button> : null}
                     {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(customer)}>Delete</Button> : null}
                   </td>

@@ -31,6 +31,7 @@ class SaleResource extends JsonResource
             'coupon_discount' => $this->coupon_discount,
             'shipping_cost' => $this->shipping_cost,
             'grand_total' => $this->grand_total,
+            'due_amount' => max(round((float) $this->grand_total - (float) ($this->paid_amount ?? 0), 2), 0),
             'sale_status' => $this->sale_status,
             'payment_status' => $this->payment_status,
             'paid_amount' => $this->paid_amount,

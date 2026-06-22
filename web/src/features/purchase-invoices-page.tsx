@@ -18,6 +18,7 @@ type PaymentMode = 'unpaid' | 'partial' | 'paid';
 type InvoiceLine = {
   key: string;
   productId: string;
+  variantId: string;
   unitId: string;
   qty: string;
   received: string;
@@ -69,6 +70,7 @@ const fallbackPurchaseStatuses: PurchaseStatus[] = [
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: 'none',
+  variantId: 'none',
   unitId: 'none',
   qty: '1',
   received: '1',
@@ -118,6 +120,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
   const showReceived = Number(form.purchaseStatusId) === PURCHASE_STATUS_PARTIAL;
   const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
+  const hasVariantLine = lines.some((line) => isVariantProduct(products.find((product) => String(product.id) === line.productId)));
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchSuppliers = useCallback(async (query: string) => {
@@ -259,6 +262,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
               return {
                 ...line,
                 productId: String(product.id),
+                variantId: 'none',
                 unitId: idValue(unitId),
                 cost: String(unitCostForProductUnit(product, unitId, units)),
                 taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
@@ -269,6 +273,14 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           : line
       )
     );
+  }
+
+  function selectVariant(lineKey: string, variantId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      return { ...line, variantId };
+    }));
   }
 
   function resetForm() {
@@ -340,6 +352,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
       return {
         key: String(line.id ?? `${Date.now()}-${Math.random()}`),
         productId: String(line.product_id ?? product?.id ?? 'none'),
+        variantId: idValue(line.variant_id ?? line.variant?.id),
         unitId: idValue(line.purchase_unit_id ?? line.unit?.id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'purchase')),
         qty: String(line.qty ?? '1'),
         received: String(line.received ?? line.qty ?? '1'),
@@ -474,7 +487,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           <table className="w-full min-w-[1120px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', ...(showReceived ? ['Received'] : []), 'Unit', 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', ...(hasVariantLine ? ['Variant'] : []), 'Qty', ...(showReceived ? ['Received'] : []), 'Unit', 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -487,7 +500,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                   <td className="min-w-72 px-3 py-2">
                     <SearchableSelect
                       label="Product"
-                      valueLabel={productLabel(line.productId, products)}
+                      valueLabel={productLabel(line.productId, line.variantId, products)}
                       placeholder="Search products"
                       search={searchProducts}
                       keyFor={(product) => product.id}
@@ -496,6 +509,11 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </td>
+                  {hasVariantLine ? <td className="px-3 py-2">
+                    {isVariantProduct(product) ? (
+                      <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
+                    ) : null}
+                  </td> : null}
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
                   {showReceived ? <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.received} onChange={(event) => updateLine(line.key, 'received', event.target.value)} /></td> : null}
                   <td className="px-3 py-2">
@@ -580,7 +598,7 @@ function PurchaseInvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
           <tbody>
             {(invoice.products ?? []).map((line: Record<string, any>) => (
               <tr key={line.id} className="border-t border-neutral-100">
-                <td className="py-2">{line.product?.name ?? `#${line.product_id}`}</td>
+                <td className="py-2">{invoiceLineProductName(line)}</td>
                 <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
                 <td className="py-2 text-right">Received {money(numberValue(line.received))}</td>
                 <td className="py-2 text-right">{money(numberValue(line.total))}</td>
@@ -698,6 +716,10 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     toast.error('Missing batch details', { description: 'Batch no and expiry date are required for batch products.' });
     return null;
   }
+  if (invoiceLines.some((item) => isVariantProduct(item.product) && !productVariantById(item.product, nullableId(item.line.variantId)))) {
+    toast.error('Missing variant', { description: 'Variant is required for variant products.' });
+    return null;
+  }
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
   return {
@@ -708,20 +730,25 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     status: statusId,
     purchase_status_id: statusId,
     payment_status: paymentStatus(form.paymentMode),
-    lines: invoiceLines.map(({ line, product, values }) => ({
-      product_id: product?.id as number,
-      product_code: product?.code ?? null,
-      qty: values.qty,
-      received: normalizedReceived(statusId, line),
-      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
-      expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
-      purchase_unit: nullableId(line.unitId),
-      net_unit_cost: values.cost,
-      discount: values.discount,
-      tax_rate: values.taxRate,
-      tax: values.tax,
-      subtotal: values.subtotal,
-    })),
+    lines: invoiceLines.map(({ line, product, values }) => {
+      const variant = productVariantById(product, nullableId(line.variantId));
+
+      return {
+        product_id: product?.id as number,
+        product_code: variant?.item_code ?? product?.code ?? null,
+        variant_id: variant?.variant_id ?? null,
+        qty: values.qty,
+        received: normalizedReceived(statusId, line),
+        batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
+        expired_date: isBatchProduct(product) ? nullableText(line.expiredDate) : null,
+        purchase_unit: nullableId(line.unitId),
+        net_unit_cost: values.cost,
+        discount: values.discount,
+        tax_rate: values.taxRate,
+        tax: values.tax,
+        subtotal: values.subtotal,
+      };
+    }),
     order_tax_rate: numberValue(form.orderTaxRate),
     order_discount: numberValue(form.orderDiscount),
     shipping_cost: numberValue(form.shippingCost),
@@ -816,13 +843,37 @@ function isBatchProduct(product?: Product | null) {
   return product?.is_batch === true || String(product?.is_batch) === '1';
 }
 
-function productLabel(productId: string, products: Product[]) {
+function productLabel(productId: string, variantId: string, products: Product[]) {
   const product = products.find((item) => String(item.id) === productId);
-  return product ? `${product.name} (${product.code})` : 'Select product';
+  if (!product) return 'Select product';
+
+  const variant = productVariantById(product, nullableId(variantId));
+  return variant ? `${product.name} - ${variant.name} (${variant.item_code})` : `${product.name} (${product.code})`;
 }
 
 function isInvoiceProductSupported(product: Product) {
-  return !product.is_variant && product.type !== 'digital';
+  return product.type !== 'digital';
+}
+
+function isVariantProduct(product?: Product | null) {
+  return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function productVariantById(product: Product | undefined | null, variantId: number | null | undefined) {
+  if (!product || !variantId) return null;
+  return product.variants?.find((variant) => Number(variant.variant_id) === Number(variantId)) ?? null;
+}
+
+function variantSelectOptions(product: Product | undefined | null) {
+  const variants = product?.variants ?? [];
+  return variants.length
+    ? [{ value: 'none', label: 'Select variant' }, ...variants.map((variant) => ({ value: String(variant.variant_id), label: `${variant.name} (${variant.item_code})` }))]
+    : [{ value: 'none', label: 'No variants found' }];
+}
+
+function invoiceLineProductName(line: Record<string, any>) {
+  const productName = line.product?.name ?? `#${line.product_id}`;
+  return line.variant?.name ? `${productName} - ${line.variant.name}` : productName;
 }
 
 function upsertById<T extends { id: number }>(items: T[], item: T) {

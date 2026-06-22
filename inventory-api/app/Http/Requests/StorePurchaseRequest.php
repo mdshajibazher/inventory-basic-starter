@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\Product;
+use App\Models\ProductVariant;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -31,6 +32,8 @@ class StorePurchaseRequest extends FormRequest
             'product_id.*' => ['required', 'integer', Rule::exists('products', 'id')->where('is_active', true)],
             'product_code' => ['required', 'array', 'min:1'],
             'product_code.*' => ['nullable', 'string', 'max:255'],
+            'variant_id' => ['nullable', 'array'],
+            'variant_id.*' => ['nullable', 'integer', 'exists:variants,id'],
             'qty' => ['required', 'array', 'min:1'],
             'qty.*' => ['required', 'numeric', 'gt:0'],
             'received' => ['required_without:recieved', 'array', 'min:1'],
@@ -99,6 +102,7 @@ class StorePurchaseRequest extends FormRequest
                 'batch_no',
                 'expired_date',
                 'product_code',
+                'variant_id',
                 'purchase_unit',
                 'net_unit_cost',
                 'discount',
@@ -118,9 +122,33 @@ class StorePurchaseRequest extends FormRequest
                 ->where('is_batch', true)
                 ->pluck('id')
                 ->all();
+            $variantProductIds = Product::query()
+                ->whereIn('id', array_filter($productIds))
+                ->where('is_variant', true)
+                ->pluck('id')
+                ->all();
 
             foreach ($productIds as $index => $productId) {
                 $requiresBatch = in_array((int) $productId, $batchProductIds, true);
+                $requiresVariant = in_array((int) $productId, $variantProductIds, true);
+
+                if ($requiresVariant) {
+                    $variantId = $this->input("variant_id.{$index}");
+                    $productCode = $this->input("product_code.{$index}");
+
+                    if (blank($variantId) && blank($productCode)) {
+                        $validator->errors()->add("variant_id.{$index}", 'The variant is required for variant products.');
+                    } elseif (! blank($variantId)) {
+                        $exists = ProductVariant::query()
+                            ->where('product_id', $productId)
+                            ->where('variant_id', $variantId)
+                            ->exists();
+
+                        if (! $exists) {
+                            $validator->errors()->add("variant_id.{$index}", 'The selected variant does not belong to this product.');
+                        }
+                    }
+                }
 
                 if ($requiresBatch && blank($this->input("batch_no.{$index}"))) {
                     $validator->errors()->add("batch_no.{$index}", 'The batch no is required for batch products.');

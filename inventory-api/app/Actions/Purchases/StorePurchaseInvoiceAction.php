@@ -14,6 +14,7 @@ use App\Models\Purchase;
 use App\Models\Unit;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Services\PaymentService;
 use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -22,8 +23,11 @@ use Illuminate\Validation\ValidationException;
 class StorePurchaseInvoiceAction
 {
     private const STATUS_RECEIVED = 1;
+
     private const STATUS_PARTIAL = 2;
+
     private const STATUS_PENDING = 3;
+
     private const STATUS_ORDERED = 4;
 
     public function execute(array $data, User $user, ?UploadedFile $document = null): Purchase
@@ -58,7 +62,7 @@ class StorePurchaseInvoiceAction
             ]);
 
             logger([
-                'data' => $data
+                'data' => $data,
             ]);
 
             foreach ($data['product_id'] as $index => $productId) {
@@ -219,7 +223,7 @@ class StorePurchaseInvoiceAction
     private function resolvePurchaseUnit(mixed $purchaseUnit, Product $product, int|string $index): Unit
     {
         logger([
-            'purchaseUnit' => $purchaseUnit
+            'purchaseUnit' => $purchaseUnit,
         ]);
         if ($purchaseUnit === null || $purchaseUnit === '') {
             $unit = $product->purchase_unit_id ? Unit::find($product->purchase_unit_id) : null;
@@ -290,15 +294,20 @@ class StorePurchaseInvoiceAction
         $variantId = null;
 
         if ($product->is_variant) {
+            $selectedVariantId = $data['variant_id'][$index] ?? null;
             $variant = ProductVariant::query()
                 ->where('product_id', $product->id)
-                ->where('item_code', $data['product_code'][$index] ?? null)
+                ->when(
+                    $selectedVariantId,
+                    fn ($query) => $query->where('variant_id', $selectedVariantId),
+                    fn ($query) => $query->where('item_code', $data['product_code'][$index] ?? null)
+                )
                 ->lockForUpdate()
                 ->first();
 
             if (! $variant) {
                 throw ValidationException::withMessages([
-                    "product_code.{$index}" => ['Product variant could not be found for this code.'],
+                    "variant_id.{$index}" => ['Product variant could not be found.'],
                 ]);
             }
 
@@ -360,13 +369,17 @@ class StorePurchaseInvoiceAction
 
     private function findVariantId(Product $product, array $data, int|string $index): ?int
     {
-        if (! $product->is_variant || empty($data['product_code'][$index])) {
+        if (! $product->is_variant || (empty($data['variant_id'][$index]) && empty($data['product_code'][$index]))) {
             return null;
         }
 
         return ProductVariant::query()
             ->where('product_id', $product->id)
-            ->where('item_code', $data['product_code'][$index])
+            ->when(
+                ! empty($data['variant_id'][$index]),
+                fn ($query) => $query->where('variant_id', $data['variant_id'][$index]),
+                fn ($query) => $query->where('item_code', $data['product_code'][$index])
+            )
             ->value('variant_id');
     }
 
@@ -386,16 +399,18 @@ class StorePurchaseInvoiceAction
             ]);
         }
 
-        $payment = Payment::create([
-            'user_id' => $user->id,
+        $payment = app(PaymentService::class)->record([
             'purchase_id' => $purchase->id,
             'account_id' => $account->id,
+            'supplier_id' => $purchase->supplier_id,
             'payment_reference' => 'ppr-'.date('Ymd').'-'.date('His'),
+            'payment_type' => Payment::TYPE_PURCHASE_PAYMENT,
+            'direction' => Payment::DIRECTION_OUT,
             'amount' => $paidAmount,
             'change' => (float) ($data['paying_amount'] ?? $paidAmount) - $paidAmount,
             'paying_method' => $this->paymentMethod((int) ($data['paid_by_id'] ?? 1)),
             'payment_note' => $data['payment_note'] ?? null,
-        ]);
+        ], $user);
 
         if ($payment->paying_method === 'Cheque') {
             if (empty($data['cheque_no'])) {
@@ -436,11 +451,12 @@ class StorePurchaseInvoiceAction
             'warehouse:id,name',
             'user:id,name,email',
             'purchaseStatus:id,value,label',
-            'products.product:id,name,code,type',
+            'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
+            'products.product.variants.variant:id,name',
             'products.unit:id,unit_code,unit_name',
             'products.batch:id,batch_no,expired_date',
             'products.variant:id,name',
-            'payments:id,purchase_id,payment_reference,amount,change,paying_method,payment_note',
+            'payments:id,purchase_id,supplier_id,account_id,payment_reference,payment_type,direction,amount,change,paying_method,payment_note',
         ];
     }
 

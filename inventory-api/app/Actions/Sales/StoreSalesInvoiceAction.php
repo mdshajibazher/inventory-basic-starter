@@ -18,6 +18,7 @@ use App\Models\ProductWarehouse;
 use App\Models\Sale;
 use App\Models\Unit;
 use App\Models\User;
+use App\Services\PaymentService;
 use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -237,23 +238,24 @@ class StoreSalesInvoiceAction
         $this->deductModelQuantity($product, $quantity, "qty.{$index}", 'Product stock is insufficient.');
 
         if ($product->is_variant) {
+            $selectedVariantId = $data['variant_id'][$index] ?? null;
             $code = $data['product_code'][$index] ?? null;
 
-            if (! $code) {
+            if (! $selectedVariantId && ! $code) {
                 throw ValidationException::withMessages([
-                    "product_code.{$index}" => ['Product code is required for variant products.'],
+                    "variant_id.{$index}" => ['Variant is required for variant products.'],
                 ]);
             }
 
             $productVariant = ProductVariant::query()
                 ->where('product_id', $product->id)
-                ->where('item_code', $code)
+                ->when($selectedVariantId, fn ($query) => $query->where('variant_id', $selectedVariantId), fn ($query) => $query->where('item_code', $code))
                 ->lockForUpdate()
                 ->first();
 
             if (! $productVariant) {
                 throw ValidationException::withMessages([
-                    "product_code.{$index}" => ['Product variant could not be found for this code.'],
+                    "variant_id.{$index}" => ['Product variant could not be found.'],
                 ]);
             }
 
@@ -314,10 +316,14 @@ class StoreSalesInvoiceAction
         $variantId = null;
         $batchId = null;
 
-        if ($product->is_variant && ! empty($data['product_code'][$index])) {
+        if ($product->is_variant && (! empty($data['variant_id'][$index]) || ! empty($data['product_code'][$index]))) {
             $variantId = ProductVariant::query()
                 ->where('product_id', $product->id)
-                ->where('item_code', $data['product_code'][$index])
+                ->when(
+                    ! empty($data['variant_id'][$index]),
+                    fn ($query) => $query->where('variant_id', $data['variant_id'][$index]),
+                    fn ($query) => $query->where('item_code', $data['product_code'][$index])
+                )
                 ->value('variant_id');
         }
 
@@ -394,7 +400,9 @@ class StoreSalesInvoiceAction
             return;
         }
 
-        $account = Account::query()->where('is_default', true)->first();
+        $account = ! empty($data['account_id'])
+            ? Account::query()->whereKey($data['account_id'])->first()
+            : Account::query()->where('is_default', true)->first();
 
         if (! $account) {
             throw ValidationException::withMessages([
@@ -402,17 +410,19 @@ class StoreSalesInvoiceAction
             ]);
         }
 
-        $payment = Payment::create([
-            'user_id' => $user->id,
+        $payment = app(PaymentService::class)->record([
             'sale_id' => $sale->id,
             'cash_register_id' => $cashRegister?->id,
             'account_id' => $account->id,
+            'customer_id' => $sale->customer_id,
             'payment_reference' => 'spr-'.date('Ymd').'-'.date('His'),
+            'payment_type' => Payment::TYPE_SALE_PAYMENT,
+            'direction' => Payment::DIRECTION_IN,
             'amount' => $paidAmount,
             'change' => (float) ($data['paying_amount'] ?? $paidAmount) - $paidAmount,
             'paying_method' => $this->paymentMethod((int) ($data['paid_by_id'] ?? 1)),
             'payment_note' => $data['payment_note'] ?? null,
-        ]);
+        ], $user);
 
         if ($payment->paying_method === 'Gift Card') {
             if (empty($data['gift_card_id'])) {
@@ -472,11 +482,12 @@ class StoreSalesInvoiceAction
             'warehouse:id,name',
             'biller:id,name,company_name',
             'user:id,name,email',
-            'products.product:id,name,code,type',
+            'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
+            'products.product.variants.variant:id,name',
             'products.unit:id,unit_code,unit_name',
             'products.batch:id,batch_no,expired_date',
             'products.variant:id,name',
-            'payments:id,sale_id,payment_reference,amount,change,paying_method,payment_note',
+            'payments:id,sale_id,customer_id,account_id,payment_reference,payment_type,direction,amount,change,paying_method,payment_note',
         ];
     }
 

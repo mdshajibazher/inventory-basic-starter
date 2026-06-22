@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/lib/api';
-import type { Branch, Customer, Product, Tax, Unit, Warehouse } from '@/lib/types';
+import type { Branch, Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
@@ -20,6 +20,7 @@ type ProductOptions = {
 type InvoiceLine = {
   key: string;
   productId: string;
+  variantId: string;
   unitId: string;
   batchNo: string;
   qty: string;
@@ -60,6 +61,7 @@ type SearchableSelectProps<T> = {
 const emptyLine = (): InvoiceLine => ({
   key: `${Date.now()}-${Math.random()}`,
   productId: 'none',
+  variantId: 'none',
   unitId: 'none',
   batchNo: '',
   qty: '1',
@@ -109,6 +111,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
   const selectedCustomer = customers.find((customer) => String(customer.id) === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
   const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
+  const hasVariantLine = lines.some((line) => isVariantProduct(products.find((product) => String(product.id) === line.productId)));
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchCustomers = useCallback(async (query: string) => {
@@ -251,6 +254,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         return {
           ...line,
           productId: String(product.id),
+          variantId: 'none',
           unitId: idValue(unitId),
           batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
           price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
@@ -258,6 +262,22 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         };
       })
     );
+  }
+
+  function selectVariant(lineKey: string, variantId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.key !== lineKey) return line;
+
+      const product = products.find((item) => String(item.id) === line.productId);
+      const variant = productVariantById(product, nullableId(variantId));
+      const unitId = nullableId(line.unitId) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+
+      return {
+        ...line,
+        variantId,
+        price: product && kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units, variant)) : line.price,
+      };
+    }));
   }
 
   function addLine() {
@@ -348,6 +368,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         productId: String(line.product_id ?? product?.id ?? 'none'),
         unitId: idValue(line.sale_unit_id ?? line.unit?.id ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale')),
         batchNo: line.batch?.batch_no ?? '',
+        variantId: idValue(line.variant_id ?? line.variant?.id),
         qty: String(line.qty ?? '1'),
         price: String(line.net_unit_price ?? '0'),
         discount: String(line.discount ?? '0'),
@@ -477,7 +498,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
-                {['Product', 'Qty', 'Unit', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+                {['Product', ...(hasVariantLine ? ['Variant'] : []), 'Qty', 'Unit', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -490,7 +511,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                   <td className="min-w-72 px-3 py-2">
                     <SearchableSelect
                       label="Product"
-                      valueLabel={productLabel(line.productId, products)}
+                      valueLabel={productLabel(line.productId, line.variantId, products)}
                       placeholder="Search products"
                       search={searchProducts}
                       keyFor={(product) => product.id}
@@ -502,6 +523,11 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </td>
+                  {hasVariantLine ? <td className="px-3 py-2">
+                    {isVariantProduct(product) ? (
+                      <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
+                    ) : null}
+                  </td> : null}
                   <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
                   <td className="px-3 py-2">
                     {product && product.type !== 'combo' ? (
@@ -583,7 +609,7 @@ function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind:
           <tbody>
             {(invoice.products ?? []).map((line: Record<string, any>) => (
               <tr key={line.id} className="border-t border-neutral-100">
-                <td className="py-2">{line.product?.name ?? `#${line.product_id}`}</td>
+                <td className="py-2">{invoiceLineProductName(line)}</td>
                 <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
                 <td className="py-2 text-right">{money(numberValue(line.total))}</td>
               </tr>
@@ -736,6 +762,10 @@ function buildPayload(
     toast.error('Missing batch no', { description: 'Batch no is required for batch products.' });
     return null;
   }
+  if (invoiceLines.some((item) => isVariantProduct(item.product) && !productVariantById(item.product, nullableId(item.line.variantId)))) {
+    toast.error('Missing variant', { description: 'Variant is required for variant products.' });
+    return null;
+  }
 
   const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
 
@@ -745,19 +775,24 @@ function buildPayload(
     customer_id: Number(form.customerId),
     warehouse_id: Number(form.warehouseId),
     biller_id: Number(form.billerId),
-    lines: invoiceLines.map(({ line, product, values }) => ({
-      product_id: product?.id as number,
-      product_code: product?.code ?? null,
-      product_batch_id: null,
-      batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
-      qty: values.qty,
-      sale_unit: product?.type === 'combo' ? 'n/a' : nullableId(line.unitId),
-      net_unit_price: values.price,
-      discount: values.discount,
-      tax_rate: values.taxRate,
-      tax: values.tax,
-      subtotal: values.subtotal,
-    })),
+    lines: invoiceLines.map(({ line, product, values }) => {
+      const variant = productVariantById(product, nullableId(line.variantId));
+
+      return {
+        product_id: product?.id as number,
+        product_code: variant?.item_code ?? product?.code ?? null,
+        variant_id: variant?.variant_id ?? null,
+        product_batch_id: null,
+        batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
+        qty: values.qty,
+        sale_unit: product?.type === 'combo' ? 'n/a' : nullableId(line.unitId),
+        net_unit_price: values.price,
+        discount: values.discount,
+        tax_rate: values.taxRate,
+        tax: values.tax,
+        subtotal: values.subtotal,
+      };
+    }),
     order_tax_rate: numberValue(form.orderTaxRate),
     sale_note: nullableText(form.saleNote),
     staff_note: nullableText(form.staffNote),
@@ -843,13 +878,37 @@ function billerOptions(billers: Branch[]) {
   return [{ value: 'none', label: 'Select branch' }, ...billers.map((biller) => ({ value: String(biller.id), label: biller.name }))];
 }
 
-function productLabel(productId: string, products: Product[]) {
+function productLabel(productId: string, variantId: string, products: Product[]) {
   const product = products.find((item) => String(item.id) === productId);
-  return product ? `${product.name} (${product.code})` : 'Select product';
+  if (!product) return 'Select product';
+
+  const variant = productVariantById(product, nullableId(variantId));
+  return variant ? `${product.name} - ${variant.name} (${variant.item_code})` : `${product.name} (${product.code})`;
 }
 
 function isInvoiceProductSupported(product: Product) {
-  return !product.is_variant && product.type !== 'digital';
+  return product.type !== 'digital';
+}
+
+function isVariantProduct(product?: Product | null) {
+  return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function productVariantById(product: Product | undefined | null, variantId: number | null | undefined) {
+  if (!product || !variantId) return null;
+  return product.variants?.find((variant) => Number(variant.variant_id) === Number(variantId)) ?? null;
+}
+
+function variantSelectOptions(product: Product | undefined | null) {
+  const variants = product?.variants ?? [];
+  return variants.length
+    ? [{ value: 'none', label: 'Select variant' }, ...variants.map((variant) => ({ value: String(variant.variant_id), label: `${variant.name} (${variant.item_code})` }))]
+    : [{ value: 'none', label: 'No variants found' }];
+}
+
+function invoiceLineProductName(line: Record<string, any>) {
+  const productName = line.product?.name ?? `#${line.product_id}`;
+  return line.variant?.name ? `${productName} - ${line.variant.name}` : productName;
 }
 
 function isBatchProduct(product?: Product | null) {
@@ -919,8 +978,8 @@ function baseUnitPriceForProduct(product: Product) {
   return numberValue(product.price);
 }
 
-function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[]) {
-  const basePrice = baseUnitPriceForProduct(product);
+function unitPriceForProductUnit(product: Product, unitId: number | null | undefined, units: Unit[], variant?: ProductVariant | null) {
+  const basePrice = baseUnitPriceForProduct(product) + numberValue(variant?.additional_price);
   const baseUnitId = product.unit_id ?? product.unit?.id ?? null;
   const factor = unitConversionFactorFromBase(unitId, baseUnitId, units);
 

@@ -20,8 +20,10 @@ import {
   Users,
   Warehouse,
   PackageSearch,
+  Settings,
   ChartNoAxesCombined,
   X,
+  WalletCards,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
@@ -32,13 +34,14 @@ type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  permission?: string;
+  permission?: string | string[];
 };
 
 const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
   { href: '/product-stocks', label: 'Product Stock', icon: PackageSearch, permission: 'product-stocks-index' },
+  { href: '/payments', label: 'Payments', icon: WalletCards, permission: ['accounts-index', 'sales-index', 'purchases-index'] },
   { href: '/reports/profit', label: 'Profit Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
   { href: '/sales-invoices', label: 'Sales Invoice', icon: ReceiptText, permission: 'sales-add' },
   { href: '/return-invoices', label: 'Return Invoice', icon: ReceiptText, permission: 'returns-add' },
@@ -52,6 +55,7 @@ const peopleItems: NavItem[] = [
 ];
 
 const settingsItems: NavItem[] = [
+  { href: '/general-settings', label: 'General Settings', icon: Settings, permission: 'general-settings-index' },
   { href: '/brands', label: 'Brands', icon: Tags, permission: 'brands-index' },
   { href: '/branches', label: 'Branches', icon: Building2, permission: 'branches-index' },
   { href: '/categories', label: 'Categories', icon: ChevronRight, permission: 'categories-index' },

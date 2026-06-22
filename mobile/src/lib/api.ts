@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { tokenStorage } from './storage';
-import type { PaginatedResponse, ProfitReport } from '../types';
+import type { InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport } from '../types';
 
 const DEFAULT_API_URL = 'http://10.0.2.2:8000/api';
 
@@ -109,6 +109,35 @@ type AccountPayload = {
   is_active?: boolean;
 };
 
+export type GeneralSettingPayload = {
+  site_title: string;
+  site_logo?: UploadImage | null;
+  favicon?: UploadImage | null;
+  remove_site_logo?: boolean;
+  remove_favicon?: boolean;
+  company_name?: string | null;
+  company_address?: string | null;
+  company_email?: string | null;
+  company_phone?: string | null;
+};
+
+export type PaymentPayload = {
+  customer_id?: number | null;
+  supplier_id?: number | null;
+  sale_id?: number | null;
+  purchase_id?: number | null;
+  sale_return_id?: number | null;
+  purchase_return_id?: number | null;
+  account_id: number;
+  payment_reference?: string | null;
+  payment_type: PaymentType;
+  direction?: PaymentDirection;
+  amount: number;
+  change?: number;
+  paying_method: string;
+  payment_note?: string | null;
+};
+
 export type StockAdjustmentPayload = {
   warehouse_id: number;
   product_batch_id?: number | null;
@@ -201,6 +230,7 @@ export type ProductVariantPayload = {
 export type SalesInvoiceLinePayload = {
   product_id: number;
   product_code?: string | null;
+  variant_id?: number | null;
   product_batch_id?: number | null;
   batch_no?: string | null;
   qty: number;
@@ -244,6 +274,7 @@ export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'pa
 export type PurchaseInvoiceLinePayload = {
   product_id: number;
   product_code?: string | null;
+  variant_id?: number | null;
   qty: number;
   received: number;
   batch_no?: string | null;
@@ -352,6 +383,20 @@ function appendNullableString(formData: FormData, key: string, value?: string | 
   formData.append(key, value === null || value === undefined ? '' : value);
 }
 
+function generalSettingFormData(payload: GeneralSettingPayload) {
+  const formData = new FormData();
+  formData.append('site_title', payload.site_title);
+  appendImage(formData, 'site_logo', payload.site_logo);
+  appendImage(formData, 'favicon', payload.favicon);
+  appendBoolean(formData, 'remove_site_logo', payload.remove_site_logo);
+  appendBoolean(formData, 'remove_favicon', payload.remove_favicon);
+  appendNullableString(formData, 'company_name', payload.company_name);
+  appendNullableString(formData, 'company_address', payload.company_address);
+  appendNullableString(formData, 'company_email', payload.company_email);
+  appendNullableString(formData, 'company_phone', payload.company_phone);
+  return formData;
+}
+
 function appendRequiredNumber(formData: FormData, key: string, value: number) {
   formData.append(key, String(value));
 }
@@ -428,6 +473,7 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   formData.append('payment_status', String(payload.payment_status));
   appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
   appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
   appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
   appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
   appendNullableStringArray(formData, 'sale_unit', payload.lines.map((line) => line.sale_unit));
@@ -461,6 +507,7 @@ function returnInvoiceFormData(payload: ReturnInvoicePayload) {
   formData.append('biller_id', String(payload.biller_id));
   appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
   appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
   appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
   appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
   appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
@@ -488,6 +535,7 @@ function purchaseInvoiceFormData(payload: PurchaseInvoicePayload) {
   formData.append('payment_status', String(payload.payment_status));
   appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
   appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
   appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
   appendNumberArray(formData, 'received', payload.lines.map((line) => line.received));
   appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
@@ -547,9 +595,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return body as T;
 }
 
-function queryString(params: Record<string, string | number | boolean | undefined>) {
+function queryString(params: Record<string, string | number | boolean | null | undefined>) {
   const query = Object.entries(params)
-    .filter(([, value]) => value !== undefined && value !== '')
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join('&');
 
@@ -636,6 +684,32 @@ export const api = {
       method: 'DELETE',
     }),
 
+  generalSettings: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+    request<PaginatedResponse<unknown>>(
+      `/general-settings${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+    ),
+
+  createGeneralSetting: (payload: GeneralSettingPayload) =>
+    request<{ data: unknown }>('/general-settings', {
+      method: 'POST',
+      body: generalSettingFormData(payload),
+    }),
+
+  updateGeneralSetting: (id: number, payload: GeneralSettingPayload) =>
+    request<{ data: unknown }>(`/general-settings/${id}`, {
+      method: 'POST',
+      body: (() => {
+        const formData = generalSettingFormData(payload);
+        formData.append('_method', 'PUT');
+        return formData;
+      })(),
+    }),
+
+  deleteGeneralSetting: (id: number) =>
+    request<{ message: string }>(`/general-settings/${id}`, {
+      method: 'DELETE',
+    }),
+
   brands: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
       `/brands${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`
@@ -713,6 +787,11 @@ export const api = {
     request<{ message: string }>(`/suppliers/${id}`, {
       method: 'DELETE',
     }),
+
+  supplierStatement: (id: number, params: { page?: number; perPage?: number; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<Payment>>(
+      `/suppliers/${id}/statement${queryString({ page: params.page, per_page: params.perPage, from: params.from, to: params.to })}`
+    ),
 
   categories: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(
@@ -852,6 +931,11 @@ export const api = {
       method: 'DELETE',
     }),
 
+  accountStatement: (id: number, params: { page?: number; perPage?: number; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<Payment>>(
+      `/accounts/${id}/statement${queryString({ page: params.page, per_page: params.perPage, from: params.from, to: params.to })}`
+    ),
+
   customers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(
       `/customers${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
@@ -875,6 +959,11 @@ export const api = {
     request<{ message: string }>(`/customers/${id}`, {
       method: 'DELETE',
     }),
+
+  customerStatement: (id: number, params: { page?: number; perPage?: number; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<Payment>>(
+      `/customers/${id}/statement${queryString({ page: params.page, per_page: params.perPage, from: params.from, to: params.to })}`
+    ),
 
   productOptions: () => request<{ data: unknown }>('/products/options'),
 
@@ -943,9 +1032,14 @@ export const api = {
       method: 'DELETE',
     }),
 
-  salesInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  salesInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId })}`
+    ),
+
+  saleInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; outstandingOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(
+      `/sales-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, outstanding_only: params.outstandingOnly })}`
     ),
 
   salesInvoice: (id: number) => request<{ data: unknown }>(`/sales-invoices/${id}`),
@@ -966,9 +1060,14 @@ export const api = {
       })(),
     }),
 
-  returnInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  returnInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId })}`
+    ),
+
+  returnInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(
+      `/return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId })}`
     ),
 
   returnInvoice: (id: number) => request<{ data: unknown }>(`/return-invoices/${id}`),
@@ -989,9 +1088,14 @@ export const api = {
       })(),
     }),
 
-  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string } = {}) =>
+  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null } = {}) =>
     request<PaginatedResponse<unknown>>(
-      `/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`
+      `/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId })}`
+    ),
+
+  purchaseInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; outstandingOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(
+      `/purchase-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, outstanding_only: params.outstandingOnly })}`
     ),
 
   purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
@@ -1013,6 +1117,25 @@ export const api = {
     }),
 
   purchaseStatuses: () => request<{ data: unknown[] }>('/purchase-statuses'),
+
+  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; direction?: PaymentDirection | 'all' } = {}) =>
+    request<PaginatedResponse<Payment>>(
+      `/payments${queryString({
+        page: params.page,
+        per_page: params.perPage,
+        customer_id: params.customerId,
+        supplier_id: params.supplierId,
+        account_id: params.accountId,
+        payment_type: params.paymentType === 'all' ? undefined : params.paymentType,
+        direction: params.direction === 'all' ? undefined : params.direction,
+      })}`
+    ),
+
+  createPayment: (payload: PaymentPayload) =>
+    request<{ data: Payment; message: string }>('/payments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   stockIn: (payload: { product_id: number; quantity: number; note?: string }) =>
     request<{ data: unknown }>('/stock/in', {

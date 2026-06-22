@@ -83,6 +83,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="general-settings"
+        options={{
+          title: 'General Settings',
+          drawerLabel: 'General Settings',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="cog-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="brands"
         options={{
           title: 'Brands',
@@ -277,6 +288,17 @@ export default function DrawerLayout() {
         />
       ))}
       <Drawer.Screen
+        name="payments"
+        options={{
+          title: 'Payments',
+          drawerLabel: 'Payments',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="wallet-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission(['accounts-index', 'sales-index', 'purchases-index']) ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="customers"
         options={{
           title: 'Customers',
@@ -343,7 +365,7 @@ function AppDrawerContent({
 }) {
   const activeRoute = state.routeNames[state.index];
   const peopleRouteNames = ['customers', 'suppliers', 'users'];
-  const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices'];
+  const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices', 'payments'];
   const reportRouteNames = ['profit-report'];
   const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'accounts', 'warehouses', 'categories'];
   const [peopleExpanded, setPeopleExpanded] = useState(
@@ -391,6 +413,7 @@ function AppDrawerContent({
     item('sales-invoices', 'Sales Invoice', 'receipt-text-plus-outline', hasPermission('sales-add')),
     item('return-invoices', 'Return Invoice', 'receipt-text-remove-outline', hasPermission('returns-add') || hasPermission('returns-index')),
     item('purchase-invoices', 'Purchase Invoice', 'receipt-text-plus-outline', hasPermission('purchases-add')),
+    item('payments', 'Payments', 'wallet-outline', hasPermission(['accounts-index', 'sales-index', 'purchases-index'])),
   ].filter(Boolean);
 
   const reportItems = [

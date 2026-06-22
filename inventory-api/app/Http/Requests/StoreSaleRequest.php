@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\Product;
 use App\Models\ProductBatch;
+use App\Models\ProductVariant;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -20,8 +21,9 @@ class StoreSaleRequest extends FormRequest
         $saleId = $this->route('sale')?->id ?? $this->route('sale');
 
         logger([
-            'this request' => $this->request
+            'this request' => $this->request,
         ]);
+
         return [
             'reference_no' => ['required', 'string', 'max:191', Rule::unique('sales', 'reference_no')->ignore($saleId)],
             'sale_date' => ['nullable', 'date'],
@@ -35,6 +37,8 @@ class StoreSaleRequest extends FormRequest
             'product_id.*' => ['required', 'integer', Rule::exists('products', 'id')->where('is_active', true)],
             'product_code' => ['nullable', 'array'],
             'product_code.*' => ['nullable', 'string', 'max:255'],
+            'variant_id' => ['nullable', 'array'],
+            'variant_id.*' => ['nullable', 'integer', 'exists:variants,id'],
             'product_batch_id' => ['nullable', 'array'],
             'product_batch_id.*' => ['nullable', 'integer', 'exists:product_batches,id'],
             'batch_no' => ['nullable', 'array'],
@@ -71,6 +75,7 @@ class StoreSaleRequest extends FormRequest
             'paid_by_id' => ['nullable', 'integer'],
             'paying_amount' => ['nullable', 'numeric', 'min:0'],
             'paid_amount' => ['nullable', 'numeric', 'min:0'],
+            'account_id' => ['nullable', 'integer', 'exists:accounts,id'],
             'gift_card_id' => ['nullable', 'integer', 'exists:gift_cards,id'],
             'cheque_no' => ['nullable', 'string', 'max:255'],
             'payment_note' => ['nullable', 'string'],
@@ -118,7 +123,7 @@ class StoreSaleRequest extends FormRequest
                 }
             }
 
-            foreach (['product_code', 'product_batch_id', 'batch_no', 'sale_unit', 'tax_rate'] as $field) {
+            foreach (['product_code', 'variant_id', 'product_batch_id', 'batch_no', 'sale_unit', 'tax_rate'] as $field) {
                 if (! $this->has($field)) {
                     continue;
                 }
@@ -143,14 +148,38 @@ class StoreSaleRequest extends FormRequest
                 ->where('is_batch', true)
                 ->pluck('id')
                 ->all();
+            $variantProductIds = Product::query()
+                ->whereIn('id', array_filter($productIds))
+                ->where('is_variant', true)
+                ->pluck('id')
+                ->all();
 
             foreach ($productIds as $index => $productId) {
+                if (in_array((int) $productId, $variantProductIds, true)) {
+                    $variantId = $this->input("variant_id.{$index}");
+                    $productCode = $this->input("product_code.{$index}");
+
+                    if (blank($variantId) && blank($productCode)) {
+                        $validator->errors()->add("variant_id.{$index}", 'The variant is required for variant products.');
+                    } elseif (! blank($variantId)) {
+                        $exists = ProductVariant::query()
+                            ->where('product_id', $productId)
+                            ->where('variant_id', $variantId)
+                            ->exists();
+
+                        if (! $exists) {
+                            $validator->errors()->add("variant_id.{$index}", 'The selected variant does not belong to this product.');
+                        }
+                    }
+                }
+
                 if (! in_array((int) $productId, $batchProductIds, true)) {
                     continue;
                 }
 
                 if (blank($this->input("batch_no.{$index}")) && blank($this->input("product_batch_id.{$index}"))) {
                     $validator->errors()->add("batch_no.{$index}", 'The batch no is required for batch products.');
+
                     continue;
                 }
 
