@@ -26,15 +26,17 @@ class ProductStockResource extends JsonResource
                 'item_code' => $productVariant->item_code,
                 'qty' => (float) $productVariant->qty,
             ])->values()),
-            'stocks' => $this->whenLoaded('warehouseStocks', fn () => $this->warehouseStocks->map(fn ($stock) => [
-                'warehouse_id' => $stock->warehouse_id,
-                'warehouse_name' => $stock->warehouse?->name,
-                'variant_id' => $stock->variant_id,
-                'product_batch_id' => $stock->product_batch_id,
-                'batch_no' => $stock->batch?->batch_no,
-                'expired_date' => $stock->batch?->expired_date?->toDateString(),
-                'qty' => (float) $stock->qty,
-            ])->values()),
+            'stocks' => $this->whenLoaded('warehouseStocks', fn () => $this->warehouseStocks
+                ->filter(fn ($stock) => (float) $stock->qty !== 0.0)
+                ->map(fn ($stock) => [
+                    'warehouse_id' => $stock->warehouse_id,
+                    'warehouse_name' => $stock->warehouse?->name,
+                    'variant_id' => $stock->variant_id,
+                    'product_batch_id' => $stock->product_batch_id,
+                    'batch_no' => $stock->batch?->batch_no,
+                    'expired_date' => $stock->batch?->expired_date?->toDateString(),
+                    'qty' => (float) $stock->qty,
+                ])->values()),
         ];
     }
 

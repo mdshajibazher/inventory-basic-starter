@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Redirect, useRouter } from 'expo-router';
@@ -33,7 +34,6 @@ type ProductForm = {
   purchaseUnitId: number | null;
   cost: string;
   price: string;
-  qty: string;
   alertQuantity: string;
   taxId: number | null;
   taxMethod: number;
@@ -47,7 +47,7 @@ type ProductForm = {
   warehousePrices: WarehousePriceForm[];
   isBatch: boolean;
   isVariant: boolean;
-  variantInput: string;
+  variantGroups: VariantOptionGroupForm[];
   variants: ProductVariantForm[];
   image: string | null;
   imageFile: PickedImage | null;
@@ -66,6 +66,12 @@ type ProductVariantForm = {
   name: string;
   itemCode: string;
   additionalPrice: string;
+};
+
+type VariantOptionGroupForm = {
+  id: string;
+  name: string;
+  values: string;
 };
 
 type ProductOptions = {
@@ -97,7 +103,6 @@ const emptyForm: ProductForm = {
   purchaseUnitId: null,
   cost: '0',
   price: '0',
-  qty: '0',
   alertQuantity: '',
   taxId: null,
   taxMethod: 1,
@@ -111,7 +116,7 @@ const emptyForm: ProductForm = {
   warehousePrices: [],
   isBatch: false,
   isVariant: false,
-  variantInput: '',
+  variantGroups: [],
   variants: [],
   image: null,
   imageFile: null,
@@ -131,7 +136,6 @@ function productToForm(product: Product, options?: ProductOptions): ProductForm 
     purchaseUnitId: resolveUnitId(product, 'purchase_unit_id', 'purchase_unit', options),
     cost: String(product.cost ?? '0'),
     price: String(product.price ?? '0'),
-    qty: String(product.qty ?? '0'),
     alertQuantity: product.alert_quantity == null ? '' : String(product.alert_quantity),
     taxId: product.tax_id ?? null,
     taxMethod: product.tax_method ?? 1,
@@ -149,7 +153,7 @@ function productToForm(product: Product, options?: ProductOptions): ProductForm 
     })),
     isBatch: Boolean(product.is_batch),
     isVariant: Boolean(product.is_variant) && !Boolean(product.is_batch),
-    variantInput: '',
+    variantGroups: [],
     variants: Boolean(product.is_batch) ? [] : (product.variants ?? []).map((variant) => ({
       id: variant.id,
       variantId: variant.variant_id,
@@ -534,15 +538,16 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
     nextOptions = options,
     { defaultUnits = true }: { defaultUnits?: boolean } = {}
   ): ProductForm {
-    const firstUnitId = nextOptions.units[0]?.id ?? null;
+    const unitId = current.unitId ?? (defaultUnits ? nextOptions.units[0]?.id ?? null : null);
+    const unitFamily = compatibleUnits(nextOptions.units, unitId);
 
     return {
       ...current,
       type: current.type || nextOptions.types[0] || 'standard',
       barcodeSymbology: current.barcodeSymbology || nextOptions.barcode_symbologies[0] || 'C128',
-      unitId: current.unitId ?? (defaultUnits ? firstUnitId : null),
-      saleUnitId: current.saleUnitId ?? (defaultUnits ? firstUnitId : null),
-      purchaseUnitId: current.purchaseUnitId ?? (defaultUnits ? firstUnitId : null),
+      unitId,
+      saleUnitId: unitFamily.some((unit) => unit.id === current.saleUnitId) ? current.saleUnitId : null,
+      purchaseUnitId: unitFamily.some((unit) => unit.id === current.purchaseUnitId) ? current.purchaseUnitId : null,
       warehousePrices: mergeWarehousePrices(current.warehousePrices, nextOptions.warehouses),
     };
   }
@@ -551,11 +556,24 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
     setEditingProduct(null);
     setSelectedBrand(null);
     setSelectedCategory(null);
-    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }, nextOptions));
+    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }, nextOptions, { defaultUnits: false }));
   }
 
   function updateForm<K extends keyof ProductForm>(key: K, value: ProductForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateBaseUnit(unitId: number | null) {
+    setForm((current) => {
+      const unitFamily = compatibleUnits(options.units, unitId);
+
+      return {
+        ...current,
+        unitId,
+        saleUnitId: unitId && unitFamily.some((unit) => unit.id === current.saleUnitId) ? current.saleUnitId : null,
+        purchaseUnitId: unitId && unitFamily.some((unit) => unit.id === current.purchaseUnitId) ? current.purchaseUnitId : null,
+      };
+    });
   }
 
   function updateBatch(value: boolean) {
@@ -563,7 +581,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
       ...current,
       isBatch: value,
       isVariant: value ? false : current.isVariant,
-      variantInput: value ? '' : current.variantInput,
+      variantGroups: value ? [] : current.variantGroups,
       variants: value ? [] : current.variants,
     }));
   }
@@ -573,6 +591,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
       ...current,
       isVariant: value,
       isBatch: value ? false : current.isBatch,
+      variantGroups: value ? current.variantGroups : [],
     }));
   }
 
@@ -602,37 +621,62 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
     }));
   }
 
-  function addVariantsFromInput() {
-    setForm((current) => {
-      const names = current.variantInput
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean);
-
-      if (!names.length) return current;
-
-      return {
-        ...current,
-        variantInput: '',
-        variants: [
-          ...current.variants,
-          ...names.map((name) => ({
-            id: null,
-            variantId: null,
-            name,
-            itemCode: `${name}-${current.code || generateCode()}`,
-            additionalPrice: '0',
-          })),
-        ],
-      };
-    });
-  }
-
   function removeVariant(index: number) {
     setForm((current) => ({
       ...current,
       variants: current.variants.filter((_, variantIndex) => variantIndex !== index),
     }));
+  }
+
+  function addVariantGroup() {
+    setForm((current) => ({
+      ...current,
+      variantGroups: [
+        ...current.variantGroups,
+        { id: variantGroupId(), name: '', values: '' },
+      ],
+    }));
+  }
+
+  function updateVariantGroup<K extends keyof VariantOptionGroupForm>(index: number, key: K, value: VariantOptionGroupForm[K]) {
+    setForm((current) => ({
+      ...current,
+      variantGroups: current.variantGroups.map((group, groupIndex) => (
+        groupIndex === index ? { ...group, [key]: value } : group
+      )),
+    }));
+  }
+
+  function removeVariantGroup(index: number) {
+    setForm((current) => ({
+      ...current,
+      variantGroups: current.variantGroups.filter((_, groupIndex) => groupIndex !== index),
+    }));
+  }
+
+  function generateVariantCombinations() {
+    setForm((current) => {
+      const combinations = variantCombinations(current.variantGroups);
+      if (!combinations.length) return current;
+
+      const existingNames = new Set(current.variants.map((variant) => normalizeVariantName(variant.name)));
+      const generated = combinations
+        .filter((name) => !existingNames.has(normalizeVariantName(name)))
+        .map((name) => ({
+          id: null,
+          variantId: null,
+          name,
+          itemCode: variantItemCode(current.code, name),
+          additionalPrice: '0',
+        }));
+
+      if (!generated.length) return current;
+
+      return {
+        ...current,
+        variants: [...current.variants, ...generated],
+      };
+    });
   }
 
   function openCreatePage() {
@@ -641,6 +685,10 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
 
   function openEditPage(product: Product) {
     router.push({ pathname: '/(drawer)/products-edit', params: { id: String(product.id) } });
+  }
+
+  function openDetailPage(product: Product) {
+    router.push({ pathname: '/(drawer)/products-detail', params: { id: String(product.id) } });
   }
 
   function closeForm() {
@@ -659,7 +707,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
     }
 
     if (form.isVariant && !form.variants.length) {
-      Alert.alert('Missing variants', 'Add at least one product variant.');
+      Alert.alert('Missing variants', 'Generate at least one variant combination before saving.');
       return null;
     }
 
@@ -680,7 +728,6 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
       purchase_unit_id: form.type === 'standard' ? form.purchaseUnitId : null,
       cost: toNumber(form.cost),
       price: toNumber(form.price),
-      qty: toNullableNumber(form.qty),
       alert_quantity: toNullableNumber(form.alertQuantity),
       tax_id: form.taxId,
       tax_method: form.taxMethod,
@@ -759,12 +806,14 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
   }
 
   const selectedUnit = options.units.find((unit) => unit.id === form.unitId);
-  const selectedSaleUnit = options.units.find((unit) => unit.id === form.saleUnitId);
-  const selectedPurchaseUnit = options.units.find((unit) => unit.id === form.purchaseUnitId);
+  const salePurchaseUnits = compatibleUnits(options.units, form.unitId);
+  const selectedSaleUnit = salePurchaseUnits.find((unit) => unit.id === form.saleUnitId);
+  const selectedPurchaseUnit = salePurchaseUnits.find((unit) => unit.id === form.purchaseUnitId);
   const selectedTax = options.taxes.find((tax) => tax.id === form.taxId);
   const selectedTaxMethod = options.tax_methods.find((method) => method.id === form.taxMethod);
   const isStandard = form.type === 'standard';
   const unitIdLocked = mode === 'edit' && Boolean(editingProduct?.unit_id_locked);
+  const salePurchaseDisabled = !isStandard || !form.unitId;
 
   if (mode === 'index' && !hasPermission('products-index')) {
     return <Redirect href="/(drawer)/dashboard" />;
@@ -830,10 +879,10 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
 
               {products.map((product) => (
                 <DataTable.Row key={product.id}>
-                  <DataTable.Cell style={styles.imageColumn}>
-                    {product.image_url ? <Image source={{ uri: product.image_url }} style={styles.tableImage} /> : 'No image'}
+                  <DataTable.Cell style={styles.imageColumn} onPress={() => openDetailPage(product)}>
+                    <ProductThumb uri={product.image_url} />
                   </DataTable.Cell>
-                  <DataTable.Cell style={styles.nameColumn}>{product.name}</DataTable.Cell>
+                  <DataTable.Cell style={styles.nameColumn} onPress={() => openDetailPage(product)}>{product.name}</DataTable.Cell>
                   <DataTable.Cell style={styles.codeColumn}>{product.code}</DataTable.Cell>
                   <DataTable.Cell style={styles.nameColumn}>{product.brand?.title ?? 'N/A'}</DataTable.Cell>
                   <DataTable.Cell style={styles.nameColumn}>{product.category?.name ?? 'N/A'}</DataTable.Cell>
@@ -841,6 +890,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                   <DataTable.Cell numeric style={styles.numberColumn}>{Number(product.price).toFixed(2)}</DataTable.Cell>
                   <DataTable.Cell style={styles.actionColumn}>
                     <View style={styles.actions}>
+                      <Button compact mode="text" onPress={() => openDetailPage(product)}>View</Button>
                       {canEdit ? (
                         <Button compact mode="text" onPress={() => openEditPage(product)}>Edit</Button>
                       ) : null}
@@ -937,23 +987,23 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                 options={options.units}
                 keyFor={(unit) => unit.id}
                 labelFor={(unit) => unit.unit_name}
-                onSelect={(unit) => updateForm('unitId', unit.id)}
+                onSelect={(unit) => updateBaseUnit(unit.id)}
               />
               <HelperText type="info" visible={unitIdLocked}>Base unit is locked because this product has purchase, sale, or return history.</HelperText>
               <SelectField
                 label="Sale Unit"
-                valueLabel={selectedSaleUnit?.unit_name ?? 'Select sale unit'}
-                disabled={!isStandard}
-                options={options.units}
+                valueLabel={form.unitId ? selectedSaleUnit?.unit_name ?? 'Select sale unit' : 'Select base unit first'}
+                disabled={salePurchaseDisabled}
+                options={salePurchaseUnits}
                 keyFor={(unit) => unit.id}
                 labelFor={(unit) => unit.unit_name}
                 onSelect={(unit) => updateForm('saleUnitId', unit.id)}
               />
               <SelectField
                 label="Purchase Unit"
-                valueLabel={selectedPurchaseUnit?.unit_name ?? 'Select purchase unit'}
-                disabled={!isStandard}
-                options={options.units}
+                valueLabel={form.unitId ? selectedPurchaseUnit?.unit_name ?? 'Select purchase unit' : 'Select base unit first'}
+                disabled={salePurchaseDisabled}
+                options={salePurchaseUnits}
                 keyFor={(unit) => unit.id}
                 labelFor={(unit) => unit.unit_name}
                 onSelect={(unit) => updateForm('purchaseUnitId', unit.id)}
@@ -961,7 +1011,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
        
 
       
-              <TextInput mode="outlined" label="Product Cost *" value={form.cost} keyboardType="numeric" disabled={!isStandard} onChangeText={(value) => updateForm('cost', value)} style={styles.formField} />
+              <TextInput mode="outlined" label="Purchase Cost *" value={form.cost} keyboardType="numeric" disabled={!isStandard} onChangeText={(value) => updateForm('cost', value)} style={styles.formField} />
               <TextInput mode="outlined" label="Base Unit Price *" value={form.price} keyboardType="numeric" onChangeText={(value) => updateForm('price', value)} style={styles.formField} />
               <TextInput mode="outlined" label="Alert Quantity" value={form.alertQuantity} keyboardType="numeric" onChangeText={(value) => updateForm('alertQuantity', value)} style={styles.formField} />
       
@@ -1057,17 +1107,35 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
       
             {form.isVariant ? (
               <View style={styles.variantSection}>
-                <View style={[styles.variantInputRow, compactVariantLayout && styles.variantInputRowCompact]}>
-                  <TextInput
-                    mode="outlined"
-                    label="Product variants"
-                    placeholder="Enter variant separated by comma"
-                    value={form.variantInput}
-                    onChangeText={(value) => updateForm('variantInput', value)}
-                    onBlur={addVariantsFromInput}
-                    style={styles.variantInput}
-                  />
-                  <Button mode="outlined" onPress={addVariantsFromInput} style={[styles.variantAddButton, compactVariantLayout && styles.variantAddButtonCompact]}>Add</Button>
+                <View style={styles.variantGroupSection}>
+                  <Text variant="titleSmall">Option groups</Text>
+                  {form.variantGroups.length ? form.variantGroups.map((group, index) => (
+                    <View key={group.id} style={[styles.variantGroupRow, compactVariantLayout && styles.variantGroupRowCompact]}>
+                      <TextInput
+                        mode="outlined"
+                        label="Option"
+                        placeholder="Color"
+                        value={group.name}
+                        onChangeText={(value) => updateVariantGroup(index, 'name', value)}
+                        style={styles.variantGroupName}
+                      />
+                      <TextInput
+                        mode="outlined"
+                        label="Values"
+                        placeholder="Red, Blue"
+                        value={group.values}
+                        onChangeText={(value) => updateVariantGroup(index, 'values', value)}
+                        style={styles.variantGroupValues}
+                      />
+                      <Button mode="contained" buttonColor="#d64545" onPress={() => removeVariantGroup(index)} style={styles.variantGroupRemove}>X</Button>
+                    </View>
+                  )) : (
+                    <Text variant="bodySmall" style={styles.muted}>Add groups such as Color and Size, then generate sellable variants.</Text>
+                  )}
+                  <View style={styles.variantGroupActions}>
+                    <Button mode="outlined" compact onPress={addVariantGroup}>Add group</Button>
+                    <Button mode="contained" compact onPress={generateVariantCombinations}>Generate</Button>
+                  </View>
                 </View>
                 {form.variants.map((variant, index) => (
                   <View key={`${variant.id ?? 'new'}-${index}`} style={[styles.variantRow, compactVariantLayout && styles.variantRowCompact]}>
@@ -1089,6 +1157,20 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
       )}
     </Screen>
   );
+}
+
+function ProductThumb({ uri }: { uri?: string | null }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!uri || failed) {
+    return (
+      <View style={styles.tableImagePlaceholder}>
+        <MaterialCommunityIcons name="package-variant-closed" size={20} color="#9ca3af" />
+      </View>
+    );
+  }
+
+  return <Image source={{ uri }} style={styles.tableImage} onError={() => setFailed(true)} />;
 }
 
 function SwitchRow({ label, value, onValueChange }: { label: string; value: boolean; onValueChange: (value: boolean) => void }) {
@@ -1185,6 +1267,54 @@ function mergeWarehousePrices(currentPrices: WarehousePriceForm[], warehouses: W
   });
 }
 
+function compatibleUnits(units: Unit[], baseUnitId: number | null) {
+  if (!baseUnitId) return [];
+
+  const selectedUnit = units.find((unit) => unit.id === baseUnitId);
+  const rootUnitId = normalizeId(selectedUnit?.base_unit) ?? baseUnitId;
+
+  return units.filter((unit) => unit.id === rootUnitId || normalizeId(unit.base_unit) === rootUnitId);
+}
+
+function variantGroupId() {
+  return `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function variantCombinations(groups: VariantOptionGroupForm[]) {
+  const valuesByGroup = groups
+    .map((group) => splitVariantValues(group.values))
+    .filter((values) => values.length);
+
+  if (!valuesByGroup.length) return [];
+
+  return valuesByGroup
+    .reduce<string[][]>((combinations, values) => (
+      combinations.flatMap((combination) => values.map((value) => [...combination, value]))
+    ), [[]])
+    .map((combination) => combination.join(' / '));
+}
+
+function splitVariantValues(values: string) {
+  return Array.from(new Set(values
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)));
+}
+
+function normalizeVariantName(name: string) {
+  return name.trim().toLowerCase();
+}
+
+function variantItemCode(productCode: string, variantName: string) {
+  const base = productCode.trim() || generateCode();
+  const suffix = variantName
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toUpperCase();
+
+  return suffix ? `${base}-${suffix}` : base;
+}
+
 const styles = StyleSheet.create({
   screen: {
     gap: 16,
@@ -1268,6 +1398,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#f2f2f2',
   },
+  tableImagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 6,
+    backgroundColor: '#f9fafb',
+  },
   actions: {
     flexDirection: 'row',
     gap: 2,
@@ -1350,6 +1490,39 @@ const styles = StyleSheet.create({
   variantSection: {
     gap: 10,
   },
+  variantGroupSection: {
+    borderColor: '#dddddd',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12,
+  },
+  variantGroupActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  variantGroupRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  variantGroupRowCompact: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+  },
+  variantGroupName: {
+    minWidth: 120,
+    flex: 1,
+  },
+  variantGroupValues: {
+    minWidth: 180,
+    flex: 2,
+  },
+  variantGroupRemove: {
+    minWidth: 48,
+  },
   warehousePriceSection: {
     borderColor: '#dddddd',
     borderRadius: 8,
@@ -1431,25 +1604,6 @@ const styles = StyleSheet.create({
   },
   datePickerDayTextSelected: {
     color: '#ffffff',
-  },
-  variantInputRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 8,
-  },
-  variantInputRowCompact: {
-    alignItems: 'stretch',
-    flexDirection: 'column',
-  },
-  variantInput: {
-    flex: 1,
-    minWidth: 0,
-  },
-  variantAddButton: {
-    alignSelf: 'center',
-  },
-  variantAddButtonCompact: {
-    alignSelf: 'stretch',
   },
   variantRow: {
     alignItems: 'center',

@@ -9,15 +9,18 @@ use App\Http\Resources\SaleResource;
 use App\Models\Account;
 use App\Models\Payment;
 use App\Models\Product;
-use App\Models\ProductVariant;
 use App\Models\ProductSale;
+use App\Models\ProductVariant;
 use App\Models\Sale;
 use App\Models\Unit;
+use App\Services\ApprovalService;
 use App\Services\PaymentService;
+use App\Services\RecordNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -29,6 +32,7 @@ class SalesInvoiceController extends Controller
         'warehouse:id,name',
         'biller:id,name,company_name',
         'user:id,name,email',
+        'approver:id,name,email',
         'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
         'products.product.variants.variant:id,name',
         'products.unit:id,unit_code,unit_name',
@@ -41,9 +45,13 @@ class SalesInvoiceController extends Controller
     {
         $perPage = min((int) $request->query('per_page', 15), 100);
         $search = trim((string) $request->query('search', ''));
+        $billerId = $request->user()?->requireCurrentBillerId();
+        $canFilterApproval = Schema::hasColumn('sales', 'approval_status');
 
         $sales = Sale::query()
             ->with(['customer:id,name', 'warehouse:id,name', 'biller:id,name'])
+            ->when($billerId, fn ($query) => $query->where('biller_id', $billerId))
+            ->when($canFilterApproval && ($request->boolean('approved_only') || $request->boolean('outstanding_only')), fn ($query) => $query->where('approval_status', ApprovalService::APPROVED))
             ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
             ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
@@ -58,14 +66,19 @@ class SalesInvoiceController extends Controller
         return response()->json(SaleResource::collection($sales)->response()->getData(true));
     }
 
-    public function show(Sale $sale): JsonResponse
+    public function show(Sale $sale, Request $request): JsonResponse
     {
+        $this->authorizeBranch($sale, $request);
+
         return response()->json([
-            'data' => new SaleResource($sale->load(self::RELATIONS)),
+            'data' => new SaleResource($sale->load([
+                ...self::RELATIONS,
+                'activities' => fn ($query) => $query->with('causer')->latest()->limit(25),
+            ])),
         ]);
     }
 
-    public function store(StoreSaleRequest $request, StoreSalesInvoiceAction $storeSalesInvoice): JsonResponse
+    public function store(StoreSaleRequest $request, StoreSalesInvoiceAction $storeSalesInvoice, RecordNotificationService $notifications): JsonResponse
     {
         try {
             $sale = $storeSalesInvoice->execute(
@@ -73,6 +86,7 @@ class SalesInvoiceController extends Controller
                 $request->user(),
                 $request->file('document')
             );
+            $notifications->salesInvoiceCreatedForCustomer($sale);
 
             return response()->json([
                 'message' => 'Sales invoice created successfully.',
@@ -93,11 +107,15 @@ class SalesInvoiceController extends Controller
         }
     }
 
-    public function update(StoreSaleRequest $request, Sale $sale, PaymentService $payments): JsonResponse
+    public function update(StoreSaleRequest $request, Sale $sale, PaymentService $payments, ApprovalService $approvals): JsonResponse
     {
+        $this->authorizeBranch($sale, $request);
+
         try {
             $sale = DB::transaction(function () use ($request, $sale, $payments) {
+                app(ApprovalService::class)->resetSaleApproval($sale);
                 $data = $request->validated();
+                $billerId = $request->user()->requireCurrentBillerId();
                 $totals = $this->calculateTotals($data);
                 $documentPath = $sale->document;
 
@@ -113,7 +131,7 @@ class SalesInvoiceController extends Controller
                     'sale_date' => $data['sale_date'] ?? $sale->sale_date ?? now()->toDateString(),
                     'customer_id' => $data['customer_id'],
                     'warehouse_id' => $data['warehouse_id'],
-                    'biller_id' => $data['biller_id'],
+                    'biller_id' => $billerId,
                     'item' => $totals['item'],
                     'total_qty' => $totals['total_qty'],
                     'total_discount' => $totals['total_discount'],
@@ -127,11 +145,14 @@ class SalesInvoiceController extends Controller
                     'shipping_cost' => $totals['shipping_cost'],
                     'grand_total' => $totals['grand_total'],
                     'sale_status' => $data['sale_status'],
-                    'payment_status' => $data['payment_status'],
-                    'paid_amount' => (float) ($data['paid_amount'] ?? 0),
+                    'payment_status' => 2,
+                    'paid_amount' => 0,
                     'document' => $documentPath,
                     'sale_note' => $data['sale_note'] ?? null,
                     'staff_note' => $data['staff_note'] ?? null,
+                    'approval_status' => ApprovalService::PENDING,
+                    'approved_by' => null,
+                    'approved_at' => null,
                 ]);
 
                 ProductSale::query()->where('sale_id', $sale->id)->delete();
@@ -186,6 +207,19 @@ class SalesInvoiceController extends Controller
         }
     }
 
+    public function approve(Sale $sale, Request $request, ApprovalService $approvals, RecordNotificationService $notifications): JsonResponse
+    {
+        $this->authorizeBranch($sale, $request);
+
+        $sale = $approvals->approveSale($sale, $request->user());
+        $notifications->salesInvoiceApproved($sale);
+
+        return response()->json([
+            'message' => 'Sales invoice approved successfully.',
+            'data' => new SaleResource($sale),
+        ]);
+    }
+
     private function calculateTotals(array $data): array
     {
         $lines = [];
@@ -223,6 +257,11 @@ class SalesInvoiceController extends Controller
             'shipping_cost' => round($shippingCost, 2),
             'grand_total' => round($totalPrice + $orderTax + $shippingCost - $orderDiscount - $couponDiscount, 2),
         ];
+    }
+
+    private function authorizeBranch(Sale $sale, Request $request): void
+    {
+        abort_unless((int) $sale->biller_id === $request->user()->requireCurrentBillerId(), 404);
     }
 
     private function resolveVariantId(Product $product, array $data, int|string $index): ?int

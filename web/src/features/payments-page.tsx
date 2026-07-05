@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader, Pagination, TableWrap } from '@/components/resource-shell';
@@ -134,17 +135,17 @@ export function PaymentsPage() {
 
   const searchInvoices = useCallback(async (query: string) => {
     if (form.paymentType === 'sale_payment') {
-      const response = await api.saleInvoiceOptions({ search: query, customerId: form.customer?.id, outstandingOnly: true });
+      const response = await api.saleInvoiceOptions({ search: query, customerId: form.customer?.id, outstandingOnly: true, approvedOnly: true });
       return response.data;
     }
 
     if (form.paymentType === 'purchase_payment') {
-      const response = await api.purchaseInvoiceOptions({ search: query, supplierId: form.supplier?.id, outstandingOnly: true });
+      const response = await api.purchaseInvoiceOptions({ search: query, supplierId: form.supplier?.id, outstandingOnly: true, approvedOnly: true });
       return response.data;
     }
 
     if (form.paymentType === 'sale_return_refund') {
-      const response = await api.returnInvoiceOptions({ search: query, customerId: form.customer?.id });
+      const response = await api.returnInvoiceOptions({ search: query, customerId: form.customer?.id, approvedOnly: true });
       return response.data;
     }
 
@@ -198,6 +199,19 @@ export function PaymentsPage() {
       void loadPayments(1);
     } catch (error) {
       toast.error('Unable to record payment', { description: errorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function approvePayment(id: number) {
+    setSaving(true);
+    try {
+      await api.approvePayment(id);
+      toast.success('Payment approved');
+      void loadPayments(page);
+    } catch (error) {
+      toast.error('Approval failed', { description: errorMessage(error) });
     } finally {
       setSaving(false);
     }
@@ -279,7 +293,7 @@ export function PaymentsPage() {
         searchAccounts={searchAccounts}
       />
 
-      {payments.length ? <PaymentTable payments={payments} /> : <div className="rounded-lg border border-dashed border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
+      {payments.length ? <PaymentTable payments={payments} saving={saving} onApprove={(id) => void approvePayment(id)} /> : <div className="rounded-lg border border-dashed border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
       <Pagination meta={pagination} loading={loading} onPage={(nextPage) => void loadPayments(nextPage)} />
 
       <Modal title="Record Payment" open={modalOpen} onOpenChange={setModalOpen}>
@@ -446,7 +460,7 @@ function Filters(props: {
   );
 }
 
-function PaymentTable({ payments }: { payments: Payment[] }) {
+function PaymentTable({ payments, saving, onApprove }: { payments: Payment[]; saving: boolean; onApprove: (id: number) => void }) {
   return (
     <TableWrap>
       <table className="min-w-full text-sm">
@@ -458,7 +472,9 @@ function PaymentTable({ payments }: { payments: Payment[] }) {
             <th className="px-4 py-3">Account</th>
             <th className="px-4 py-3">Document</th>
             <th className="px-4 py-3">Method</th>
+            <th className="px-4 py-3">Approval</th>
             <th className="px-4 py-3 text-right">Amount</th>
+            <th className="px-4 py-3 text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -470,14 +486,28 @@ function PaymentTable({ payments }: { payments: Payment[] }) {
               <td className="px-4 py-3">{payment.account?.name ?? '-'}</td>
               <td className="px-4 py-3">{documentLabel(payment)}</td>
               <td className="px-4 py-3">{payment.paying_method}</td>
+              <td className="px-4 py-3"><ApprovalBadge status={payment.approval_status} /></td>
               <td className={payment.direction === 'in' ? 'px-4 py-3 text-right font-medium text-green-700' : 'px-4 py-3 text-right font-medium text-red-700'}>
                 {payment.direction === 'in' ? '+' : '-'}{money(payment.amount)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                <Link className="mr-2 inline-flex h-10 items-center rounded-md px-3 text-sm font-medium hover:bg-neutral-100" href={`/payments/${payment.id}`}>Details</Link>
+                {payment.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => onApprove(payment.id)}>Approve</Button> : null}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </TableWrap>
+  );
+}
+
+function ApprovalBadge({ status }: { status: unknown }) {
+  const pending = status === 'pending';
+  return (
+    <span className={pending ? 'inline-flex rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800' : 'inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800'}>
+      {pending ? 'Pending' : 'Approved'}
+    </span>
   );
 }
 

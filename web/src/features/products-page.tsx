@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, GripVertical, Trash2 } from 'lucide-react';
+import { Calendar, GripVertical, Package, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
@@ -25,7 +25,6 @@ type ProductForm = {
   purchaseUnitId: number | null;
   cost: string;
   price: string;
-  qty: string;
   alertQuantity: string;
   taxId: number | null;
   taxMethod: number;
@@ -39,7 +38,7 @@ type ProductForm = {
   warehousePrices: WarehousePriceForm[];
   isBatch: boolean;
   isVariant: boolean;
-  variantInput: string;
+  variantGroups: VariantOptionGroupForm[];
   variants: ProductVariantForm[];
   imageFile: File | null;
   removeImage: boolean;
@@ -58,6 +57,12 @@ type ProductVariantForm = {
   name: string;
   itemCode: string;
   additionalPrice: string;
+};
+
+type VariantOptionGroupForm = {
+  id: string;
+  name: string;
+  values: string;
 };
 
 type SearchableSelectProps<T> = {
@@ -96,7 +101,6 @@ const emptyForm: ProductForm = {
   purchaseUnitId: null,
   cost: '0',
   price: '0',
-  qty: '0',
   alertQuantity: '',
   taxId: null,
   taxMethod: 1,
@@ -110,7 +114,7 @@ const emptyForm: ProductForm = {
   warehousePrices: [],
   isBatch: false,
   isVariant: false,
-  variantInput: '',
+  variantGroups: [],
   variants: [],
   imageFile: null,
   removeImage: false,
@@ -240,7 +244,20 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
     setEditing(null);
     setSelectedBrand(null);
     setSelectedCategory(null);
-    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }, nextOptions));
+    setForm(defaultsForOptions({ ...emptyForm, code: generateCode() }, nextOptions, { defaultUnits: false }));
+  }
+
+  function setBaseUnit(unitId: number | null) {
+    setForm((current) => {
+      const unitFamily = compatibleUnits(options.units, unitId);
+
+      return {
+        ...current,
+        unitId,
+        saleUnitId: unitId && unitFamily.some((unit) => unit.id === current.saleUnitId) ? current.saleUnitId : null,
+        purchaseUnitId: unitId && unitFamily.some((unit) => unit.id === current.purchaseUnitId) ? current.purchaseUnitId : null,
+      };
+    });
   }
 
   function setBatch(value: boolean) {
@@ -248,7 +265,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       ...current,
       isBatch: value,
       isVariant: value ? false : current.isVariant,
-      variantInput: value ? '' : current.variantInput,
+      variantGroups: value ? [] : current.variantGroups,
       variants: value ? [] : current.variants,
     }));
   }
@@ -258,6 +275,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       ...current,
       isVariant: value,
       isBatch: value ? false : current.isBatch,
+      variantGroups: value ? current.variantGroups : [],
     }));
   }
 
@@ -287,37 +305,62 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
     }));
   }
 
-  function addVariantsFromInput() {
-    setForm((current) => {
-      const names = current.variantInput
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean);
-
-      if (!names.length) return current;
-
-      return {
-        ...current,
-        variantInput: '',
-        variants: [
-          ...current.variants,
-          ...names.map((name) => ({
-            id: null,
-            variantId: null,
-            name,
-            itemCode: `${name}-${current.code || generateCode()}`,
-            additionalPrice: '0',
-          })),
-        ],
-      };
-    });
-  }
-
   function removeVariant(index: number) {
     setForm((current) => ({
       ...current,
       variants: current.variants.filter((_, variantIndex) => variantIndex !== index),
     }));
+  }
+
+  function addVariantGroup() {
+    setForm((current) => ({
+      ...current,
+      variantGroups: [
+        ...current.variantGroups,
+        { id: variantGroupId(), name: '', values: '' },
+      ],
+    }));
+  }
+
+  function setVariantGroup<K extends keyof VariantOptionGroupForm>(index: number, key: K, value: VariantOptionGroupForm[K]) {
+    setForm((current) => ({
+      ...current,
+      variantGroups: current.variantGroups.map((group, groupIndex) => (
+        groupIndex === index ? { ...group, [key]: value } : group
+      )),
+    }));
+  }
+
+  function removeVariantGroup(index: number) {
+    setForm((current) => ({
+      ...current,
+      variantGroups: current.variantGroups.filter((_, groupIndex) => groupIndex !== index),
+    }));
+  }
+
+  function generateVariantCombinations() {
+    setForm((current) => {
+      const combinations = variantCombinations(current.variantGroups);
+      if (!combinations.length) return current;
+
+      const existingNames = new Set(current.variants.map((variant) => normalizeVariantName(variant.name)));
+      const generated = combinations
+        .filter((name) => !existingNames.has(normalizeVariantName(name)))
+        .map((name) => ({
+          id: null,
+          variantId: null,
+          name,
+          itemCode: variantItemCode(current.code, name),
+          additionalPrice: '0',
+        }));
+
+      if (!generated.length) return current;
+
+      return {
+        ...current,
+        variants: [...current.variants, ...generated],
+      };
+    });
   }
 
   function openCreate() {
@@ -372,6 +415,8 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   }
 
   const unitIdLocked = mode === 'edit' && Boolean(editing?.unit_id_locked);
+  const salePurchaseUnits = compatibleUnits(options.units, form.unitId);
+  const salePurchaseDisabled = !form.unitId;
 
   const productForm = (
     <form onSubmit={save} className="grid min-w-0 gap-4">
@@ -408,18 +453,31 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
         <Field label="Product Base Unit" hint={unitIdLocked ? 'Base unit is locked because this product has purchase, sale, or return history.' : undefined}>
           <Select
             value={idValue(form.unitId)}
-            onValueChange={(value) => setValue('unitId', nullableId(value))}
+            onValueChange={(value) => setBaseUnit(nullableId(value))}
             options={unitOptions(options.units)}
             disabled={unitIdLocked}
           />
         </Field>
-        <Field label="Sale unit"><Select value={idValue(form.saleUnitId)} onValueChange={(value) => setValue('saleUnitId', nullableId(value))} options={unitOptions(options.units)} /></Field>
-        <Field label="Purchase unit"><Select value={idValue(form.purchaseUnitId)} onValueChange={(value) => setValue('purchaseUnitId', nullableId(value))} options={unitOptions(options.units)} /></Field>
+        <Field label="Sale unit">
+          <Select
+            value={idValue(form.saleUnitId)}
+            onValueChange={(value) => setValue('saleUnitId', nullableId(value))}
+            options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select sale unit')}
+            disabled={salePurchaseDisabled}
+          />
+        </Field>
+        <Field label="Purchase unit">
+          <Select
+            value={idValue(form.purchaseUnitId)}
+            onValueChange={(value) => setValue('purchaseUnitId', nullableId(value))}
+            options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select purchase unit')}
+            disabled={salePurchaseDisabled}
+          />
+        </Field>
         <Field label="Tax"><Select value={idValue(form.taxId)} onValueChange={(value) => setValue('taxId', nullableId(value))} options={[{ value: 'none', label: 'No tax' }, ...options.taxes.map((tax) => ({ value: String(tax.id), label: `${tax.name} (${tax.rate}%)` }))]} /></Field>
         <Field label="Tax method"><Select value={String(form.taxMethod)} onValueChange={(value) => setValue('taxMethod', Number(value))} options={options.tax_methods.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
-        <Field label="Cost"><Input type="number" step="0.01" value={form.cost} onChange={(event) => setValue('cost', event.target.value)} /></Field>
+        <Field label="Purchase Cost"><Input type="number" step="0.01" value={form.cost} onChange={(event) => setValue('cost', event.target.value)} /></Field>
         <Field label="Base Unit Price"><Input type="number" step="0.01" value={form.price} onChange={(event) => setValue('price', event.target.value)} /></Field>
-        <Field label="Quantity"><Input type="number" step="0.01" value={form.qty} onChange={(event) => setValue('qty', event.target.value)} /></Field>
         <Field label="Alert quantity"><Input type="number" step="0.01" value={form.alertQuantity} onChange={(event) => setValue('alertQuantity', event.target.value)} /></Field>
         <Field label="Image"><Input type="file" accept="image/*" onChange={(event) => setValue('imageFile', event.target.files?.[0] ?? null)} /></Field>
       </div>
@@ -476,23 +534,36 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       </div>
       {form.isVariant ? (
         <div className="grid min-w-0 gap-3">
-          <Field label="Product variants" hint="Enter one or more variant names separated by commas.">
-            <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
-              <Input
-                value={form.variantInput}
-                placeholder="Enter variant separated by comma"
-                onChange={(event) => setValue('variantInput', event.target.value)}
-                onBlur={addVariantsFromInput}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    addVariantsFromInput();
-                  }
-                }}
-              />
-              <Button type="button" variant="secondary" className="shrink-0" onClick={addVariantsFromInput}>Add</Button>
+          <div className="grid gap-3 rounded-md border border-neutral-200 p-3">
+            <div className="text-sm font-medium text-neutral-900">Option groups</div>
+            {form.variantGroups.length ? (
+              <div className="grid gap-2">
+                {form.variantGroups.map((group, index) => (
+                  <div key={group.id} className="grid gap-2 sm:grid-cols-[minmax(120px,0.45fr)_minmax(180px,1fr)_auto]">
+                    <Input
+                      value={group.name}
+                      placeholder="Color"
+                      onChange={(event) => setVariantGroup(index, 'name', event.target.value)}
+                    />
+                    <Input
+                      value={group.values}
+                      placeholder="Red, Blue"
+                      onChange={(event) => setVariantGroup(index, 'values', event.target.value)}
+                    />
+                    <Button type="button" variant="danger" className="h-10 w-10 px-0" aria-label="Remove option group" onClick={() => removeVariantGroup(index)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-neutral-500">Add groups such as Color and Size, then generate sellable variants.</div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={addVariantGroup}>Add group</Button>
+              <Button type="button" onClick={generateVariantCombinations}>Generate combinations</Button>
             </div>
-          </Field>
+          </div>
           {form.variants.length ? (
             <div className="w-full max-w-full overflow-x-auto rounded-md border border-neutral-200">
               <table className="w-full min-w-[640px] text-left text-sm">
@@ -605,13 +676,13 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
               {products.map((product) => (
                 <tr key={product.id} className="border-t border-neutral-100">
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {product.image_url || product.image ? <img src={product.image_url ?? product.image ?? ''} alt="" className="h-10 w-10 rounded object-cover" /> : <div className="h-10 w-10 rounded bg-neutral-100" />}
+                    <Link href={`/products/${product.id}`} className="flex items-center gap-3 rounded-md hover:text-black focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2">
+                      <ProductThumb src={product.image_url ?? product.image} alt={product.name} />
                       <div>
-                        <div className="font-medium">{product.name}</div>
+                        <div className="font-medium underline-offset-2 hover:underline">{product.name}</div>
                         <div className="text-xs text-neutral-500">{product.type}</div>
                       </div>
-                    </div>
+                    </Link>
                   </td>
                   <td className="px-4 py-3">{product.code}</td>
                   <td className="px-4 py-3">{product.brand?.title ?? '-'}</td>
@@ -620,6 +691,9 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                   <td className="px-4 py-3">{product.price}</td>
                   <td className="px-4 py-3"><StatusBadge active={product.is_active} /></td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <Link className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-black hover:bg-neutral-100" href={`/products/${product.id}`}>
+                      Details
+                    </Link>
                     {canEdit ? <Button variant="ghost" onClick={() => openEdit(product)}>Edit</Button> : null}
                     {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(product)}>Delete</Button> : null}
                   </td>
@@ -636,6 +710,20 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   );
 }
 
+function ProductThumb({ src, alt }: { src?: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-neutral-400">
+        <Package className="h-5 w-5" />
+      </div>
+    );
+  }
+
+  return <img src={src} alt={alt} className="h-10 w-10 shrink-0 rounded-md border border-neutral-200 object-cover" onError={() => setFailed(true)} />;
+}
+
 function productToForm(product: Product, options?: ProductOptions): ProductForm {
   return {
     ...emptyForm,
@@ -650,7 +738,6 @@ function productToForm(product: Product, options?: ProductOptions): ProductForm 
     purchaseUnitId: resolveUnitId(product, 'purchase_unit_id', 'purchase_unit', options),
     cost: String(product.cost ?? '0'),
     price: String(product.price ?? '0'),
-    qty: String(product.qty ?? '0'),
     alertQuantity: product.alert_quantity == null ? '' : String(product.alert_quantity),
     taxId: product.tax_id ?? null,
     taxMethod: product.tax_method ?? 1,
@@ -668,7 +755,7 @@ function productToForm(product: Product, options?: ProductOptions): ProductForm 
     })),
     isBatch: Boolean(product.is_batch),
     isVariant: Boolean(product.is_variant) && !Boolean(product.is_batch),
-    variantInput: '',
+    variantGroups: [],
     variants: Boolean(product.is_batch) ? [] : (product.variants ?? []).map((variant) => ({
       id: variant.id,
       variantId: variant.variant_id,
@@ -799,13 +886,16 @@ function defaultsForOptions(
   options: ProductOptions,
   { defaultUnits = true }: { defaultUnits?: boolean } = {}
 ) {
+  const unitId = form.unitId ?? (defaultUnits ? options.units[0]?.id ?? null : null);
+  const unitFamily = compatibleUnits(options.units, unitId);
+
   return {
     ...form,
     type: form.type || options.types[0] || 'standard',
     barcodeSymbology: form.barcodeSymbology || options.barcode_symbologies[0] || 'C128',
-    unitId: form.unitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
-    saleUnitId: form.saleUnitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
-    purchaseUnitId: form.purchaseUnitId ?? (defaultUnits ? options.units[0]?.id ?? null : null),
+    unitId,
+    saleUnitId: unitFamily.some((unit) => unit.id === form.saleUnitId) ? form.saleUnitId : null,
+    purchaseUnitId: unitFamily.some((unit) => unit.id === form.purchaseUnitId) ? form.purchaseUnitId : null,
     warehousePrices: mergeWarehousePrices(form.warehousePrices, options.warehouses),
   };
 }
@@ -813,7 +903,7 @@ function defaultsForOptions(
 function validateProduct(form: ProductForm) {
   if (!form.name.trim() || !form.code.trim() || !form.categoryId) return { title: 'Missing fields', description: 'Product name, code, and category are required.' };
   if (!form.unitId || !form.saleUnitId || !form.purchaseUnitId) return { title: 'Missing units', description: 'Product, sale, and purchase units are required.' };
-  if (form.isVariant && !form.variants.length) return { title: 'Missing variants', description: 'Add at least one product variant.' };
+  if (form.isVariant && !form.variants.length) return { title: 'Missing variants', description: 'Generate at least one variant combination before saving.' };
   if (form.isVariant && form.variants.some((variant) => !variant.name.trim() || !variant.itemCode.trim())) {
     return { title: 'Invalid variants', description: 'Each variant needs a name and item code.' };
   }
@@ -833,7 +923,6 @@ function toPayload(form: ProductForm): ProductPayload {
     purchase_unit_id: form.purchaseUnitId,
     cost: toNumber(form.cost),
     price: toNumber(form.price),
-    qty: toNullableNumber(form.qty),
     alert_quantity: toNullableNumber(form.alertQuantity),
     tax_id: form.taxId,
     tax_method: form.taxMethod,
@@ -883,6 +972,45 @@ function generateCode() {
   return String(Math.floor(10000000 + Math.random() * 90000000));
 }
 
+function variantGroupId() {
+  return `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function variantCombinations(groups: VariantOptionGroupForm[]) {
+  const valuesByGroup = groups
+    .map((group) => splitVariantValues(group.values))
+    .filter((values) => values.length);
+
+  if (!valuesByGroup.length) return [];
+
+  return valuesByGroup
+    .reduce<string[][]>((combinations, values) => (
+      combinations.flatMap((combination) => values.map((value) => [...combination, value]))
+    ), [[]])
+    .map((combination) => combination.join(' / '));
+}
+
+function splitVariantValues(values: string) {
+  return Array.from(new Set(values
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)));
+}
+
+function normalizeVariantName(name: string) {
+  return name.trim().toLowerCase();
+}
+
+function variantItemCode(productCode: string, variantName: string) {
+  const base = productCode.trim() || generateCode();
+  const suffix = variantName
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toUpperCase();
+
+  return suffix ? `${base}-${suffix}` : base;
+}
+
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -899,6 +1027,15 @@ function option(value: string) {
   return { value, label: value };
 }
 
-function unitOptions(units: Unit[]) {
-  return [{ value: 'none', label: 'Select unit' }, ...units.map((unit) => ({ value: String(unit.id), label: unit.unit_name }))];
+function unitOptions(units: Unit[], placeholder = 'Select unit') {
+  return [{ value: 'none', label: placeholder }, ...units.map((unit) => ({ value: String(unit.id), label: unit.unit_name }))];
+}
+
+function compatibleUnits(units: Unit[], baseUnitId: number | null) {
+  if (!baseUnitId) return [];
+
+  const selectedUnit = units.find((unit) => unit.id === baseUnitId);
+  const rootUnitId = normalizeId(selectedUnit?.base_unit) ?? baseUnitId;
+
+  return units.filter((unit) => unit.id === rootUnitId || normalizeId(unit.base_unit) === rootUnitId);
 }

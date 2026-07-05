@@ -4,6 +4,10 @@ export type User = {
   email: string;
   phone?: string | null;
   role_id?: number | null;
+  current_biller_id?: number | null;
+  current_biller?: Branch | null;
+  biller_ids?: number[];
+  billers?: Branch[];
   role?: Role | null;
   roles?: Role[] | string[];
   permissions?: string[];
@@ -53,6 +57,33 @@ export type GeneralSetting = {
   company_address?: string | null;
   company_email?: string | null;
   company_phone?: string | null;
+  bulksmsbd_api_url?: string | null;
+  bulksmsbd_api_key?: string | null;
+  bulksmsbd_sender_id?: string | null;
+  sales_invoice_approver_ids?: number[];
+  return_invoice_approver_ids?: number[];
+  purchase_invoice_approver_ids?: number[];
+  payment_approver_ids?: number[];
+  sales_invoice_mail_notification_enabled?: boolean;
+  sales_invoice_mail_notification_user_ids?: number[];
+  sales_invoice_sms_notification_enabled?: boolean;
+  sales_invoice_sms_notification_user_ids?: number[];
+  return_invoice_mail_notification_enabled?: boolean;
+  return_invoice_mail_notification_user_ids?: number[];
+  return_invoice_sms_notification_enabled?: boolean;
+  return_invoice_sms_notification_user_ids?: number[];
+  purchase_invoice_mail_notification_enabled?: boolean;
+  purchase_invoice_mail_notification_user_ids?: number[];
+  purchase_invoice_sms_notification_enabled?: boolean;
+  purchase_invoice_sms_notification_user_ids?: number[];
+  payment_mail_notification_enabled?: boolean;
+  payment_mail_notification_user_ids?: number[];
+  payment_sms_notification_enabled?: boolean;
+  payment_sms_notification_user_ids?: number[];
+  customer_sales_invoice_sms_notification_enabled?: boolean;
+  customer_sales_invoice_mail_notification_enabled?: boolean;
+  customer_return_invoice_sms_notification_enabled?: boolean;
+  customer_return_invoice_mail_notification_enabled?: boolean;
   currency?: string | null;
   currency_position?: string | null;
   staff_access?: string | null;
@@ -134,6 +165,59 @@ export type PaginatedResponse<T> = {
   links?: unknown;
 };
 
+export type ActivityLogChange = {
+  field: string;
+  old: unknown;
+  new: unknown;
+};
+
+export type ActivityLog = {
+  id: number;
+  log_name?: string | null;
+  event?: string | null;
+  description?: string | null;
+  causer?: {
+    id: number | string;
+    name?: string | null;
+    email?: string | null;
+  } | null;
+  changes: ActivityLogChange[];
+  created_at?: string | null;
+};
+
+export type SmsLog = {
+  id: number;
+  user_id?: number | null;
+  user_name?: string | null;
+  user_email?: string | null;
+  phone_number: string;
+  message: string;
+  status: string;
+  provider?: string | null;
+  provider_response?: string | null;
+  record_type?: string | null;
+  record_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type EmailLog = {
+  id: number;
+  user_id?: number | null;
+  user_name?: string | null;
+  user_email?: string | null;
+  email: string;
+  subject: string;
+  message: string;
+  status: string;
+  provider?: string | null;
+  provider_response?: string | null;
+  record_type?: string | null;
+  record_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type Product = {
   id: number;
   name: string;
@@ -178,11 +262,13 @@ export type Product = {
   purchase_unit?: Unit;
   sale_unit?: Unit;
   tax?: Tax;
+  activity_logs?: ActivityLog[];
 };
 
 export type ProductWarehousePrice = {
   warehouse_id: number;
   warehouse_name?: string | null;
+  variant_id?: number | null;
   product_batch_id?: number | null;
   batch_no?: string | null;
   expired_date?: string | null;
@@ -226,16 +312,24 @@ export type Warehouse = {
 export type ProfitReportSummary = {
   gross_sales: number;
   sales_discounts: number;
+  order_discounts: number;
   coupon_discounts: number;
   shipping: number;
   returns: number;
   cost_of_goods_sold: number;
   return_cost: number;
+  purchase_return_cost: number;
+  net_cost_of_goods_sold: number;
+  gross_profit: number;
+  expenses: number;
   tax_collected: number;
   tax_returned: number;
   net_revenue: number;
   net_profit: number;
   margin_percent: number;
+  cash_in: number;
+  cash_out: number;
+  net_cash_movement: number;
 };
 
 export type ProfitReportProduct = {
@@ -244,21 +338,98 @@ export type ProfitReportProduct = {
   name: string;
   qty_sold: number;
   qty_returned: number;
+  purchase_return_qty: number;
   net_sales: number;
   net_returns: number;
+  purchase_return_cost: number;
   cost: number;
   profit: number;
+  gross_profit: number;
   margin_percent: number;
+};
+
+export type ProfitReportBreakdown = {
+  id: number;
+  name: string;
+  net_revenue: number;
+  returns: number;
+  purchase_return_cost: number;
+  cost: number;
+  gross_profit: number;
+  expenses: number;
+  net_profit: number;
+  margin_percent: number;
+};
+
+export type ProfitReportExpense = {
+  category_id: number | null;
+  category_name: string;
+  amount: number;
+};
+
+export type ProfitReportCash = {
+  payment_type: PaymentType | string;
+  label: string;
+  direction: PaymentDirection;
+  amount: number;
 };
 
 export type ProfitReport = {
   summary: ProfitReportSummary;
   products: ProfitReportProduct[];
+  warehouses: ProfitReportBreakdown[];
+  categories: ProfitReportBreakdown[];
+  expenses: ProfitReportExpense[];
+  cash: ProfitReportCash[];
   filters: {
     start_date: string;
     end_date: string;
     warehouse: Pick<Warehouse, 'id' | 'name'> | null;
     search: string;
+  };
+};
+
+export type DatewiseProductReportRow = {
+  sl: number;
+  date: string;
+  customer_name: string;
+  product_name: string;
+  unit: string;
+  unit_price: number;
+  qty: number;
+  type: 'Sales' | 'Return';
+  amount: number;
+  cost: number;
+};
+
+export type DatewiseProductReport = {
+  company: {
+    name: string;
+    address: string;
+    email: string;
+    phone: string;
+  };
+  rows: DatewiseProductReportRow[];
+  summary: {
+    total_sales_amount: number;
+    total_return_amount: number;
+    total_sales_cost: number;
+    total_return_cost: number;
+    total_sales_qty: number;
+    total_return_qty: number;
+    profitable_qty: number;
+    profitable_amount: number;
+    sales_in_words: string;
+    returns_in_words: string;
+  };
+  filters: {
+    start_date: string;
+    end_date: string;
+    product: {
+      id: number;
+      name: string;
+      code: string;
+    };
   };
 };
 
@@ -271,6 +442,32 @@ export type Account = {
   note?: string | null;
   is_default?: boolean | number | null;
   is_active?: boolean | number | null;
+};
+
+export type ExpenseCategory = {
+  id: number;
+  code: string;
+  name: string;
+  is_active?: boolean | number | null;
+};
+
+export type Expense = {
+  id: number;
+  reference_no: string;
+  expense_category_id: number;
+  category_name?: string | null;
+  warehouse_id: number;
+  warehouse_name?: string | null;
+  account_id: number;
+  account_name?: string | null;
+  user_id?: number | null;
+  user_name?: string | null;
+  cash_register_id?: number | null;
+  amount: number | string;
+  note?: string | null;
+  expense_date?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type PaymentType =
@@ -298,6 +495,10 @@ export type Payment = {
   change?: number | string | null;
   paying_method: string;
   payment_note?: string | null;
+  approval_status?: 'pending' | 'approved' | string | null;
+  approved_by?: number | null;
+  approved_at?: string | null;
+  can_approve?: boolean;
   account_id: number;
   customer_id?: number | null;
   supplier_id?: number | null;
@@ -313,6 +514,7 @@ export type Payment = {
   purchase?: InvoiceOption | null;
   sale_return?: InvoiceOption | null;
   purchase_return?: InvoiceOption | null;
+  activity_logs?: ActivityLog[];
   created_at?: string;
   updated_at?: string;
 };
@@ -326,11 +528,16 @@ export type InvoiceOption = {
   due_amount?: number | string | null;
   paid_amount?: number | string | null;
   payment_status?: number | string | null;
+  approval_status?: 'pending' | 'approved' | string | null;
+  approved_by?: number | null;
+  approved_at?: string | null;
+  can_approve?: boolean;
   sale_date?: string | null;
   purchase_date?: string | null;
   return_date?: string | null;
   customer?: Pick<Customer, 'id' | 'name'> | null;
   supplier?: Pick<Supplier, 'id' | 'name'> | null;
+  activity_logs?: ActivityLog[];
 };
 
 export type PurchaseStatus = {

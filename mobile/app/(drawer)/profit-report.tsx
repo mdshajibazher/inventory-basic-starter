@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Menu, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Redirect } from 'expo-router';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -30,6 +33,7 @@ export default function ProfitReportScreen() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,8 +79,48 @@ export default function ProfitReportScreen() {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const response = await api.profitReportPdf({
+        startDate,
+        endDate,
+        warehouseId: warehouseId === 'all' ? undefined : Number(warehouseId),
+        search: debouncedSearch,
+      });
+      const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+
+      if (!directory) {
+        throw new Error('No writable file directory is available on this device.');
+      }
+
+      const fileUri = `${directory}profit-report-${startDate}-to-${endDate}.pdf`;
+      await FileSystem.writeAsStringAsync(fileUri, arrayBufferToBase64(response.data), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Profit Report',
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        Alert.alert('PDF exported', `Saved to ${fileUri}`);
+      }
+    } catch (error) {
+      Alert.alert('PDF export failed', error instanceof Error ? error.message : 'Unable to export profit report PDF.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const summary = report?.summary;
   const products = report?.products ?? [];
+  const warehouseBreakdown = report?.warehouses ?? [];
+  const categories = report?.categories ?? [];
+  const expenses = report?.expenses ?? [];
+  const cash = report?.cash ?? [];
 
   return (
     <Screen contentStyle={styles.screen}>
@@ -87,7 +131,10 @@ export default function ProfitReportScreen() {
             {report ? `${report.filters.start_date} to ${report.filters.end_date}` : 'Current month'}
           </Text>
         </View>
-        <Button mode="outlined" icon="refresh" loading={loading} onPress={() => void load()}>Refresh</Button>
+        <View style={styles.headerActions}>
+          <Button mode="outlined" icon="refresh" loading={loading} onPress={() => void load()}>Refresh</Button>
+          <Button mode="contained" icon="file-pdf-box" loading={exporting} onPress={() => void exportPdf()}>PDF</Button>
+        </View>
       </View>
 
       <View style={styles.filters}>
@@ -123,14 +170,43 @@ export default function ProfitReportScreen() {
 
       <View style={styles.summaryList}>
         <SummaryRow label="Net revenue" value={money(summary?.net_revenue)} />
-        <SummaryRow label="COGS" value={money(summary?.cost_of_goods_sold)} />
+        <SummaryRow label="Gross profit" value={money(summary?.gross_profit)} detail={`${money(summary?.net_cost_of_goods_sold)} COGS`} />
+        <SummaryRow label="Expenses" value={money(summary?.expenses)} />
         <SummaryRow label="Net profit" value={money(summary?.net_profit)} />
         <SummaryRow label="Margin" value={percent(summary?.margin_percent)} />
+        <SummaryRow label="Cash in" value={money(summary?.cash_in)} />
+        <SummaryRow label="Cash out" value={money(summary?.cash_out)} />
+        <SummaryRow label="Purchase returns" value={money(summary?.purchase_return_cost)} detail="COGS reduction" />
+        <SummaryRow label="Cash movement" value={money(summary?.net_cash_movement)} />
         <SummaryRow label="Tax" value={`${money(summary?.tax_collected)} collected`} detail={`${money(summary?.tax_returned)} returned`} />
         <SummaryRow label="Returns" value={money(summary?.returns)} detail={`${money(summary?.return_cost)} cost`} />
       </View>
 
       <ScrollView style={styles.rows} contentContainerStyle={styles.rowsContent}>
+        <Section title="Cash movement">
+          {cash.length > 0 ? cash.map((row) => (
+            <InfoRow key={`${row.payment_type}-${row.direction}`} label={`${row.label} (${row.direction})`} value={money(row.amount)} />
+          )) : <Text variant="bodyMedium" style={styles.muted}>No cash movement in this date range.</Text>}
+        </Section>
+
+        <Section title="Expenses">
+          {expenses.length > 0 ? expenses.map((row) => (
+            <InfoRow key={row.category_id ?? row.category_name} label={row.category_name} value={money(row.amount)} />
+          )) : <Text variant="bodyMedium" style={styles.muted}>No expenses in this date range.</Text>}
+        </Section>
+
+        <Section title="Warehouse profit">
+          {warehouseBreakdown.length > 0 ? warehouseBreakdown.map((row) => (
+            <BreakdownRow key={row.id} row={row} />
+          )) : <Text variant="bodyMedium" style={styles.muted}>No warehouse rows in this date range.</Text>}
+        </Section>
+
+        <Section title="Category profit">
+          {categories.length > 0 ? categories.map((row) => (
+            <BreakdownRow key={row.id} row={row} hideExpenses />
+          )) : <Text variant="bodyMedium" style={styles.muted}>No category rows in this date range.</Text>}
+        </Section>
+
         {products.map((product) => (
           <View key={product.product_id} style={styles.productRow}>
             <View style={styles.productHeader}>
@@ -142,6 +218,7 @@ export default function ProfitReportScreen() {
             </View>
             <View style={styles.metrics}>
               <Metric label="Net sales" value={money(product.net_sales)} />
+              <Metric label="Purchase returns" value={money(product.purchase_return_cost)} />
               <Metric label="Cost" value={money(product.cost)} />
               <Metric label="Profit" value={money(product.profit)} />
             </View>
@@ -158,6 +235,48 @@ export default function ProfitReportScreen() {
         ) : null}
       </ScrollView>
     </Screen>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text variant="titleMedium">{title}</Text>
+      <View style={styles.sectionBody}>{children}</View>
+    </View>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoRow}>
+      <Text variant="bodyMedium" style={styles.infoLabel}>{label}</Text>
+      <Text variant="bodyMedium">{value}</Text>
+    </View>
+  );
+}
+
+function BreakdownRow({
+  row,
+  hideExpenses = false,
+}: {
+  row: NonNullable<ProfitReport['warehouses']>[number];
+  hideExpenses?: boolean;
+}) {
+  return (
+    <View style={styles.breakdownRow}>
+      <View style={styles.productHeader}>
+        <Text variant="titleSmall" style={styles.productTitle}>{row.name}</Text>
+        <Text variant="titleSmall">{money(row.net_profit)}</Text>
+      </View>
+      <View style={styles.metrics}>
+        <Metric label="Revenue" value={money(row.net_revenue)} />
+        <Metric label="Cost" value={money(row.cost)} />
+        <Metric label="Purchase returns" value={money(row.purchase_return_cost)} />
+        {hideExpenses ? <Metric label="Margin" value={percent(row.margin_percent)} /> : <Metric label="Expenses" value={money(row.expenses)} />}
+      </View>
+      {!hideExpenses ? <Text variant="bodySmall" style={styles.muted}>Margin {percent(row.margin_percent)}</Text> : null}
+    </View>
   );
 }
 
@@ -228,6 +347,18 @@ function number(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
 const styles = StyleSheet.create({
   screen: {
     gap: 16,
@@ -237,6 +368,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     justifyContent: 'space-between',
+  },
+  headerActions: {
+    gap: 8,
   },
   muted: {
     color: '#6b7280',
@@ -307,5 +441,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     padding: 28,
+  },
+  section: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 14,
+  },
+  sectionBody: {
+    gap: 8,
+  },
+  infoRow: {
+    alignItems: 'center',
+    borderBottomColor: '#f3f4f6',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+  },
+  infoLabel: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  breakdownRow: {
+    borderBottomColor: '#f3f4f6',
+    borderBottomWidth: 1,
+    gap: 8,
+    paddingBottom: 10,
   },
 });

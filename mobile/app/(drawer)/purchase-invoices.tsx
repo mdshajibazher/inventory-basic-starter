@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
+import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
-import { api, type PurchaseInvoicePayload } from '@/src/lib/api';
+import { api, type PurchaseInvoicePayload, type PurchaseReturnPayload } from '@/src/lib/api';
 import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/src/types';
 
 type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
@@ -88,9 +89,13 @@ const initialForm = {
 };
 
 type InvoiceScreenMode = 'index' | 'create' | 'details' | 'edit';
+type PurchaseScreenKind = 'purchase' | 'return';
 
-export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: InvoiceScreenMode; invoiceId?: number }) {
+export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purchase' }: { mode?: InvoiceScreenMode; invoiceId?: number; kind?: PurchaseScreenKind }) {
   const { hasPermission } = useAuth();
+  const isReturn = kind === 'return';
+  const routeBase = isReturn ? 'purchase-return-invoices' : 'purchase-invoices';
+  const title = isReturn ? 'Purchase Return' : 'Purchase Invoice';
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -109,7 +114,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
   const selectedSupplier = suppliers.find((supplier) => supplier.id === form.supplierId);
   const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === form.warehouseId);
   const selectedPurchaseStatus = purchaseStatuses.find((status) => status.id === form.purchaseStatusId);
-  const showReceived = form.purchaseStatusId === PURCHASE_STATUS_PARTIAL;
+  const showReceived = !isReturn && form.purchaseStatusId === PURCHASE_STATUS_PARTIAL;
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchSuppliers = useCallback(async (query: string) => {
@@ -178,7 +183,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
   async function loadInvoices() {
     setListLoading(true);
     try {
-      const response = await api.purchaseInvoices({ perPage: 20 });
+      const response = isReturn ? await api.purchaseReturnInvoices({ perPage: 20 }) : await api.purchaseInvoices({ perPage: 20 });
       setInvoices(response.data as Record<string, any>[]);
     } catch (error) {
       Alert.alert('Invoice list failed', error instanceof Error ? error.message : 'Try again.');
@@ -267,7 +272,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
   }
 
   async function saveInvoice() {
-    const payload = buildPayload(form, lines, products, totals);
+    const payload = buildPayload(form, lines, products, totals, kind);
     if (!payload) return;
 
     setSaving(true);
@@ -278,9 +283,13 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
         return;
       }
 
-      const response = editingId
-        ? await api.updatePurchaseInvoice(editingId, payload)
-        : await api.createPurchaseInvoice(payload);
+      const response = isReturn
+        ? editingId
+          ? await api.updatePurchaseReturnInvoice(editingId, payload as PurchaseReturnPayload)
+          : await api.createPurchaseReturnInvoice(payload as PurchaseReturnPayload)
+        : editingId
+          ? await api.updatePurchaseInvoice(editingId, payload as PurchaseInvoicePayload)
+          : await api.createPurchaseInvoice(payload as PurchaseInvoicePayload);
       Alert.alert(editingId ? 'Invoice updated' : 'Invoice created', response.message);
       setEditingId(null);
       resetForm();
@@ -294,7 +303,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
 
   async function openInvoice(id: number, mode: 'view' | 'edit') {
     try {
-      const response = await api.purchaseInvoice(id);
+      const response = isReturn ? await api.purchaseReturnInvoice(id) : await api.purchaseInvoice(id);
       const invoice = response.data as Record<string, any>;
       setSelectedInvoice(invoice);
       if (mode === 'edit') fillFormFromInvoice(invoice);
@@ -303,18 +312,31 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     }
   }
 
+  async function approveInvoice(id: number) {
+    setSaving(true);
+    try {
+      const response = isReturn ? await api.approvePurchaseReturnInvoice(id) : await api.approvePurchaseInvoice(id);
+      setSelectedInvoice(response.data as Record<string, any>);
+      void loadInvoices();
+    } catch (error) {
+      Alert.alert('Approval failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
-      purchaseDate: String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
+      purchaseDate: String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
       supplierId: Number(invoice.supplier_id),
       warehouseId: Number(invoice.warehouse_id),
       purchaseStatusId: Number(invoice.purchase_status_id ?? invoice.status),
       orderTaxRate: String(invoice.order_tax_rate ?? '0'),
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
-      paymentMode: purchasePaymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
+      paymentMode: isReturn ? 'unpaid' : purchasePaymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
       paidAmount: String(invoice.paid_amount ?? '0'),
       paymentNote: invoice.payments?.[0]?.payment_note ?? '',
       note: invoice.note ?? '',
@@ -346,17 +368,17 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
     <Screen contentStyle={styles.screen}>
       <View style={styles.header}>
         <View style={styles.headerText}>
-          <Text variant="headlineSmall">{editingId ? 'Edit Purchase Invoice' : 'Purchase Invoice'}</Text>
-          <Text variant="bodyMedium" style={styles.muted}>{editingId ? 'Update invoice fields and line items' : 'Receive purchased stock with optional cash payment'}</Text>
+          <Text variant="headlineSmall">{editingId ? `Edit ${title}` : title}</Text>
+          <Text variant="bodyMedium" style={styles.muted}>{editingId ? 'Update fields and line items' : isReturn ? 'Return purchased stock to a supplier' : 'Receive purchased stock with optional cash payment'}</Text>
         </View>
         <Button compact mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>Refresh</Button>
       </View>
 
       {mode === 'index' ? <View style={styles.panel}>
         <View style={styles.invoiceListHeader}>
-          <Text variant="titleMedium">Purchase invoices</Text>
+          <Text variant="titleMedium">{isReturn ? 'Purchase returns' : 'Purchase invoices'}</Text>
           <View style={styles.rowActions}>
-            <Button compact mode="contained" onPress={() => router.push('/(drawer)/purchase-invoices-create')}>Create</Button>
+            <Button compact mode="contained" onPress={() => router.push(`/(drawer)/${routeBase}-create` as any)}>Create</Button>
             <Button compact mode="outlined" loading={listLoading} disabled={listLoading} onPress={() => void loadInvoices()}>Refresh</Button>
           </View>
         </View>
@@ -364,11 +386,13 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
           <View key={invoice.id} style={styles.listItem}>
             <View style={styles.listItemText}>
               <Text variant="titleSmall">{invoice.reference_no}</Text>
-              <Text variant="bodySmall" style={styles.muted}>Purchase date: {String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
+              <Text variant="bodySmall" style={styles.muted}>{isReturn ? 'Return' : 'Purchase'} date: {String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.supplier?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
+              <Text variant="bodySmall" style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
             </View>
-            <Button compact onPress={() => router.push({ pathname: '/(drawer)/purchase-invoices-detail', params: { id: String(invoice.id) } })}>Details</Button>
-            <Button compact onPress={() => router.push({ pathname: '/(drawer)/purchase-invoices-edit', params: { id: String(invoice.id) } })}>Edit</Button>
+            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
+            <Button compact onPress={() => router.push({ pathname: `/(drawer)/${routeBase}-detail` as any, params: { id: String(invoice.id) } })}>Details</Button>
+            <Button compact onPress={() => router.push({ pathname: `/(drawer)/${routeBase}-edit` as any, params: { id: String(invoice.id) } })}>Edit</Button>
           </View>
         ))}
         {!invoices.length ? <Text style={styles.muted}>No invoices found.</Text> : null}
@@ -376,22 +400,25 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId }: { mode?: I
       {mode === 'details' ? (
         <View style={styles.panel}>
           <View style={styles.sectionHeader}>
-            <Text variant="titleMedium">Purchase invoice details</Text>
-            <Button mode="outlined" onPress={() => router.push('/(drawer)/purchase-invoices')}>Back</Button>
+            <Text variant="titleMedium">{title} details</Text>
+            <View style={styles.rowActions}>
+              {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
+              <Button mode="outlined" onPress={() => router.push(`/(drawer)/${routeBase}` as any)}>Back</Button>
+            </View>
           </View>
-          {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} /> : <Text style={styles.muted}>Loading invoice...</Text>}
+          {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} kind={kind} /> : <Text style={styles.muted}>Loading invoice...</Text>}
         </View>
       ) : null}
 
       {mode !== 'index' && mode !== 'details' ? <>
       <View style={styles.topActions}>
-        <Button mode="outlined" disabled={saving} onPress={() => router.push('/(drawer)/purchase-invoices')}>Back</Button>
+        <Button mode="outlined" disabled={saving} onPress={() => router.push(`/(drawer)/${routeBase}` as any)}>Back</Button>
         <Button mode="outlined" disabled={saving} onPress={resetForm}>Reset</Button>
       </View>
       <View style={styles.panel}>
         <Text variant="titleMedium">Invoice</Text>
         <TextInput mode="outlined" label="Reference no" value={form.referenceNo} onChangeText={(value) => setValue('referenceNo', value)} />
-        <DatePickerField label="Purchase date" value={form.purchaseDate} onChange={(value) => setValue('purchaseDate', value)} />
+        <DatePickerField label={isReturn ? 'Return date' : 'Purchase date'} value={form.purchaseDate} onChange={(value) => setValue('purchaseDate', value)} />
         <SearchableSelectField
           label="Supplier"
           valueLabel={selectedSupplier?.name ?? 'Select supplier'}
@@ -544,18 +571,24 @@ export default function PurchaseInvoicesIndexScreen() {
   return <PurchaseInvoicesScreen mode="index" />;
 }
 
-function PurchaseInvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
+function PurchaseInvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: PurchaseScreenKind }) {
+  const isReturn = kind === 'return';
+
   return (
-    <View style={styles.detailBox}>
-      <Text variant="titleSmall">{invoice.reference_no}</Text>
-      <Text>Purchase date: {String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
-      <Text style={styles.muted}>{invoice.supplier?.name ?? '-'}</Text>
-      <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
-      {(invoice.products ?? []).map((line: Record<string, any>) => (
-        <Text key={line.id} style={styles.muted}>
-          {line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))} | Received {money(numberValue(line.received))}
-        </Text>
-      ))}
+    <View style={styles.detailStack}>
+      <View style={styles.detailBox}>
+        <Text variant="titleSmall">{invoice.reference_no}</Text>
+        <Text>{isReturn ? 'Return' : 'Purchase'} date: {String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
+        <Text style={styles.muted}>{invoice.supplier?.name ?? '-'}</Text>
+        <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
+        <Text style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
+        {(invoice.products ?? []).map((line: Record<string, any>) => (
+          <Text key={line.id} style={styles.muted}>
+            {line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))}{isReturn ? '' : ` | Received ${money(numberValue(line.received))}`}
+          </Text>
+        ))}
+      </View>
+      <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
     </View>
   );
 }
@@ -645,7 +678,7 @@ function SearchableSelectField<T>({ label, valueLabel, disabled, style, placehol
   );
 }
 
-function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: Product[], totals: ReturnType<typeof calculateTotals>): PurchaseInvoicePayload | null {
+function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: Product[], totals: ReturnType<typeof calculateTotals>, kind: PurchaseScreenKind): PurchaseInvoicePayload | PurchaseReturnPayload | null {
   if (!form.referenceNo.trim()) {
     Alert.alert('Missing reference', 'Reference no is required.');
     return null;
@@ -668,20 +701,15 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
     Alert.alert('Invalid received quantity', 'Received quantity must be between zero and ordered quantity.');
     return null;
   }
-  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || !item.line.expiredDate.trim()))) {
-    Alert.alert('Missing batch details', 'Batch no and expiry date are required for batch products.');
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate.trim())))) {
+    Alert.alert('Missing batch details', kind === 'return' ? 'Batch no is required for batch products.' : 'Batch no and expiry date are required for batch products.');
     return null;
   }
 
-  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
-  return {
+  const common = {
     reference_no: form.referenceNo.trim(),
-    purchase_date: form.purchaseDate,
     supplier_id: form.supplierId,
     warehouse_id: form.warehouseId,
-    status: form.purchaseStatusId,
-    purchase_status_id: form.purchaseStatusId,
-    payment_status: paymentStatus(form.paymentMode),
     lines: invoiceLines.map(({ line, product, values }) => ({
       product_id: product?.id as number,
       product_code: product?.code ?? null,
@@ -697,13 +725,30 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
       subtotal: values.subtotal,
     })),
     order_tax_rate: numberValue(form.orderTaxRate),
+    note: nullableText(form.note),
+  };
+
+  if (kind === 'return') {
+    return {
+      ...common,
+      return_date: form.purchaseDate,
+      return_note: nullableText(form.note),
+    };
+  }
+
+  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
+  return {
+    ...common,
+    purchase_date: form.purchaseDate,
+    status: form.purchaseStatusId,
+    purchase_status_id: form.purchaseStatusId,
+    payment_status: paymentStatus(form.paymentMode),
     order_discount: numberValue(form.orderDiscount),
     shipping_cost: numberValue(form.shippingCost),
     paid_by_id: form.paymentMode === 'unpaid' ? null : 1,
     paying_amount: paidAmount,
     paid_amount: paidAmount,
     payment_note: nullableText(form.paymentNote),
-    note: nullableText(form.note),
   };
 }
 
@@ -891,7 +936,7 @@ function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
   return batch?.batch_no ?? null;
 }
 
-async function validateBatchLines(lines: PurchaseInvoicePayload['lines'], products: Product[], warehouseId: number) {
+async function validateBatchLines(lines: PurchaseInvoicePayload['lines'] | PurchaseReturnPayload['lines'], products: Product[], warehouseId: number) {
   for (const line of lines) {
     if (!line.batch_no) continue;
 
@@ -1043,6 +1088,8 @@ const styles = StyleSheet.create({
   header: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
   headerText: { flex: 1, minWidth: 0 },
   muted: { color: '#666666' },
+  pending: { color: '#92400e', fontWeight: '700' },
+  approved: { color: '#047857', fontWeight: '700' },
   panel: { width: '100%', maxWidth: '100%', alignSelf: 'stretch', gap: 10, padding: 14, borderRadius: 8, borderWidth: 1, borderColor: '#e5e5e5', backgroundColor: '#ffffff' },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   invoiceListHeader: { alignItems: 'stretch', gap: 10 },
@@ -1062,6 +1109,7 @@ const styles = StyleSheet.create({
   listItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#eeeeee' },
   listItemText: { flex: 1, minWidth: 0 },
   detailBox: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eeeeee', backgroundColor: '#fafafa' },
+  detailStack: { gap: 12 },
   formRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10, width: '100%', maxWidth: '100%' },
   formField: { minWidth: 0, flexBasis: '46%', flexGrow: 1, flexShrink: 1 },
   datePickerModal: { alignSelf: 'center', backgroundColor: '#ffffff', borderRadius: 8, padding: 14, width: '92%', maxWidth: 360 },

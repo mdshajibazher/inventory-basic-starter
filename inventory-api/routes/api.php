@@ -9,15 +9,21 @@ use App\Http\Controllers\Api\CurrencyController;
 use App\Http\Controllers\Api\CustomerController;
 use App\Http\Controllers\Api\CustomerLedgerController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DatewiseProductReportController;
+use App\Http\Controllers\Api\EmailLogController;
+use App\Http\Controllers\Api\ExpenseCategoryController;
+use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\GeneralSettingController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\ProfitReportController;
 use App\Http\Controllers\Api\PurchaseInvoiceController;
+use App\Http\Controllers\Api\PurchaseReturnController;
 use App\Http\Controllers\Api\PurchaseStatusController;
 use App\Http\Controllers\Api\ReturnInvoiceController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesInvoiceController;
+use App\Http\Controllers\Api\SmsLogController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TaxController;
@@ -29,11 +35,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    Route::get('/users/options', [UserController::class, 'options'])->middleware('permission:users-index');
+    Route::get('/users/options', [UserController::class, 'options'])->middleware('permission:users-index|general-settings-index|general-settings-edit');
     Route::put('/users/{user}/roles', [UserController::class, 'updateRoles'])->middleware('permission:users-index');
     Route::put('/users/{user}/permissions', [UserController::class, 'updatePermissions'])->middleware('permission:users-index');
     Route::apiResource('users', UserController::class)->middleware('permission:users-index');
@@ -106,11 +112,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['put', 'patch'], '/accounts/{account}', [AccountController::class, 'update'])->middleware('permission:accounts-edit');
     Route::delete('/accounts/{account}', [AccountController::class, 'destroy'])->middleware('permission:accounts-delete');
 
+    Route::get('/expense-categories', [ExpenseCategoryController::class, 'index'])->middleware('permission:expenses-index|expenses-add|expenses-edit');
+    Route::post('/expense-categories', [ExpenseCategoryController::class, 'store'])->middleware('permission:expenses-add');
+    Route::get('/expense-categories/{expenseCategory}', [ExpenseCategoryController::class, 'show'])->middleware('permission:expenses-index');
+    Route::match(['put', 'patch'], '/expense-categories/{expenseCategory}', [ExpenseCategoryController::class, 'update'])->middleware('permission:expenses-edit');
+    Route::delete('/expense-categories/{expenseCategory}', [ExpenseCategoryController::class, 'destroy'])->middleware('permission:expenses-delete');
+    Route::get('/expenses', [ExpenseController::class, 'index'])->middleware('permission:expenses-index');
+    Route::post('/expenses', [ExpenseController::class, 'store'])->middleware('permission:expenses-add');
+    Route::get('/expenses/{expense}', [ExpenseController::class, 'show'])->middleware('permission:expenses-index');
+    Route::match(['put', 'patch'], '/expenses/{expense}', [ExpenseController::class, 'update'])->middleware('permission:expenses-edit');
+    Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->middleware('permission:expenses-delete');
+
     Route::get('/general-settings', [GeneralSettingController::class, 'index'])->middleware('permission:general-settings-index');
     Route::post('/general-settings', [GeneralSettingController::class, 'store'])->middleware('permission:general-settings-add');
     Route::get('/general-settings/{generalSetting}', [GeneralSettingController::class, 'show'])->middleware('permission:general-settings-index');
     Route::match(['put', 'patch'], '/general-settings/{generalSetting}', [GeneralSettingController::class, 'update'])->middleware('permission:general-settings-edit');
-    Route::delete('/general-settings/{generalSetting}', [GeneralSettingController::class, 'destroy'])->middleware('permission:general-settings-delete');
+    Route::get('/email-logs', [EmailLogController::class, 'index'])->middleware('permission:general-settings-index');
+    Route::get('/sms-logs', [SmsLogController::class, 'index'])->middleware('permission:general-settings-index');
 
     Route::get('/products/options', [ProductController::class, 'options'])->middleware('permission:products-index|products-add|products-edit');
     Route::get('/check-batch-availability/{product_id}/{batch_no}/{warehouse_id}', [ProductController::class, 'checkBatchAvailability'])
@@ -133,20 +151,32 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/sales-invoices', [SalesInvoiceController::class, 'store'])->middleware('permission:sales-add');
     Route::get('/sales-invoices/{sale}', [SalesInvoiceController::class, 'show'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::match(['put', 'patch'], '/sales-invoices/{sale}', [SalesInvoiceController::class, 'update'])->middleware('permission:sales-edit');
+    Route::post('/sales-invoices/{sale}/approve', [SalesInvoiceController::class, 'approve'])->middleware('permission:sales-index|sales-edit');
     Route::get('/return-invoices', [ReturnInvoiceController::class, 'index'])->middleware('permission:returns-index|returns-add|returns-edit');
     Route::post('/return-invoices', [ReturnInvoiceController::class, 'store'])->middleware('permission:returns-add');
     Route::get('/return-invoices/{returnInvoice}', [ReturnInvoiceController::class, 'show'])->middleware('permission:returns-index|returns-add|returns-edit|returns-show');
     Route::match(['put', 'patch'], '/return-invoices/{returnInvoice}', [ReturnInvoiceController::class, 'update'])->middleware('permission:returns-edit');
+    Route::post('/return-invoices/{returnInvoice}/approve', [ReturnInvoiceController::class, 'approve'])->middleware('permission:returns-index|returns-edit|returns-show');
     Route::get('/purchase-statuses', [PurchaseStatusController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::get('/purchase-invoices', [PurchaseInvoiceController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::post('/purchase-invoices', [PurchaseInvoiceController::class, 'store'])->middleware('permission:purchases-add');
     Route::get('/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::match(['put', 'patch'], '/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'update'])->middleware('permission:purchases-edit');
+    Route::post('/purchase-invoices/{purchase}/approve', [PurchaseInvoiceController::class, 'approve'])->middleware('permission:purchases-index|purchases-edit');
+    Route::get('/purchase-return-invoices', [PurchaseReturnController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
+    Route::post('/purchase-return-invoices', [PurchaseReturnController::class, 'store'])->middleware('permission:purchases-add');
+    Route::get('/purchase-return-invoices/{returnPurchase}', [PurchaseReturnController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
+    Route::match(['put', 'patch'], '/purchase-return-invoices/{returnPurchase}', [PurchaseReturnController::class, 'update'])->middleware('permission:purchases-edit');
+    Route::post('/purchase-return-invoices/{returnPurchase}/approve', [PurchaseReturnController::class, 'approve'])->middleware('permission:purchases-index|purchases-edit');
 
     Route::get('/payments', [PaymentController::class, 'index'])->middleware('permission:sales-index|purchases-index|accounts-index');
     Route::post('/payments', [PaymentController::class, 'store'])->middleware('permission:sales-add|purchases-add|accounts-index');
     Route::get('/payments/{payment}', [PaymentController::class, 'show'])->middleware('permission:sales-index|purchases-index|accounts-index');
+    Route::post('/payments/{payment}/approve', [PaymentController::class, 'approve'])->middleware('permission:sales-index|purchases-index|accounts-index');
 
     Route::get('/reports/profit', ProfitReportController::class)->middleware('permission:reports-profit');
+    Route::get('/reports/profit/pdf', [ProfitReportController::class, 'pdf'])->middleware('permission:reports-profit');
+    Route::get('/reports/datewise-products', DatewiseProductReportController::class)->middleware('permission:reports-profit');
+    Route::get('/reports/datewise-products/pdf', [DatewiseProductReportController::class, 'pdf'])->middleware('permission:reports-profit');
     Route::get('/dashboard', [DashboardController::class, 'index']);
 });

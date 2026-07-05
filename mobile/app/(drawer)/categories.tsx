@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
@@ -15,6 +15,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { ImageUploadField, type PickedImage } from '@/src/components/ImageUploadField';
+import { ResourceImage } from '@/src/components/ResourceImage';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -247,11 +248,7 @@ export default function CategoriesScreen() {
             <DataTable.Row key={category.id}>
               <DataTable.Cell style={styles.nameColumn}>{category.name}</DataTable.Cell>
               <DataTable.Cell style={styles.imageColumn}>
-                {category.image ? (
-                  <Image source={{ uri: category.image }} style={styles.tableImage} />
-                ) : (
-                  'No image'
-                )}
+                <ResourceImage uri={category.image} kind="category" />
               </DataTable.Cell>
               <DataTable.Cell style={styles.parentColumn}>
                 {category.parent_category_name ?? category.parent?.name ?? 'Root'}
@@ -440,12 +437,6 @@ const styles = StyleSheet.create({
   },
   imageColumn: {
     flex: 0.8,
-  },
-  tableImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#f2f2f2',
   },
   parentColumn: {
     flex: 1.1,

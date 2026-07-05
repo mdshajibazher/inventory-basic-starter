@@ -84,11 +84,13 @@ class StandardProductDemoSeeder extends Seeder
 
                 if ($isVariant) {
                     $this->seedVariantProduct($product, $warehouseIds->all(), $variantIds, $price);
+
                     continue;
                 }
 
                 if ($isBatch) {
                     $this->seedBatchProduct($product, $warehouseIds->all(), $index);
+
                     continue;
                 }
 
@@ -118,20 +120,16 @@ class StandardProductDemoSeeder extends Seeder
         $totalQty = 0;
 
         foreach ($warehouseIds as $position => $warehouseId) {
-            $qty = 30 + ($index * 2) + ($position * 7);
-            $totalQty += $qty;
 
             ProductWarehouse::query()->create([
                 'product_id' => $product->id,
                 'warehouse_id' => $warehouseId,
                 'variant_id' => null,
                 'product_batch_id' => null,
-                'qty' => $qty,
+                'qty' => 0,
                 'price' => $isDiffPrice ? $basePrice + (($position + 1) * 6) : null,
             ]);
         }
-
-        $product->update(['qty' => $totalQty]);
     }
 
     private function seedBatchProduct(Product $product, array $warehouseIds, int $index): void
@@ -144,30 +142,22 @@ class StandardProductDemoSeeder extends Seeder
                 'product_id' => $product->id,
                 'batch_no' => sprintf('BATCH-%02d-%02d', $index, $batchPosition),
                 'expired_date' => now()->addMonths(6 + $index + $batchPosition)->toDateString(),
-                'qty' => $batchQty,
+                'qty' => 0,
             ]);
 
-            $remaining = $batchQty;
             foreach ($warehouseIds as $position => $warehouseId) {
-                $qty = $position === array_key_last($warehouseIds)
-                    ? $remaining
-                    : (float) floor($batchQty / count($warehouseIds));
-                $remaining -= $qty;
-
                 ProductWarehouse::query()->create([
                     'product_id' => $product->id,
                     'warehouse_id' => $warehouseId,
                     'variant_id' => null,
                     'product_batch_id' => $batch->id,
-                    'qty' => $qty,
+                    'qty' => 0,
                     'price' => null,
                 ]);
             }
 
             $totalQty += $batchQty;
         }
-
-        $product->update(['qty' => $totalQty]);
     }
 
     private function seedVariantProduct(Product $product, array $warehouseIds, array $variantIds, float $basePrice): void
@@ -180,36 +170,26 @@ class StandardProductDemoSeeder extends Seeder
         ];
 
         foreach (array_keys($variantIds) as $position => $variantName) {
-            $variantQty = 45 + ($position * 15);
-            $totalQty += $variantQty;
-
             ProductVariant::query()->create([
                 'product_id' => $product->id,
                 'variant_id' => $variantIds[$variantName],
                 'position' => $position + 1,
                 'item_code' => sprintf('%s-%s', $product->code, strtoupper(substr($variantName, 0, 1))),
                 'additional_price' => $additionalPrices[$variantName],
-                'qty' => $variantQty,
+                'qty' => 0,
             ]);
 
-            $remaining = $variantQty;
             foreach ($warehouseIds as $warehousePosition => $warehouseId) {
-                $qty = $warehousePosition === array_key_last($warehouseIds)
-                    ? $remaining
-                    : (float) floor($variantQty / count($warehouseIds));
-                $remaining -= $qty;
 
                 ProductWarehouse::query()->create([
                     'product_id' => $product->id,
                     'warehouse_id' => $warehouseId,
                     'variant_id' => $variantIds[$variantName],
                     'product_batch_id' => null,
-                    'qty' => $qty,
+                    'qty' => 0,
                     'price' => $basePrice + $additionalPrices[$variantName],
                 ]);
             }
         }
-
-        $product->update(['qty' => $totalQty]);
     }
 }

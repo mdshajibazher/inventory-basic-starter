@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Account extends Model
 {
+    use LogsBusinessActivity;
+
     protected $fillable = [
         'account_no',
         'name',

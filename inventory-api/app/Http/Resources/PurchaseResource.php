@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\ApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Storage;
@@ -16,6 +17,7 @@ class PurchaseResource extends JsonResource
             'purchase_date' => $this->purchase_date?->toDateString(),
             'user_id' => $this->user_id,
             'warehouse_id' => $this->warehouse_id,
+            'biller_id' => $this->biller_id,
             'supplier_id' => $this->supplier_id,
             'item' => $this->item,
             'total_qty' => $this->total_qty,
@@ -36,11 +38,18 @@ class PurchaseResource extends JsonResource
             'document' => $this->document,
             'document_url' => $this->document ? Storage::disk('public')->url($this->document) : null,
             'note' => $this->note,
+            'approval_status' => $this->approval_status ?? ApprovalService::APPROVED,
+            'approved_by' => $this->approved_by,
+            'approved_at' => $this->approved_at,
+            'approver' => $this->whenLoaded('approver'),
+            'can_approve' => $request->user() ? app(ApprovalService::class)->canApprove($request->user(), 'purchases') && ($this->approval_status ?? ApprovalService::APPROVED) === ApprovalService::PENDING : false,
             'supplier' => $this->whenLoaded('supplier'),
             'warehouse' => $this->whenLoaded('warehouse'),
+            'biller' => $this->whenLoaded('biller'),
             'user' => $this->whenLoaded('user'),
             'products' => ProductPurchaseResource::collection($this->whenLoaded('products')),
             'payments' => $this->whenLoaded('payments'),
+            'activity_logs' => ActivityLogResource::collection($this->whenLoaded('activities')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

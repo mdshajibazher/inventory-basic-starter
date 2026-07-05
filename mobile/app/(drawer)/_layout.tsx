@@ -94,6 +94,28 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="email-logs"
+        options={{
+          title: 'Email Logs',
+          drawerLabel: 'Email Logs',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="email-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="sms-logs"
+        options={{
+          title: 'SMS Logs',
+          drawerLabel: 'SMS Logs',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="message-text-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="brands"
         options={{
           title: 'Brands',
@@ -214,7 +236,18 @@ export default function DrawerLayout() {
           drawerItemStyle: hasPermission('reports-profit') ? undefined : styles.hiddenDrawerItem,
         }}
       />
-      {['products-create', 'products-edit'].map((name) => (
+      <Drawer.Screen
+        name="datewise-product-report"
+        options={{
+          title: 'Datewise Product Report',
+          drawerLabel: 'Datewise Product Report',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="file-chart-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('reports-profit') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      {['products-create', 'products-detail', 'products-edit'].map((name) => (
         <Drawer.Screen
           key={name}
           name={name}
@@ -248,8 +281,8 @@ export default function DrawerLayout() {
       <Drawer.Screen
         name="return-invoices"
         options={{
-          title: 'Return Invoice',
-          drawerLabel: 'Return Invoice',
+          title: 'Sales Return',
+          drawerLabel: 'Sales Return',
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="receipt-text-remove-outline" size={size} color={color} />
           ),
@@ -261,7 +294,7 @@ export default function DrawerLayout() {
           key={name}
           name={name}
           options={{
-            title: 'Return Invoice',
+            title: 'Sales Return',
             drawerItemStyle: styles.hiddenDrawerItem,
           }}
         />
@@ -288,6 +321,27 @@ export default function DrawerLayout() {
         />
       ))}
       <Drawer.Screen
+        name="purchase-return-invoices"
+        options={{
+          title: 'Purchase Return',
+          drawerLabel: 'Purchase Return',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="receipt-text-remove-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('purchases-add') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      {['purchase-return-invoices-create', 'purchase-return-invoices-detail', 'purchase-return-invoices-edit'].map((name) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          options={{
+            title: 'Purchase Return',
+            drawerItemStyle: styles.hiddenDrawerItem,
+          }}
+        />
+      ))}
+      <Drawer.Screen
         name="payments"
         options={{
           title: 'Payments',
@@ -296,6 +350,24 @@ export default function DrawerLayout() {
             <MaterialCommunityIcons name="wallet-outline" size={size} color={color} />
           ),
           drawerItemStyle: hasPermission(['accounts-index', 'sales-index', 'purchases-index']) ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="payments-detail"
+        options={{
+          title: 'Payment Details',
+          drawerItemStyle: styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="expenses"
+        options={{
+          title: 'Expenses',
+          drawerLabel: 'Expenses',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="receipt-text-outline" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission('expenses-index') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -365,9 +437,10 @@ function AppDrawerContent({
 }) {
   const activeRoute = state.routeNames[state.index];
   const peopleRouteNames = ['customers', 'suppliers', 'users'];
-  const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices', 'payments'];
+  const salesRouteNames = ['sales-invoices', 'return-invoices', 'purchase-invoices', 'purchase-return-invoices', 'payments', 'expenses'];
   const reportRouteNames = ['profit-report'];
-  const settingsRouteNames = ['roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'accounts', 'warehouses', 'categories'];
+  const settingsReportRouteNames = ['datewise-product-report'];
+  const settingsRouteNames = ['general-settings', 'email-logs', 'sms-logs', 'roles', 'brands', 'branches', 'units', 'taxes', 'currencies', 'accounts', 'warehouses', 'categories', ...settingsReportRouteNames];
   const [peopleExpanded, setPeopleExpanded] = useState(
     peopleRouteNames.includes(activeRoute)
   );
@@ -392,6 +465,9 @@ function AppDrawerContent({
   }
 
   const settingsItems = [
+    item('general-settings', 'General Settings', 'cog-outline', hasPermission('general-settings-index')),
+    item('email-logs', 'Email Logs', 'email-outline', hasPermission('general-settings-index')),
+    item('sms-logs', 'SMS Logs', 'message-text-outline', hasPermission('general-settings-index')),
     item('roles', 'Roles', 'account-key-outline', hasPermission('users-index')),
     item('brands', 'Brands', 'tag-multiple-outline', hasPermission('brands-index')),
     item('branches', 'Branches', 'source-branch', hasPermission('branches-index')),
@@ -403,6 +479,10 @@ function AppDrawerContent({
     item('categories', 'Categories', 'shape-outline', hasPermission('categories-index')),
   ].filter(Boolean);
 
+  const settingsReportItems = [
+    item('datewise-product-report', 'Datewise Product Report', 'file-chart-outline', hasPermission('reports-profit')),
+  ].filter(Boolean);
+
   const peopleItems = [
     item('customers', 'Customers', 'account-box-outline', hasPermission('customers-index')),
     item('suppliers', 'Suppliers', 'truck-outline', hasPermission('suppliers-index')),
@@ -411,9 +491,11 @@ function AppDrawerContent({
 
   const salesItems = [
     item('sales-invoices', 'Sales Invoice', 'receipt-text-plus-outline', hasPermission('sales-add')),
-    item('return-invoices', 'Return Invoice', 'receipt-text-remove-outline', hasPermission('returns-add') || hasPermission('returns-index')),
+    item('return-invoices', 'Sales Return', 'receipt-text-remove-outline', hasPermission('returns-add') || hasPermission('returns-index')),
     item('purchase-invoices', 'Purchase Invoice', 'receipt-text-plus-outline', hasPermission('purchases-add')),
+    item('purchase-return-invoices', 'Purchase Return', 'receipt-text-remove-outline', hasPermission('purchases-add') || hasPermission('purchases-index')),
     item('payments', 'Payments', 'wallet-outline', hasPermission(['accounts-index', 'sales-index', 'purchases-index'])),
+    item('expenses', 'Expenses', 'receipt-text-outline', hasPermission('expenses-index')),
   ].filter(Boolean);
 
   const reportItems = [
@@ -499,7 +581,15 @@ function AppDrawerContent({
             onPress={() => setSettingsExpanded((current) => !current)}
           />
           {settingsExpanded ? (
-            <View style={styles.drawerSubItems}>{settingsItems}</View>
+            <View style={styles.drawerSubItems}>
+              {settingsItems}
+              {settingsReportItems.length ? (
+                <View style={styles.drawerNestedSection}>
+                  <Text style={styles.drawerNestedTitle}>Report</Text>
+                  {settingsReportItems}
+                </View>
+              ) : null}
+            </View>
           ) : null}
         </View>
       ) : null}
@@ -538,6 +628,17 @@ const styles = StyleSheet.create({
   },
   drawerSubItems: {
     paddingLeft: 12,
+  },
+  drawerNestedSection: {
+    marginTop: 8,
+  },
+  drawerNestedTitle: {
+    marginLeft: 16,
+    marginBottom: 4,
+    color: '#9ca3af',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   drawerGroupLabel: {
     flexDirection: 'row',

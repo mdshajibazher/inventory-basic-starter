@@ -2,10 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Biller extends Model
 {
+    use LogsBusinessActivity;
+
     protected $fillable = [
         'name',
         'image',

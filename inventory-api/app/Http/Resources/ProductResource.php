@@ -66,6 +66,7 @@ class ProductResource extends JsonResource
             'purchase_unit' => $this->whenLoaded('purchaseUnit'),
             'sale_unit' => $this->whenLoaded('saleUnit'),
             'tax' => $this->whenLoaded('tax'),
+            'activity_logs' => ActivityLogResource::collection($this->whenLoaded('activities')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

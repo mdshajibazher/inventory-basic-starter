@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, View } from 'react-native';
+import { router } from 'expo-router';
 import { ActivityIndicator, Button, Card, Modal, Portal, Searchbar, SegmentedButtons, Text, TextInput } from 'react-native-paper';
 import { api, type PaymentPayload } from '@/src/lib/api';
 import { useAuth } from '@/src/context/AuthContext';
@@ -132,15 +133,15 @@ export default function PaymentsScreen() {
 
   const searchInvoices = useCallback(async (query: string) => {
     if (form.paymentType === 'sale_payment') {
-      const response = await api.saleInvoiceOptions({ search: query, customerId: form.customer?.id, outstandingOnly: true });
+      const response = await api.saleInvoiceOptions({ search: query, customerId: form.customer?.id, outstandingOnly: true, approvedOnly: true });
       return response.data;
     }
     if (form.paymentType === 'purchase_payment') {
-      const response = await api.purchaseInvoiceOptions({ search: query, supplierId: form.supplier?.id, outstandingOnly: true });
+      const response = await api.purchaseInvoiceOptions({ search: query, supplierId: form.supplier?.id, outstandingOnly: true, approvedOnly: true });
       return response.data;
     }
     if (form.paymentType === 'sale_return_refund') {
-      const response = await api.returnInvoiceOptions({ search: query, customerId: form.customer?.id });
+      const response = await api.returnInvoiceOptions({ search: query, customerId: form.customer?.id, approvedOnly: true });
       return response.data;
     }
     return [];
@@ -201,6 +202,18 @@ export default function PaymentsScreen() {
       void loadPayments(1);
     } catch (error) {
       Alert.alert('Unable to record payment', errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function approvePayment(id: number) {
+    setSaving(true);
+    try {
+      await api.approvePayment(id);
+      void loadPayments(page);
+    } catch (error) {
+      Alert.alert('Approval failed', errorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -300,7 +313,7 @@ export default function PaymentsScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.list}
         ListEmptyComponent={!loading ? <Text style={styles.empty}>No payments found.</Text> : null}
-        renderItem={({ item }) => <PaymentCard payment={item} />}
+        renderItem={({ item }) => <PaymentCard payment={item} saving={saving} onApprove={approvePayment} />}
       />
       <View style={styles.pagination}>
         <Button mode="outlined" disabled={loading || page <= 1} onPress={() => void loadPayments(Math.max(1, page - 1))}>Previous</Button>
@@ -398,7 +411,7 @@ function FilterPanel(props: {
   );
 }
 
-function PaymentCard({ payment }: { payment: Payment }) {
+function PaymentCard({ payment, saving, onApprove }: { payment: Payment; saving: boolean; onApprove: (id: number) => void }) {
   const incoming = payment.direction === 'in';
   return (
     <Card style={styles.card}>
@@ -414,6 +427,17 @@ function PaymentCard({ payment }: { payment: Payment }) {
         <Text variant="bodySmall" style={styles.muted}>Account: {payment.account?.name ?? '-'}</Text>
         <Text variant="bodySmall" style={styles.muted}>Document: {documentLabel(payment)}</Text>
         <Text variant="bodySmall" style={styles.muted}>Method: {payment.paying_method}</Text>
+        <Text variant="bodySmall" style={payment.approval_status === 'pending' ? styles.pending : styles.approved}>
+          {payment.approval_status === 'pending' ? 'Pending approval' : 'Approved'}
+        </Text>
+        <Button mode="text" onPress={() => router.push({ pathname: '/(drawer)/payments-detail', params: { id: String(payment.id) } })}>
+          Details
+        </Button>
+        {payment.can_approve ? (
+          <Button mode="outlined" disabled={saving} onPress={() => onApprove(payment.id)}>
+            Approve
+          </Button>
+        ) : null}
       </Card.Content>
     </Card>
   );
@@ -568,6 +592,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 },
   muted: { color: '#666666' },
+  pending: { color: '#92400e', fontWeight: '700' },
+  approved: { color: '#047857', fontWeight: '700' },
   segment: { marginBottom: 12 },
   filterCard: { marginBottom: 12, backgroundColor: '#ffffff' },
   filterContent: { gap: 10 },

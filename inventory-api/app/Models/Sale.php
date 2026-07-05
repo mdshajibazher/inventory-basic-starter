@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Sale extends Model
 {
+    use LogsBusinessActivity;
+
     protected $fillable = [
         'reference_no',
         'sale_date',
@@ -34,6 +37,9 @@ class Sale extends Model
         'document',
         'sale_note',
         'staff_note',
+        'approval_status',
+        'approved_by',
+        'approved_at',
     ];
 
     protected function casts(): array
@@ -60,6 +66,8 @@ class Sale extends Model
             'sale_status' => 'integer',
             'payment_status' => 'integer',
             'paid_amount' => 'float',
+            'approved_by' => 'integer',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -91,5 +99,10 @@ class Sale extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

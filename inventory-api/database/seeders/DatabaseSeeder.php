@@ -53,6 +53,10 @@ class DatabaseSeeder extends Seeder
             'accounts-add',
             'accounts-edit',
             'accounts-delete',
+            'expenses-index',
+            'expenses-add',
+            'expenses-edit',
+            'expenses-delete',
             'general-settings-index',
             'general-settings-add',
             'general-settings-edit',
@@ -82,6 +86,7 @@ class DatabaseSeeder extends Seeder
             'purchases-delete',
             'product-stocks-index',
             'product-stocks-adjust',
+            'reports-profit',
         ];
 
         $userPermissions = [
@@ -176,8 +181,9 @@ class DatabaseSeeder extends Seeder
         $this->call(SupplierSeeder::class);
         $this->call(BrandSeeder::class);
         $this->call(AccountSeeder::class);
+        $this->call(ExpenseCategorySeeder::class);
         $this->call(CustomerSeeder::class);
-        $this->call(StandardProductDemoSeeder::class);
+        // $this->call(StandardProductDemoSeeder::class);
         // $this->call(ProductSeeder::class);
 
         // Product::query()->firstOrCreate(

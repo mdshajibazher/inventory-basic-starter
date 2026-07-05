@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
@@ -13,6 +13,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { ImageUploadField, type PickedImage } from '@/src/components/ImageUploadField';
+import { ResourceImage } from '@/src/components/ResourceImage';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -228,11 +229,7 @@ export default function BrandsScreen() {
             <DataTable.Row key={brand.id}>
               <DataTable.Cell style={styles.titleColumn}>{brand.title}</DataTable.Cell>
               <DataTable.Cell style={styles.imageColumn}>
-                {brand.image ? (
-                  <Image source={{ uri: brand.image }} style={styles.tableImage} />
-                ) : (
-                  'No image'
-                )}
+                <ResourceImage uri={brand.image} kind="brand" />
               </DataTable.Cell>
               <DataTable.Cell style={styles.statusColumn}>
                 {brand.is_active ? 'Active' : 'Inactive'}
@@ -383,12 +380,6 @@ const styles = StyleSheet.create({
   },
   imageColumn: {
     flex: 1.2,
-  },
-  tableImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#f2f2f2',
   },
   statusColumn: {
     flex: 0.8,

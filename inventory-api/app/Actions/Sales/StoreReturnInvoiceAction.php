@@ -10,10 +10,8 @@ use App\Models\ProductReturn;
 use App\Models\ProductVariant;
 use App\Models\ProductWarehouse;
 use App\Models\ReturnInvoice;
-use App\Models\StockMovement;
 use App\Models\Unit;
 use App\Models\User;
-use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -23,6 +21,7 @@ class StoreReturnInvoiceAction
     public function execute(array $data, User $user, ?UploadedFile $document = null, ?ReturnInvoice $returnInvoice = null): ReturnInvoice
     {
         return DB::transaction(function () use ($data, $user, $document, $returnInvoice) {
+            $billerId = $user->requireCurrentBillerId();
             $cashRegister = CashRegister::query()
                 ->where('user_id', $user->id)
                 ->where('warehouse_id', $data['warehouse_id'])
@@ -40,12 +39,6 @@ class StoreReturnInvoiceAction
             $documentPath = $document?->store('return/documents', 'public') ?? $returnInvoice?->document;
 
             if ($returnInvoice) {
-                $existingLineIds = $returnInvoice->products()->pluck('id')->all();
-                $this->reverseStock($returnInvoice);
-                StockMovement::query()
-                    ->where('source_type', 'product_return')
-                    ->whereIn('source_id', $existingLineIds)
-                    ->delete();
                 ProductReturn::query()->where('return_id', $returnInvoice->id)->delete();
             }
 
@@ -56,7 +49,7 @@ class StoreReturnInvoiceAction
                 'cash_register_id' => $cashRegister?->id,
                 'customer_id' => $data['customer_id'],
                 'warehouse_id' => $data['warehouse_id'],
-                'biller_id' => $data['biller_id'],
+                'biller_id' => $billerId,
                 'account_id' => $account->id,
                 'item' => $totals['item'],
                 'total_qty' => $totals['total_qty'],
@@ -69,6 +62,9 @@ class StoreReturnInvoiceAction
                 'document' => $documentPath,
                 'return_note' => $data['return_note'] ?? $data['sale_note'] ?? null,
                 'staff_note' => $data['staff_note'] ?? null,
+                'approval_status' => 'pending',
+                'approved_by' => null,
+                'approved_at' => null,
             ];
 
             if ($returnInvoice) {
@@ -83,7 +79,7 @@ class StoreReturnInvoiceAction
                 $qty = (float) $data['qty'][$index];
                 $baseQuantity = $this->baseQuantity($qty, $unit);
                 $cost = $this->costSnapshot($product, $qty, $baseQuantity);
-                [$variantId, $batchId] = $this->incrementStock($product, $data, $index, $baseQuantity);
+                [$variantId, $batchId] = $this->resolveItemReferences($product, $data, $index);
 
                 $productReturn = ProductReturn::create([
                     'return_id' => $returnInvoice->id,
@@ -102,23 +98,6 @@ class StoreReturnInvoiceAction
                     'total_cost' => $cost['total_cost'],
                 ]);
 
-                if ($product->type !== 'digital') {
-                    app(ProductStockService::class)->recordMovement([
-                        'product_id' => $product->id,
-                        'warehouse_id' => $data['warehouse_id'],
-                        'product_batch_id' => $batchId,
-                        'variant_id' => $variantId,
-                        'unit_id' => $unit?->id,
-                        'user_id' => $user->id,
-                        'source_type' => 'product_return',
-                        'source_id' => $productReturn->id,
-                        'type' => 'product_return',
-                        'quantity' => (float) $data['qty'][$index],
-                        'quantity_base' => $baseQuantity,
-                        'reference_no' => $returnInvoice->reference_no,
-                        'movement_date' => $returnInvoice->return_date?->toDateString(),
-                    ]);
-                }
             }
 
             return $returnInvoice->load($this->relations());
@@ -261,6 +240,28 @@ class StoreReturnInvoiceAction
                 'product_batch_id' => $batchId,
                 'qty' => $quantity,
             ]);
+        }
+
+        return [$variantId, $batchId];
+    }
+
+    private function resolveItemReferences(Product $product, array $data, int|string $index): array
+    {
+        $variantId = null;
+        $batchId = null;
+
+        if ($product->is_variant && ! empty($data['product_code'][$index])) {
+            $variantId = ProductVariant::query()
+                ->where('product_id', $product->id)
+                ->where('item_code', $data['product_code'][$index])
+                ->value('variant_id');
+        }
+
+        if (! empty($data['product_batch_id'][$index])) {
+            $batchId = ProductBatch::query()
+                ->whereKey($data['product_batch_id'][$index])
+                ->where('product_id', $product->id)
+                ->value('id');
         }
 
         return [$variantId, $batchId];

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\ApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Storage;
@@ -39,12 +40,18 @@ class SaleResource extends JsonResource
             'document_url' => $this->document ? Storage::disk('public')->url($this->document) : null,
             'sale_note' => $this->sale_note,
             'staff_note' => $this->staff_note,
+            'approval_status' => $this->approval_status ?? ApprovalService::APPROVED,
+            'approved_by' => $this->approved_by,
+            'approved_at' => $this->approved_at,
+            'approver' => $this->whenLoaded('approver'),
+            'can_approve' => $request->user() ? app(ApprovalService::class)->canApprove($request->user(), 'sales') && ($this->approval_status ?? ApprovalService::APPROVED) === ApprovalService::PENDING : false,
             'customer' => $this->whenLoaded('customer'),
             'warehouse' => $this->whenLoaded('warehouse'),
             'biller' => $this->whenLoaded('biller'),
             'user' => $this->whenLoaded('user'),
             'products' => ProductSaleResource::collection($this->whenLoaded('products')),
             'payments' => $this->whenLoaded('payments'),
+            'activity_logs' => ActivityLogResource::collection($this->whenLoaded('activities')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

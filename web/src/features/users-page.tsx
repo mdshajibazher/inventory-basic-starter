@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { PaginationMeta, Permission, Role, User } from '@/lib/types';
+import type { Branch, PaginationMeta, Permission, Role, User } from '@/lib/types';
 import { errorMessage, permissionLabel } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Checkbox, Field, Input, Modal, StatusBadge, Switch } from '@/components/ui';
@@ -13,6 +13,7 @@ import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/comp
 type UserOptions = {
   roles: Role[];
   permissions: Permission[];
+  branches: Branch[];
 };
 
 type UserForm = {
@@ -21,16 +22,17 @@ type UserForm = {
   phone: string;
   password: string;
   isActive: boolean;
+  billerIds: number[];
 };
 
-const emptyForm: UserForm = { name: '', email: '', phone: '', password: '', isActive: true };
+const emptyForm: UserForm = { name: '', email: '', phone: '', password: '', isActive: true, billerIds: [] };
 const perPage = 15;
 
 export function UsersPage() {
   const router = useRouter();
   const { hasPermission, refreshUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
-  const [options, setOptions] = useState<UserOptions>({ roles: [], permissions: [] });
+  const [options, setOptions] = useState<UserOptions>({ roles: [], permissions: [], branches: [] });
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -88,13 +90,20 @@ export function UsersPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, billerIds: options.branches[0] ? [options.branches[0].id] : [] });
     setModal('user');
   }
 
   function openEdit(user: User) {
     setEditing(user);
-    setForm({ name: user.name, email: user.email, phone: user.phone ?? '', password: '', isActive: Boolean(user.is_active) });
+    setForm({
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? '',
+      password: '',
+      isActive: Boolean(user.is_active),
+      billerIds: user.biller_ids ?? user.billers?.map((branch) => branch.id) ?? [],
+    });
     setModal('user');
   }
 
@@ -128,6 +137,10 @@ export function UsersPage() {
       toast.error('Missing password', { description: 'Password is required for new users.' });
       return;
     }
+    if (!form.billerIds.length) {
+      toast.error('Missing branch', { description: 'Select at least one branch.' });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -136,6 +149,7 @@ export function UsersPage() {
         phone: form.phone.trim(),
         password: form.password.trim() || undefined,
         is_active: form.isActive,
+        biller_ids: form.billerIds,
       };
       if (editing) await api.updateUser(editing.id, payload);
       else await api.createUser(payload);
@@ -204,13 +218,14 @@ export function UsersPage() {
         <TableWrap>
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-              <tr>{['User', 'Phone', 'Roles', 'Direct Permissions', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}</tr>
+              <tr>{['User', 'Phone', 'Branches', 'Roles', 'Direct Permissions', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}</tr>
             </thead>
             <tbody>
               {users.map((user) => (
                 <tr key={user.id} className="border-t border-neutral-100">
                   <td className="px-4 py-3"><div className="font-medium">{user.name}</div><div className="text-xs text-neutral-500">{user.email}</div></td>
                   <td className="px-4 py-3">{user.phone ?? '-'}</td>
+                  <td className="px-4 py-3">{user.billers?.map((branch) => branch.name).join(', ') || user.current_biller?.name || '-'}</td>
                   <td className="px-4 py-3">{userRoles(user).map((role) => role.name).join(', ') || '-'}</td>
                   <td className="px-4 py-3">{user.direct_permissions?.length ?? 0}</td>
                   <td className="px-4 py-3"><StatusBadge active={user.is_active} /></td>
@@ -238,6 +253,11 @@ export function UsersPage() {
             <Field label="Phone"><Input value={form.phone} onChange={(event) => setValue('phone', event.target.value)} /></Field>
             <Field label="Password" hint={editing ? 'Leave blank to keep the current password.' : undefined}><Input type="password" value={form.password} onChange={(event) => setValue('password', event.target.value)} /></Field>
           </div>
+          <BranchPicker
+            branches={options.branches}
+            selected={form.billerIds}
+            onChange={(billerIds) => setValue('billerIds', billerIds)}
+          />
           <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2"><span className="text-sm font-medium">Active</span><Switch checked={form.isActive} onCheckedChange={(checked) => setValue('isActive', checked)} /></div>
           <FormActions saving={saving} onCancel={closeModal} />
         </form>
@@ -260,6 +280,26 @@ export function UsersPage() {
         <FormActions saving={saving} onCancel={closeModal} onSave={() => void savePermissions()} />
       </Modal>
     </div>
+  );
+}
+
+function BranchPicker({ branches, selected, onChange }: { branches: Branch[]; selected: number[]; onChange: (ids: number[]) => void }) {
+  return (
+    <section className="rounded-md border border-neutral-200">
+      <div className="border-b border-neutral-100 p-3 text-sm font-medium">Branch</div>
+      <div className="grid max-h-56 gap-2 overflow-y-auto p-3 sm:grid-cols-2">
+        {branches.map((branch) => (
+          <label key={branch.id} className="flex items-center gap-3 text-sm">
+            <Checkbox
+              checked={selected.includes(branch.id)}
+              onCheckedChange={() => onChange(selected.includes(branch.id) ? selected.filter((id) => id !== branch.id) : [...selected, branch.id])}
+            />
+            <span>{branch.company_name ? `${branch.name} - ${branch.company_name}` : branch.name}</span>
+          </label>
+        ))}
+        {!branches.length ? <div className="text-sm text-neutral-500">No active branches found.</div> : null}
+      </div>
+    </section>
   );
 }
 

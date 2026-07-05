@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import { Button, DataTable, Modal, Portal, Searchbar, Switch, Text, TextInput } from 'react-native-paper';
 import { ImageUploadField, type PickedImage } from '@/src/components/ImageUploadField';
+import { ResourceImage } from '@/src/components/ResourceImage';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -254,7 +255,7 @@ export default function SuppliersScreen() {
             <DataTable.Row key={supplier.id}>
               <DataTable.Cell style={styles.nameColumn}>{supplier.name}</DataTable.Cell>
               <DataTable.Cell style={styles.imageColumn}>
-                {supplier.image ? <Image source={{ uri: supplier.image }} style={styles.tableImage} /> : 'No image'}
+                <ResourceImage uri={supplier.image} kind="supplier" />
               </DataTable.Cell>
               <DataTable.Cell style={styles.companyColumn}>{supplier.company_name}</DataTable.Cell>
               <DataTable.Cell style={styles.contactColumn}>{supplier.email}</DataTable.Cell>
@@ -338,7 +339,6 @@ const styles = StyleSheet.create({
   cityColumn: { flex: 1 },
   statusColumn: { flex: 0.8 },
   actionColumn: { flex: 1.1, justifyContent: 'center' },
-  tableImage: { width: 40, height: 40, borderRadius: 6, backgroundColor: '#f2f2f2' },
   actions: { flexDirection: 'row', alignItems: 'center' },
   pagination: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 12 },
   paginationText: { color: '#333333' },

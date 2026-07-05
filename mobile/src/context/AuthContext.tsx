@@ -1,14 +1,14 @@
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { tokenStorage } from '../lib/storage';
-import type { User } from '../types';
+import type { Branch, User } from '../types';
 
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
   hasPermission: (permission: string | string[]) => boolean;
   refreshUser: () => Promise<User | null>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, billerId?: number) => Promise<Branch[] | null>;
   logout: () => Promise<void>;
 };
 
@@ -42,11 +42,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
-  async function login(email: string, password: string) {
-    const response = await api.login(email, password);
+  async function login(email: string, password: string, billerId?: number) {
+    const response = await api.login(email, password, billerId);
+    if (response.data.requires_branch) {
+      return (response.data.branches ?? []) as Branch[];
+    }
+
+    if (!response.data.token) {
+      throw new Error('Login did not return an access token.');
+    }
+
     await tokenStorage.set(response.data.token);
     const meResponse = await api.me();
     setUser(meResponse.data as User);
+    return null;
   }
 
   async function refreshUser() {

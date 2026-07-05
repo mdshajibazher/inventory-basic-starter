@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Category extends Model
 {
+    use LogsBusinessActivity;
+
     protected $fillable = ['name', 'image', 'parent_id', 'is_active'];
 
     protected function casts(): array

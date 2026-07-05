@@ -12,11 +12,14 @@ use App\Models\Product;
 use App\Models\ProductPurchase;
 use App\Models\ProductVariant;
 use App\Models\Purchase;
+use App\Services\ApprovalService;
 use App\Services\PaymentService;
+use App\Services\RecordNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -26,7 +29,9 @@ class PurchaseInvoiceController extends Controller
     private const RELATIONS = [
         'supplier:id,name,email,phone_number',
         'warehouse:id,name',
+        'biller:id,name,company_name',
         'user:id,name,email',
+        'approver:id,name,email',
         'purchaseStatus:id,value,label',
         'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
         'products.product.variants.variant:id,name',
@@ -40,9 +45,13 @@ class PurchaseInvoiceController extends Controller
     {
         $perPage = min((int) $request->query('per_page', 15), 100);
         $search = trim((string) $request->query('search', ''));
+        $billerId = $request->user()?->requireCurrentBillerId();
+        $canFilterApproval = Schema::hasColumn('purchases', 'approval_status');
 
         $purchases = Purchase::query()
-            ->with(['supplier:id,name', 'warehouse:id,name', 'purchaseStatus:id,value,label'])
+            ->with(['supplier:id,name', 'warehouse:id,name', 'biller:id,name', 'purchaseStatus:id,value,label'])
+            ->when($billerId, fn ($query) => $query->where('biller_id', $billerId))
+            ->when($canFilterApproval && ($request->boolean('approved_only') || $request->boolean('outstanding_only')), fn ($query) => $query->where('approval_status', ApprovalService::APPROVED))
             ->when($request->filled('supplier_id'), fn ($query) => $query->where('supplier_id', $request->integer('supplier_id')))
             ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
@@ -57,10 +66,15 @@ class PurchaseInvoiceController extends Controller
         return response()->json(PurchaseResource::collection($purchases)->response()->getData(true));
     }
 
-    public function show(Purchase $purchase): JsonResponse
+    public function show(Purchase $purchase, Request $request): JsonResponse
     {
+        $this->authorizeBranch($purchase, $request);
+
         return response()->json([
-            'data' => new PurchaseResource($purchase->load(self::RELATIONS)),
+            'data' => new PurchaseResource($purchase->load([
+                ...self::RELATIONS,
+                'activities' => fn ($query) => $query->with('causer')->latest()->limit(25),
+            ])),
         ]);
     }
 
@@ -92,11 +106,15 @@ class PurchaseInvoiceController extends Controller
         }
     }
 
-    public function update(StorePurchaseRequest $request, Purchase $purchase, PaymentService $payments): JsonResponse
+    public function update(StorePurchaseRequest $request, Purchase $purchase, PaymentService $payments, ApprovalService $approvals): JsonResponse
     {
+        $this->authorizeBranch($purchase, $request);
+
         try {
             $purchase = DB::transaction(function () use ($request, $purchase, $payments) {
+                app(ApprovalService::class)->resetPurchaseApproval($purchase);
                 $data = $request->validated();
+                $billerId = $request->user()->requireCurrentBillerId();
                 $totals = $this->calculateTotals($data);
                 $paidAmount = min((float) ($data['paid_amount'] ?? 0), $totals['grand_total']);
                 $documentPath = $purchase->document;
@@ -112,6 +130,7 @@ class PurchaseInvoiceController extends Controller
                     'reference_no' => $data['reference_no'],
                     'purchase_date' => $data['purchase_date'] ?? $purchase->purchase_date ?? now()->toDateString(),
                     'warehouse_id' => $data['warehouse_id'],
+                    'biller_id' => $billerId,
                     'supplier_id' => $data['supplier_id'],
                     'item' => $totals['item'],
                     'total_qty' => $totals['total_qty'],
@@ -123,11 +142,14 @@ class PurchaseInvoiceController extends Controller
                     'order_discount' => $totals['order_discount'],
                     'shipping_cost' => $totals['shipping_cost'],
                     'grand_total' => $totals['grand_total'],
-                    'paid_amount' => $paidAmount,
+                    'paid_amount' => 0,
                     'status' => $data['status'],
-                    'payment_status' => $paidAmount > 0 && abs($totals['grand_total'] - $paidAmount) < 0.01 ? 2 : (int) $data['payment_status'],
+                    'payment_status' => 3,
                     'document' => $documentPath,
                     'note' => $data['note'] ?? null,
+                    'approval_status' => ApprovalService::PENDING,
+                    'approved_by' => null,
+                    'approved_at' => null,
                 ]);
 
                 ProductPurchase::query()->where('purchase_id', $purchase->id)->delete();
@@ -143,6 +165,9 @@ class PurchaseInvoiceController extends Controller
                         'date' => $purchase->purchase_date?->toDateString(),
                         'product_id' => $productId,
                         'variant_id' => $this->resolveVariantId($product, $data, $index),
+                        'product_batch_id' => $data['product_batch_id'][$index] ?? null,
+                        'batch_no' => $data['batch_no'][$index] ?? null,
+                        'expired_date' => $data['expired_date'][$index] ?? null,
                         'qty' => $qty,
                         'recieved' => $received,
                         'purchase_unit_id' => (int) $data['purchase_unit'][$index],
@@ -176,6 +201,19 @@ class PurchaseInvoiceController extends Controller
                 'message' => 'Unable to update purchase invoice.',
             ], 500);
         }
+    }
+
+    public function approve(Purchase $purchase, Request $request, ApprovalService $approvals, RecordNotificationService $notifications): JsonResponse
+    {
+        $this->authorizeBranch($purchase, $request);
+
+        $purchase = $approvals->approvePurchase($purchase, $request->user());
+        $notifications->purchaseInvoiceApproved($purchase);
+
+        return response()->json([
+            'message' => 'Purchase invoice approved successfully.',
+            'data' => new PurchaseResource($purchase),
+        ]);
     }
 
     private function calculateTotals(array $data): array
@@ -218,6 +256,11 @@ class PurchaseInvoiceController extends Controller
             'shipping_cost' => round($shippingCost, 2),
             'grand_total' => round($totalCost + $orderTax + $shippingCost - $orderDiscount, 2),
         ];
+    }
+
+    private function authorizeBranch(Purchase $purchase, Request $request): void
+    {
+        abort_unless((int) $purchase->biller_id === $request->user()->requireCurrentBillerId(), 404);
     }
 
     private function resolveVariantId(Product $product, array $data, int|string $index): ?int

@@ -4,12 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
+use App\Models\Biller;
+use App\Models\Permission;
+use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Spatie\Permission\Models\Permission;
-use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
@@ -19,7 +20,7 @@ class UserController extends Controller
 
         return UserResource::collection(
             User::query()
-                ->with('roles:id,name')
+                ->with('roles:id,name', 'currentBiller:id,name')
                 ->where('is_deleted', false)
                 ->when($request->filled('search'), function ($query) use ($request) {
                     $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
@@ -47,6 +48,8 @@ class UserController extends Controller
             'data' => [
                 'roles' => Role::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
                 'permissions' => Permission::query()->orderBy('name')->get(['id', 'name']),
+                'branches' => Biller::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'company_name']),
+                'users' => User::query()->where('is_deleted', false)->where('is_active', true)->orderBy('name')->get(['id', 'name', 'email']),
             ],
         ]);
     }
@@ -62,7 +65,7 @@ class UserController extends Controller
             $user = User::create($data + ['is_active' => true, 'is_deleted' => false]);
             $this->syncAccess($user, $roleIds, $permissions);
 
-            return $user->load('roles:id,name');
+            return $user->load('roles:id,name', 'currentBiller:id,name');
         });
 
         return response()->json([
@@ -90,10 +93,17 @@ class UserController extends Controller
                 unset($data['password']);
             }
 
+            $wasActive = $user->canAccessSystem();
+
             $user->update($data);
+
+            if ($wasActive && ! $user->canAccessSystem()) {
+                $user->tokens()->delete();
+            }
+
             $this->syncAccess($user, $roleIds, $permissions);
 
-            return $user->load('roles:id,name');
+            return $user->load('roles:id,name', 'currentBiller:id,name');
         });
 
         return response()->json([
@@ -149,7 +159,7 @@ class UserController extends Controller
 
     private function validatedData(Request $request, ?User $user = null): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => [
                 'required',
@@ -164,7 +174,20 @@ class UserController extends Controller
             'roles.*' => ['integer', 'exists:roles,id'],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['string', 'exists:permissions,name'],
+            'biller_ids' => ['required', 'array', 'min:1'],
+            'biller_ids.*' => ['integer', 'distinct', 'exists:billers,id'],
         ]);
+
+        $branchIds = array_values(array_unique(array_map('intval', $data['biller_ids'] ?? [])));
+        $currentBillerId = $user?->current_biller_id && in_array((int) $user->current_biller_id, $branchIds, true)
+            ? (int) $user->current_biller_id
+            : ($branchIds[0] ?? null);
+
+        $data['biller_ids'] = $branchIds;
+        $data['current_biller_id'] = $currentBillerId;
+        $data['biller_id'] = $currentBillerId;
+
+        return $data;
     }
 
     private function syncAccess(User $user, array $roleIds, array $permissions): void

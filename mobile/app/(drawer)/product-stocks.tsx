@@ -41,6 +41,10 @@ export default function ProductStocksScreen() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductStock | null>(null);
+  const [variantStockProduct, setVariantStockProduct] = useState<ProductStock | null>(null);
+  const [variantStockVisible, setVariantStockVisible] = useState(false);
+  const [stockBreakdownProduct, setStockBreakdownProduct] = useState<ProductStock | null>(null);
+  const [stockBreakdownVisible, setStockBreakdownVisible] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [adjustVisible, setAdjustVisible] = useState(false);
   const [historyRows, setHistoryRows] = useState<StockMovement[]>([]);
@@ -129,6 +133,16 @@ export default function ProductStocksScreen() {
     setHistoryVisible(true);
     setHistoryPage(1);
     void loadHistory(product.id, 1);
+  }
+
+  function openVariantStock(product: ProductStock) {
+    setVariantStockProduct(product);
+    setVariantStockVisible(true);
+  }
+
+  function openStockBreakdown(product: ProductStock) {
+    setStockBreakdownProduct(product);
+    setStockBreakdownVisible(true);
   }
 
   function openAdjust(product: ProductStock, movement?: StockMovement) {
@@ -224,6 +238,9 @@ export default function ProductStocksScreen() {
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
                   <Button compact mode="outlined" onPress={() => openHistory(item)}>History</Button>
+                  {isVariantProduct(item)
+                    ? <Button compact mode="outlined" onPress={() => openVariantStock(item)}>Variant Stock</Button>
+                    : <Button compact mode="outlined" onPress={() => openStockBreakdown(item)}>Stock Breakdown</Button>}
                   {canAdjust ? <Button compact mode="outlined" onPress={() => openAdjust(item)}>Adjust</Button> : null}
                 </View>
               </DataTable.Cell>
@@ -243,6 +260,78 @@ export default function ProductStocksScreen() {
       {!loading && !items.length ? <Text style={styles.empty}>No stock products found.</Text> : null}
 
       <Portal>
+        <Dialog visible={stockBreakdownVisible} onDismiss={() => setStockBreakdownVisible(false)} style={styles.dialog}>
+          <Dialog.Title>{stockBreakdownProduct?.name ?? 'Stock'} Stock Breakdown</Dialog.Title>
+          <Dialog.ScrollArea>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <DataTable style={styles.stockBreakdownTable}>
+                <DataTable.Header>
+                  <DataTable.Title style={styles.nameColumn}>Warehouse</DataTable.Title>
+                  <DataTable.Title style={styles.codeColumn}>Batch</DataTable.Title>
+                  <DataTable.Title style={styles.dateColumn}>Expired Date</DataTable.Title>
+                  <DataTable.Title numeric style={styles.stockColumn}>Stock</DataTable.Title>
+                </DataTable.Header>
+                {stockBreakdownRows(stockBreakdownProduct).map((row) => (
+                  <DataTable.Row key={`${row.warehouseName}-${row.batchNo}-${row.expiredDate}`}>
+                    <DataTable.Cell style={styles.nameColumn}>{row.warehouseName}</DataTable.Cell>
+                    <DataTable.Cell style={styles.codeColumn}>{row.batchNo}</DataTable.Cell>
+                    <DataTable.Cell style={styles.dateColumn}>{row.expiredDate}</DataTable.Cell>
+                    <DataTable.Cell numeric style={styles.stockColumn}>{formatQty(row.qty)} {stockBreakdownProduct?.unit?.unit_code ?? ''}</DataTable.Cell>
+                  </DataTable.Row>
+                ))}
+                {!stockBreakdownRows(stockBreakdownProduct).length ? (
+                  <DataTable.Row>
+                    <DataTable.Cell style={styles.nameColumn}>No stock breakdown found</DataTable.Cell>
+                  </DataTable.Row>
+                ) : null}
+              </DataTable>
+            </ScrollView>
+            <View style={styles.stockModalTotal}>
+              <Text variant="titleSmall">Total stock</Text>
+              <Text variant="titleSmall">{formatQty(stockBreakdownTotal(stockBreakdownProduct))} {stockBreakdownProduct?.unit?.unit_code ?? ''}</Text>
+            </View>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setStockBreakdownVisible(false)}>Close</Button>
+          </Dialog.Actions>
+        </Dialog>
+
+        <Dialog visible={variantStockVisible} onDismiss={() => setVariantStockVisible(false)} style={styles.dialog}>
+          <Dialog.Title>{variantStockProduct?.name ?? 'Variant Stock'} Variant Stock</Dialog.Title>
+          <Dialog.ScrollArea>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <DataTable style={styles.variantStockTable}>
+                <DataTable.Header>
+                  <DataTable.Title style={styles.nameColumn}>Variant</DataTable.Title>
+                  <DataTable.Title style={styles.codeColumn}>Item Code</DataTable.Title>
+                  <DataTable.Title style={styles.nameColumn}>Warehouse</DataTable.Title>
+                  <DataTable.Title numeric style={styles.stockColumn}>Stock</DataTable.Title>
+                </DataTable.Header>
+                {variantStockRows(variantStockProduct).map((row) => (
+                  <DataTable.Row key={`${row.variantId}-${row.warehouseName}`}>
+                    <DataTable.Cell style={styles.nameColumn}>{row.variantName}</DataTable.Cell>
+                    <DataTable.Cell style={styles.codeColumn}>{row.itemCode}</DataTable.Cell>
+                    <DataTable.Cell style={styles.nameColumn}>{row.warehouseName}</DataTable.Cell>
+                    <DataTable.Cell numeric style={styles.stockColumn}>{formatQty(row.qty)} {variantStockProduct?.unit?.unit_code ?? ''}</DataTable.Cell>
+                  </DataTable.Row>
+                ))}
+                {!variantStockRows(variantStockProduct).length ? (
+                  <DataTable.Row>
+                    <DataTable.Cell style={styles.nameColumn}>No variant stock found</DataTable.Cell>
+                  </DataTable.Row>
+                ) : null}
+              </DataTable>
+            </ScrollView>
+            <View style={styles.stockModalTotal}>
+              <Text variant="titleSmall">Total stock</Text>
+              <Text variant="titleSmall">{formatQty(variantStockTotal(variantStockProduct))} {variantStockProduct?.unit?.unit_code ?? ''}</Text>
+            </View>
+          </Dialog.ScrollArea>
+          <Dialog.Actions>
+            <Button onPress={() => setVariantStockVisible(false)}>Close</Button>
+          </Dialog.Actions>
+        </Dialog>
+
         <Dialog visible={historyVisible} onDismiss={() => setHistoryVisible(false)} style={styles.dialog}>
           <Dialog.Title>{selectedProduct?.name ?? 'Stock'} History</Dialog.Title>
           <Dialog.ScrollArea>
@@ -429,6 +518,47 @@ function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
   return null;
 }
 
+function isVariantProduct(product: ProductStock | null | undefined) {
+  return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function variantStockRows(product: ProductStock | null) {
+  if (!product) return [];
+
+  return (product.variants ?? []).flatMap((variant) => {
+    const stocks = (product.stocks ?? []).filter((stock) => Number(stock.variant_id) === Number(variant.variant_id));
+
+    return stocks.map((stock) => ({
+      variantId: variant.variant_id,
+      variantName: variant.name,
+      itemCode: variant.item_code,
+      warehouseName: stock.warehouse_name ?? `Warehouse ${stock.warehouse_id}`,
+      qty: Number(stock.qty) || 0,
+    }));
+  });
+}
+
+function variantStockTotal(product: ProductStock | null) {
+  return variantStockRows(product).reduce((sum, row) => sum + row.qty, 0);
+}
+
+function stockBreakdownRows(product: ProductStock | null) {
+  if (!product) return [];
+
+  return (product.stocks ?? [])
+    .filter((stock) => !stock.variant_id)
+    .map((stock) => ({
+      warehouseName: stock.warehouse_name ?? `Warehouse ${stock.warehouse_id}`,
+      batchNo: stock.batch_no ?? '-',
+      expiredDate: stock.expired_date ?? '-',
+      qty: Number(stock.qty) || 0,
+    }));
+}
+
+function stockBreakdownTotal(product: ProductStock | null) {
+  return stockBreakdownRows(product).reduce((sum, row) => sum + row.qty, 0);
+}
+
 function formatQty(value: number | string) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '0';
@@ -443,8 +573,11 @@ const styles = StyleSheet.create({
   searchbar: { borderRadius: 8, backgroundColor: '#f5f5f5' },
   table: { minWidth: 760, borderWidth: 1, borderColor: '#e5e5e5', borderRadius: 8 },
   historyTable: { minWidth: 900 },
+  variantStockTable: { minWidth: 720 },
+  stockBreakdownTable: { minWidth: 680 },
   slColumn: { maxWidth: 64 },
   nameColumn: { minWidth: 180 },
+  codeColumn: { minWidth: 150 },
   stockColumn: { minWidth: 130 },
   actionColumn: { minWidth: 180 },
   dateColumn: { minWidth: 120 },
@@ -455,4 +588,5 @@ const styles = StyleSheet.create({
   empty: { textAlign: 'center', color: '#666666', padding: 18 },
   dialog: { backgroundColor: '#ffffff' },
   formContent: { gap: 12, paddingVertical: 8 },
+  stockModalTotal: { flexDirection: 'row', justifyContent: 'space-between', gap: 16, paddingVertical: 14 },
 });

@@ -181,9 +181,39 @@ class ProductStockService
         });
     }
 
+    public function applyDelta(Product $product, int $warehouseId, ?int $variantId, ?int $batchId, float $delta): array
+    {
+        return $this->applyAggregateDelta($product, $warehouseId, $variantId, $batchId, $delta);
+    }
+
+    public function reverseSourceMovements(string $sourceType, array $sourceIds): void
+    {
+        if ($sourceIds === []) {
+            return;
+        }
+
+        StockMovement::query()
+            ->where('source_type', $sourceType)
+            ->whereIn('source_id', $sourceIds)
+            ->lockForUpdate()
+            ->get()
+            ->each(function (StockMovement $movement) {
+                $product = Product::query()->lockForUpdate()->findOrFail($movement->product_id);
+                $this->applyAggregateDelta(
+                    $product,
+                    (int) $movement->warehouse_id,
+                    $movement->variant_id,
+                    $movement->product_batch_id,
+                    -1 * (float) $movement->quantity_base
+                );
+                $movement->delete();
+            });
+    }
+
     private function signedBaseQuantity(float $quantity, Unit $unit, string $direction): float
     {
         $base = $this->convertToBase($quantity, $unit);
+
         return $direction === 'increase' ? $base : -$base;
     }
 
@@ -191,6 +221,7 @@ class ProductStockService
     {
         if ($delta === 0.0) {
             $current = $this->currentWarehouseQuantity($product->id, $warehouseId, $variantId, $batchId);
+
             return [$current, $current];
         }
 

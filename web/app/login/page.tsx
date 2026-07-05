@@ -5,14 +5,17 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { LockKeyhole } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
-import { Button, Field, Input } from '@/components/ui';
+import { Button, Field, Input, Select } from '@/components/ui';
 import { errorMessage } from '@/lib/utils';
+import type { Branch } from '@/lib/types';
 
 export default function LoginPage() {
   const router = useRouter();
   const { user, loading, login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState('none');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -23,7 +26,13 @@ export default function LoginPage() {
     event.preventDefault();
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      const selectedBranchId = branchId === 'none' ? undefined : Number(branchId);
+      const branchOptions = await login(email.trim(), password, selectedBranchId);
+      if (branchOptions) {
+        setBranches(branchOptions);
+        setBranchId(branchOptions[0] ? String(branchOptions[0].id) : 'none');
+        return;
+      }
       router.replace('/dashboard');
     } catch (error) {
       toast.error('Login failed', { description: errorMessage(error) });
@@ -47,8 +56,20 @@ export default function LoginPage() {
           <Field label="Password">
             <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" required />
           </Field>
+          {branches.length ? (
+            <Field label="Branch">
+              <Select
+                value={branchId}
+                onValueChange={setBranchId}
+                options={[
+                  { value: 'none', label: 'Select branch' },
+                  ...branches.map((branch) => ({ value: String(branch.id), label: branch.company_name ? `${branch.name} - ${branch.company_name}` : branch.name })),
+                ]}
+              />
+            </Field>
+          ) : null}
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Signing in...' : 'Sign in'}
+            {submitting ? 'Signing in...' : branches.length ? 'Continue' : 'Sign in'}
           </Button>
         </div>
       </form>

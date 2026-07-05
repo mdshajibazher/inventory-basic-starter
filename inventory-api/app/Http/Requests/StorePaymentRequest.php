@@ -3,7 +3,9 @@
 namespace App\Http\Requests;
 
 use App\Models\Payment;
+use App\Services\ApprovalService;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -91,6 +93,40 @@ class StorePaymentRequest extends FormRequest
             if ($documentField !== $allowedDocument && filled($this->input($documentField))) {
                 $validator->errors()->add($documentField, "The {$documentField} field is not allowed for {$type}.");
             }
+        }
+
+        if ($allowedDocument) {
+            $this->validateApprovedDocument($validator, $allowedDocument);
+        }
+    }
+
+    private function validateApprovedDocument(Validator $validator, string $documentField): void
+    {
+        $documentId = $this->input($documentField);
+
+        if (blank($documentId)) {
+            return;
+        }
+
+        $table = match ($documentField) {
+            'sale_id' => 'sales',
+            'purchase_id' => 'purchases',
+            'sale_return_id' => 'returns',
+            'purchase_return_id' => 'return_purchases',
+            default => null,
+        };
+
+        if (! $table) {
+            return;
+        }
+
+        $approved = DB::table($table)
+            ->where('id', $documentId)
+            ->where('approval_status', ApprovalService::APPROVED)
+            ->exists();
+
+        if (! $approved) {
+            $validator->errors()->add($documentField, 'The linked invoice must be approved before recording a payment.');
         }
     }
 }

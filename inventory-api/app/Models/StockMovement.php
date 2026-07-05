@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class StockMovement extends Model
 {
+    use LogsBusinessActivity;
+
     protected $table = 'product_stock_movements';
 
     protected $fillable = [

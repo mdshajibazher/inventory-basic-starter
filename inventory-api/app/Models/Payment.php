@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Payment extends Model
 {
+    use LogsBusinessActivity;
+
     public const TYPE_SALE_PAYMENT = 'sale_payment';
 
     public const TYPE_CUSTOMER_ADVANCE = 'customer_advance';
@@ -31,6 +34,7 @@ class Payment extends Model
         'purchase_return_id',
         'cash_register_id',
         'account_id',
+        'biller_id',
         'customer_id',
         'supplier_id',
         'payment_reference',
@@ -40,6 +44,9 @@ class Payment extends Model
         'change',
         'paying_method',
         'payment_note',
+        'approval_status',
+        'approved_by',
+        'approved_at',
     ];
 
     protected function casts(): array
@@ -52,10 +59,13 @@ class Payment extends Model
             'purchase_return_id' => 'integer',
             'cash_register_id' => 'integer',
             'account_id' => 'integer',
+            'biller_id' => 'integer',
             'customer_id' => 'integer',
             'supplier_id' => 'integer',
             'amount' => 'float',
             'change' => 'float',
+            'approved_by' => 'integer',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -94,8 +104,18 @@ class Payment extends Model
         return $this->belongsTo(Account::class);
     }
 
+    public function biller(): BelongsTo
+    {
+        return $this->belongsTo(Biller::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

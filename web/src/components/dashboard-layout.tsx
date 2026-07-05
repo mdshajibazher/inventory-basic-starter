@@ -10,9 +10,11 @@ import {
   CircleDollarSign,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
   Percent,
   ReceiptText,
+  FileText,
   Ruler,
   Shield,
   Tags,
@@ -20,6 +22,7 @@ import {
   Users,
   Warehouse,
   PackageSearch,
+  MessageSquareText,
   Settings,
   ChartNoAxesCombined,
   X,
@@ -42,10 +45,13 @@ const navItems: NavItem[] = [
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
   { href: '/product-stocks', label: 'Product Stock', icon: PackageSearch, permission: 'product-stocks-index' },
   { href: '/payments', label: 'Payments', icon: WalletCards, permission: ['accounts-index', 'sales-index', 'purchases-index'] },
+  { href: '/expenses', label: 'Expenses', icon: ReceiptText, permission: 'expenses-index' },
+  { href: '/expense-categories', label: 'Expense Categories', icon: Tags, permission: 'expenses-index' },
   { href: '/reports/profit', label: 'Profit Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
   { href: '/sales-invoices', label: 'Sales Invoice', icon: ReceiptText, permission: 'sales-add' },
-  { href: '/return-invoices', label: 'Return Invoice', icon: ReceiptText, permission: 'returns-add' },
+  { href: '/return-invoices', label: 'Sales Return', icon: ReceiptText, permission: 'returns-add' },
   { href: '/purchase-invoices', label: 'Purchase Invoice', icon: ReceiptText, permission: 'purchases-add' },
+  { href: '/purchase-return-invoices', label: 'Purchase Return', icon: ReceiptText, permission: 'purchases-add' },
 ];
 
 const peopleItems: NavItem[] = [
@@ -56,6 +62,8 @@ const peopleItems: NavItem[] = [
 
 const settingsItems: NavItem[] = [
   { href: '/general-settings', label: 'General Settings', icon: Settings, permission: 'general-settings-index' },
+  { href: '/email-logs', label: 'Email Logs', icon: Mail, permission: 'general-settings-index' },
+  { href: '/sms-logs', label: 'SMS Logs', icon: MessageSquareText, permission: 'general-settings-index' },
   { href: '/brands', label: 'Brands', icon: Tags, permission: 'brands-index' },
   { href: '/branches', label: 'Branches', icon: Building2, permission: 'branches-index' },
   { href: '/categories', label: 'Categories', icon: ChevronRight, permission: 'categories-index' },
@@ -66,6 +74,10 @@ const settingsItems: NavItem[] = [
   { href: '/warehouses', label: 'Warehouses', icon: Warehouse, permission: 'warehouses-index' },
   { href: '/roles', label: 'Roles', icon: Shield, permission: 'users-index' },
   { href: '/profile', label: 'Profile', icon: UserCircle },
+];
+
+const settingsReportItems: NavItem[] = [
+  { href: '/reports/datewise-products', label: 'Datewise Product Report', icon: FileText, permission: 'reports-profit' },
 ];
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -88,6 +100,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   );
   const visibleSettings = useMemo(
     () => settingsItems.filter((item) => !item.permission || hasPermission(item.permission)),
+    [hasPermission]
+  );
+  const visibleSettingsReports = useMemo(
+    () => settingsReportItems.filter((item) => !item.permission || hasPermission(item.permission)),
     [hasPermission]
   );
 
@@ -115,6 +131,12 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         <div className="pt-3">
           <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Settings</div>
           {renderLinks(visibleSettings, pathname, setMobileOpen)}
+          {visibleSettingsReports.length ? (
+            <div className="pt-3">
+              <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Report</div>
+              {renderLinks(visibleSettingsReports, pathname, setMobileOpen)}
+            </div>
+          ) : null}
         </div>
       </nav>
       <div className="border-t border-neutral-200 p-3">

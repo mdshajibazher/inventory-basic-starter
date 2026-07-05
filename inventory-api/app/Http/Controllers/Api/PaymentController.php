@@ -9,7 +9,9 @@ use App\Models\Account;
 use App\Models\Customer;
 use App\Models\Payment;
 use App\Models\Supplier;
+use App\Services\ApprovalService;
 use App\Services\PaymentService;
+use App\Services\RecordNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -42,10 +44,28 @@ class PaymentController extends Controller
         ], 201);
     }
 
-    public function show(Payment $payment, PaymentService $payments): JsonResponse
+    public function show(Payment $payment, Request $request, PaymentService $payments): JsonResponse
     {
+        $this->authorizeBranch($payment, $request);
+
         return response()->json([
-            'data' => new PaymentResource($payment->load($payments->relations())),
+            'data' => new PaymentResource($payment->load([
+                ...$payments->relations(),
+                'activities' => fn ($query) => $query->with('causer')->latest()->limit(25),
+            ])),
+        ]);
+    }
+
+    public function approve(Payment $payment, Request $request, ApprovalService $approvals, RecordNotificationService $notifications): JsonResponse
+    {
+        $this->authorizeBranch($payment, $request);
+
+        $payment = $approvals->approvePayment($payment, $request->user());
+        $notifications->paymentApproved($payment);
+
+        return response()->json([
+            'message' => 'Payment approved successfully.',
+            'data' => new PaymentResource($payment),
         ]);
     }
 
@@ -89,6 +109,13 @@ class PaymentController extends Controller
 
     private function baseQuery(PaymentService $payments)
     {
-        return Payment::query()->with($payments->relations());
+        return Payment::query()
+            ->with($payments->relations())
+            ->where('biller_id', request()->user()->requireCurrentBillerId());
+    }
+
+    private function authorizeBranch(Payment $payment, Request $request): void
+    {
+        abort_unless((int) $payment->biller_id === $request->user()->requireCurrentBillerId(), 404);
     }
 }

@@ -1,10 +1,11 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { Building2, ImageIcon, Tags, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import type { Account, Brand, Branch, Category, Currency, PaginationMeta, Supplier, Tax, Unit, UnitGroup, Warehouse } from '@/lib/types';
+import type { Account, Brand, Branch, Category, Currency, ExpenseCategory, PaginationMeta, Supplier, Tax, Unit, UnitGroup, Warehouse } from '@/lib/types';
 import { errorMessage, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Modal, Select, StatusBadge, Switch } from '@/components/ui';
@@ -12,7 +13,7 @@ import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/comp
 
 const perPage = 15;
 
-type Resource = 'brands' | 'branches' | 'suppliers' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses' | 'accounts';
+type Resource = 'brands' | 'branches' | 'suppliers' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses' | 'accounts' | 'expense-categories';
 
 type ResourceMap = {
   brands: Brand;
@@ -24,6 +25,7 @@ type ResourceMap = {
   currencies: Currency;
   warehouses: Warehouse;
   accounts: Account;
+  'expense-categories': ExpenseCategory;
 };
 
 const meta: Record<Resource, { title: string; search: string; permission: string }> = {
@@ -36,6 +38,7 @@ const meta: Record<Resource, { title: string; search: string; permission: string
   currencies: { title: 'Currencies', search: 'Search currencies, codes, exchange rates', permission: 'currencies' },
   warehouses: { title: 'Warehouses', search: 'Search warehouses, contact, address, status', permission: 'warehouses' },
   accounts: { title: 'Accounts', search: 'Search accounts, numbers, notes, status', permission: 'accounts' },
+  'expense-categories': { title: 'Expense Categories', search: 'Search expense category code, name, status', permission: 'expenses' },
 };
 
 type FormState = Record<string, string | boolean | number | null | File>;
@@ -232,10 +235,12 @@ function emptyForm(resource: Resource): FormState {
       return { name: '', phone: '', email: '', address: '', isActive: true };
     case 'accounts':
       return { accountNo: '', name: '', initialBalance: '0', totalBalance: '0', note: '', isDefault: false, isActive: true };
+    case 'expense-categories':
+      return { code: '', name: '', isActive: true };
   }
 }
 
-function toForm(resource: Resource, item: Brand | Branch | Category | Unit | Tax | Currency | Warehouse | Account): FormState {
+function toForm(resource: Resource, item: Brand | Branch | Category | Unit | Tax | Currency | Warehouse | Account | ExpenseCategory): FormState {
   switch (resource) {
     case 'brands': {
       const brand = item as Brand;
@@ -306,6 +311,10 @@ function toForm(resource: Resource, item: Brand | Branch | Category | Unit | Tax
         isActive: Boolean(account.is_active),
       };
     }
+    case 'expense-categories': {
+      const category = item as ExpenseCategory;
+      return { code: category.code, name: category.name, isActive: Boolean(category.is_active) };
+    }
   }
 }
 
@@ -348,6 +357,10 @@ function validate(resource: Resource, form: FormState) {
     if (Number.isNaN(initialBalance) || initialBalance < 0) return { title: 'Invalid initial balance', description: 'Enter a valid initial balance.' };
     if (Number.isNaN(totalBalance) || totalBalance < 0) return { title: 'Invalid total balance', description: 'Enter a valid total balance.' };
   }
+  if (resource === 'expense-categories') {
+    if (!String(form.code).trim()) return { title: 'Missing code', description: 'Expense category code is required.' };
+    if (!String(form.name).trim()) return { title: 'Missing name', description: 'Expense category name is required.' };
+  }
   return null;
 }
 
@@ -371,6 +384,8 @@ async function createResource(resource: Resource, form: FormState) {
       return api.createWarehouse(warehousePayload(form));
     case 'accounts':
       return api.createAccount(accountPayload(form));
+    case 'expense-categories':
+      return api.createExpenseCategory(expenseCategoryPayload(form));
   }
 }
 
@@ -394,6 +409,8 @@ async function updateResource(resource: Resource, id: number, form: FormState) {
       return api.updateWarehouse(id, warehousePayload(form));
     case 'accounts':
       return api.updateAccount(id, accountPayload(form));
+    case 'expense-categories':
+      return api.updateExpenseCategory(id, expenseCategoryPayload(form));
   }
 }
 
@@ -417,7 +434,17 @@ async function deleteResource(resource: Resource, id: number) {
       return api.deleteWarehouse(id);
     case 'accounts':
       return api.deleteAccount(id);
+    case 'expense-categories':
+      return api.deleteExpenseCategory(id);
   }
+}
+
+function expenseCategoryPayload(form: FormState) {
+  return {
+    code: String(form.code).trim(),
+    name: String(form.name).trim(),
+    is_active: Boolean(form.isActive),
+  };
 }
 
 function unitPayload(form: FormState) {
@@ -550,6 +577,17 @@ function renderFields(
       </>
     );
   }
+  if (resource === 'expense-categories') {
+    return (
+      <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Code"><Input value={String(form.code)} onChange={(event) => setValue('code', event.target.value)} /></Field>
+          <Field label="Name"><Input value={String(form.name)} onChange={(event) => setValue('name', event.target.value)} /></Field>
+        </div>
+        <ActiveField form={form} setValue={setValue} />
+      </>
+    );
+  }
   if (resource === 'currencies') {
     return (
       <div className="grid gap-4 sm:grid-cols-3">
@@ -617,7 +655,7 @@ function DefaultField({ form, setValue }: { form: FormState; setValue: (key: str
   );
 }
 
-function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency | Warehouse | Account>(
+function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency | Warehouse | Account | ExpenseCategory>(
   resource: Resource,
   items: T[],
   actions: { canEdit: boolean; canDelete: boolean; openEdit: (item: T) => void; remove: (item: T) => void; saving: boolean }
@@ -630,14 +668,14 @@ function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency
   );
 
   if (resource === 'brands') {
-    return <Table headers={['Brand', 'Image', 'Status', 'Action']}>{(items as Brand[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.title}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+    return <Table headers={['Brand', 'Image', 'Status', 'Action']}>{(items as Brand[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.title}</td><td className="px-4 py-3"><ResourceImage src={item.image} alt={item.title} kind="brand" /></td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
   if (resource === 'branches' || resource === 'suppliers') {
     const firstHeader = resource === 'branches' ? 'Branch' : 'Supplier';
-    return <Table headers={[firstHeader, 'Image', 'Company', 'Email', 'Phone', 'City', 'Status', 'Action']}>{(items as Array<Branch | Supplier>).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3">{item.company_name}</td><td className="px-4 py-3">{item.email}</td><td className="px-4 py-3">{item.phone_number}</td><td className="px-4 py-3">{item.city}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+    return <Table headers={[firstHeader, 'Image', 'Company', 'Email', 'Phone', 'City', 'Status', 'Action']}>{(items as Array<Branch | Supplier>).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3"><ResourceImage src={item.image} alt={item.name} kind={resource === 'branches' ? 'branch' : 'supplier'} /></td><td className="px-4 py-3">{item.company_name}</td><td className="px-4 py-3">{item.email}</td><td className="px-4 py-3">{item.phone_number}</td><td className="px-4 py-3">{item.city}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
   if (resource === 'categories') {
-    return <Table headers={['Category', 'Image', 'Parent', 'Status', 'Action']}>{(items as Category[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.image ? <img src={item.image} alt="" className="h-10 w-10 rounded object-cover" /> : <span className="text-neutral-400">No image</span>}</td><td className="px-4 py-3">{item.parent_category_name ?? item.parent?.name ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+    return <Table headers={['Category', 'Image', 'Parent', 'Status', 'Action']}>{(items as Category[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3"><ResourceImage src={item.image} alt={item.name} kind="category" /></td><td className="px-4 py-3">{item.parent_category_name ?? item.parent?.name ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
   if (resource === 'units') {
     return <Table headers={['Code', 'Unit', 'Group', 'Base', 'Operator', 'Value', 'Status', 'Action']}>{(items as Unit[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3">{item.unit_code}</td><td className="px-4 py-3 font-medium">{item.unit_name}</td><td className="px-4 py-3">{item.unit_group_title ?? item.unit_group?.title ?? '-'}</td><td className="px-4 py-3">{item.base_unit_name ?? item.base?.unit_name ?? 'Base unit'}</td><td className="px-4 py-3">{item.operator ?? '-'}</td><td className="px-4 py-3">{item.operation_value ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td><td className="whitespace-nowrap px-4 py-3 text-right">{actions.canDelete && item.can_delete !== false ? <Button variant="danger" disabled={actions.saving} onClick={() => void actions.remove(item as T)}>Delete</Button> : <span className="text-xs text-neutral-500">{item.can_delete === false ? 'In use' : '-'}</span>}</td></tr>)}</Table>;
@@ -651,7 +689,25 @@ function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency
   if (resource === 'accounts') {
     return <Table headers={['Account', 'Number', 'Initial', 'Balance', 'Default', 'Status', 'Action']}>{(items as Account[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.account_no}</td><td className="px-4 py-3">{item.initial_balance ?? 0}</td><td className="px-4 py-3">{item.total_balance}</td><td className="px-4 py-3">{item.is_default ? 'Default' : '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
+  if (resource === 'expense-categories') {
+    return <Table headers={['Code', 'Category', 'Status', 'Action']}>{(items as ExpenseCategory[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3">{item.code}</td><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+  }
   return <Table headers={['Warehouse', 'Phone', 'Email', 'Address', 'Status', 'Action']}>{(items as Warehouse[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.phone || '-'}</td><td className="px-4 py-3">{item.email || '-'}</td><td className="px-4 py-3">{item.address}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
+}
+
+function ResourceImage({ src, alt, kind }: { src?: string | null; alt: string; kind: 'brand' | 'branch' | 'category' | 'supplier' }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    const Icon = kind === 'brand' ? Tags : kind === 'branch' ? Building2 : kind === 'supplier' ? Truck : ImageIcon;
+    return (
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-neutral-50 text-neutral-400">
+        <Icon className="h-5 w-5" />
+      </div>
+    );
+  }
+
+  return <img src={src} alt={alt} className="h-10 w-10 shrink-0 rounded-md border border-neutral-200 object-cover" onError={() => setFailed(true)} />;
 }
 
 function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
@@ -684,7 +740,7 @@ function singular(title: string) {
   return title.endsWith('ies') ? `${title.slice(0, -3)}y` : title.replace(/s$/, '');
 }
 
-function itemLabel(resource: Resource, item: Brand | Branch | Supplier | Category | Unit | Tax | Currency | Warehouse | Account) {
+function itemLabel(resource: Resource, item: Brand | Branch | Supplier | Category | Unit | Tax | Currency | Warehouse | Account | ExpenseCategory) {
   if (resource === 'brands') return (item as Brand).title;
   if (resource === 'branches') return (item as Branch).name;
   if (resource === 'suppliers') return (item as Supplier).name;
@@ -692,5 +748,6 @@ function itemLabel(resource: Resource, item: Brand | Branch | Supplier | Categor
   if (resource === 'currencies') return (item as Currency).code;
   if (resource === 'warehouses') return (item as Warehouse).name;
   if (resource === 'accounts') return (item as Account).name;
+  if (resource === 'expense-categories') return (item as ExpenseCategory).name;
   return (item as Category | Tax).name;
 }

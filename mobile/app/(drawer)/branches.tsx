@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import {
@@ -13,6 +13,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { ImageUploadField, type PickedImage } from '@/src/components/ImageUploadField';
+import { ResourceImage } from '@/src/components/ResourceImage';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -283,7 +284,7 @@ export default function BranchesScreen() {
             <DataTable.Row key={branch.id}>
               <DataTable.Cell style={styles.nameColumn}>{branch.name}</DataTable.Cell>
               <DataTable.Cell style={styles.imageColumn}>
-                {branch.image ? <Image source={{ uri: branch.image }} style={styles.tableImage} /> : 'No image'}
+                <ResourceImage uri={branch.image} kind="branch" />
               </DataTable.Cell>
               <DataTable.Cell style={styles.companyColumn}>{branch.company_name}</DataTable.Cell>
               <DataTable.Cell style={styles.contactColumn}>{branch.email}</DataTable.Cell>
@@ -513,12 +514,6 @@ const styles = StyleSheet.create({
   actionColumn: {
     flex: 1.1,
     justifyContent: 'center',
-  },
-  tableImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#f2f2f2',
   },
   actions: {
     flexDirection: 'row',

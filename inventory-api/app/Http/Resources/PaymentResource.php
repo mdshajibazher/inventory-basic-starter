@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\ApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -18,7 +19,13 @@ class PaymentResource extends JsonResource
             'change' => $this->change,
             'paying_method' => $this->paying_method,
             'payment_note' => $this->payment_note,
+            'approval_status' => $this->approval_status ?? ApprovalService::APPROVED,
+            'approved_by' => $this->approved_by,
+            'approved_at' => $this->approved_at,
+            'approver' => $this->whenLoaded('approver'),
+            'can_approve' => $request->user() ? app(ApprovalService::class)->canApprove($request->user(), 'payments') && ($this->approval_status ?? ApprovalService::APPROVED) === ApprovalService::PENDING : false,
             'account_id' => $this->account_id,
+            'biller_id' => $this->biller_id,
             'customer_id' => $this->customer_id,
             'supplier_id' => $this->supplier_id,
             'sale_id' => $this->sale_id,
@@ -27,6 +34,7 @@ class PaymentResource extends JsonResource
             'purchase_return_id' => $this->purchase_return_id,
             'reference_document' => $this->referenceDocument(),
             'account' => $this->whenLoaded('account'),
+            'biller' => $this->whenLoaded('biller'),
             'customer' => $this->whenLoaded('customer'),
             'supplier' => $this->whenLoaded('supplier'),
             'sale' => $this->whenLoaded('sale'),
@@ -34,6 +42,7 @@ class PaymentResource extends JsonResource
             'sale_return' => $this->whenLoaded('saleReturn'),
             'purchase_return' => $this->whenLoaded('purchaseReturn'),
             'user' => $this->whenLoaded('user'),
+            'activity_logs' => ActivityLogResource::collection($this->whenLoaded('activities')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

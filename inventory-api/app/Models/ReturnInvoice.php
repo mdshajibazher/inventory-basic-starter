@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ReturnInvoice extends Model
 {
+    use LogsBusinessActivity;
+
     protected $table = 'returns';
 
     protected $fillable = [
@@ -30,6 +33,9 @@ class ReturnInvoice extends Model
         'document',
         'return_note',
         'staff_note',
+        'approval_status',
+        'approved_by',
+        'approved_at',
     ];
 
     protected function casts(): array
@@ -50,6 +56,8 @@ class ReturnInvoice extends Model
             'order_tax_rate' => 'float',
             'order_tax' => 'float',
             'grand_total' => 'float',
+            'approved_by' => 'integer',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -81,5 +89,10 @@ class ReturnInvoice extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class, 'sale_return_id');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

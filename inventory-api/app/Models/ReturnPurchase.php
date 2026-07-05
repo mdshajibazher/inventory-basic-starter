@@ -2,18 +2,23 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\LogsBusinessActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ReturnPurchase extends Model
 {
+    use LogsBusinessActivity;
+
     protected $table = 'return_purchases';
 
     protected $fillable = [
         'reference_no',
+        'return_date',
         'supplier_id',
         'warehouse_id',
+        'biller_id',
         'user_id',
         'account_id',
         'item',
@@ -27,13 +32,18 @@ class ReturnPurchase extends Model
         'document',
         'return_note',
         'staff_note',
+        'approval_status',
+        'approved_by',
+        'approved_at',
     ];
 
     protected function casts(): array
     {
         return [
+            'return_date' => 'date',
             'supplier_id' => 'integer',
             'warehouse_id' => 'integer',
+            'biller_id' => 'integer',
             'user_id' => 'integer',
             'account_id' => 'integer',
             'item' => 'integer',
@@ -44,6 +54,8 @@ class ReturnPurchase extends Model
             'order_tax_rate' => 'float',
             'order_tax' => 'float',
             'grand_total' => 'float',
+            'approved_by' => 'integer',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -55,6 +67,11 @@ class ReturnPurchase extends Model
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(Warehouse::class);
+    }
+
+    public function biller(): BelongsTo
+    {
+        return $this->belongsTo(Biller::class);
     }
 
     public function user(): BelongsTo
@@ -75,5 +92,10 @@ class ReturnPurchase extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class, 'purchase_return_id');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 }

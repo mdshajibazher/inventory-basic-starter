@@ -15,7 +15,6 @@ use App\Models\Unit;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Services\PaymentService;
-use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -33,6 +32,7 @@ class StorePurchaseInvoiceAction
     public function execute(array $data, User $user, ?UploadedFile $document = null): Purchase
     {
         return DB::transaction(function () use ($data, $user, $document) {
+            $billerId = $user->requireCurrentBillerId();
             $warehouseId = $this->resolveWarehouseId($data, $user);
             $totals = $this->calculateTotals($data);
             $paidAmount = min((float) ($data['paid_amount'] ?? 0), $totals['grand_total']);
@@ -43,6 +43,7 @@ class StorePurchaseInvoiceAction
                 'purchase_date' => $data['purchase_date'] ?? now()->toDateString(),
                 'user_id' => $user->id,
                 'warehouse_id' => $warehouseId,
+                'biller_id' => $billerId,
                 'supplier_id' => $data['supplier_id'],
                 'item' => $totals['item'],
                 'total_qty' => $totals['total_qty'],
@@ -54,11 +55,12 @@ class StorePurchaseInvoiceAction
                 'order_discount' => $totals['order_discount'],
                 'shipping_cost' => $totals['shipping_cost'],
                 'grand_total' => $totals['grand_total'],
-                'paid_amount' => $paidAmount,
+                'paid_amount' => 0,
                 'status' => $data['status'],
-                'payment_status' => $this->paymentStatus($paidAmount, $totals['grand_total'], (int) $data['payment_status']),
+                'payment_status' => 3,
                 'document' => $documentPath,
                 'note' => $data['note'] ?? null,
+                'approval_status' => 'pending',
             ]);
 
             logger([
@@ -75,13 +77,8 @@ class StorePurchaseInvoiceAction
                 $batchId = null;
                 $variantId = null;
 
-                if ($baseReceived > 0) {
-                    $batchId = $this->upsertBatch($product, $data, $index, $baseReceived);
-                    $variantId = $this->increaseProductStock($product, $data, $index, $warehouseId, $baseReceived, $batchId);
-                } else {
-                    $batchId = $this->findBatchId($product, $data, $index);
-                    $variantId = $this->findVariantId($product, $data, $index);
-                }
+                $batchId = $this->findBatchId($product, $data, $index);
+                $variantId = $this->findVariantId($product, $data, $index);
 
                 $productPurchase = ProductPurchase::create([
                     'purchase_id' => $purchase->id,
@@ -89,6 +86,8 @@ class StorePurchaseInvoiceAction
                     'product_id' => $product->id,
                     'product_batch_id' => $batchId,
                     'variant_id' => $variantId,
+                    'batch_no' => $data['batch_no'][$index] ?? null,
+                    'expired_date' => $data['expired_date'][$index] ?? null,
                     'qty' => $qty,
                     'recieved' => $received,
                     'purchase_unit_id' => $unit->id,
@@ -99,23 +98,6 @@ class StorePurchaseInvoiceAction
                     'total' => $lineTotal,
                 ]);
 
-                if ($baseReceived > 0 && $product->type !== 'digital') {
-                    app(ProductStockService::class)->recordMovement([
-                        'product_id' => $product->id,
-                        'warehouse_id' => $warehouseId,
-                        'product_batch_id' => $batchId,
-                        'variant_id' => $variantId,
-                        'unit_id' => $unit->id,
-                        'user_id' => $user->id,
-                        'source_type' => 'product_purchase',
-                        'source_id' => $productPurchase->id,
-                        'type' => 'purchase',
-                        'quantity' => $received,
-                        'quantity_base' => $baseReceived,
-                        'reference_no' => $purchase->reference_no,
-                        'movement_date' => $purchase->purchase_date?->toDateString(),
-                    ]);
-                }
             }
 
             $this->createPaymentIfNeeded($purchase, $data, $user, $paidAmount);
@@ -449,6 +431,7 @@ class StorePurchaseInvoiceAction
         return [
             'supplier:id,name,email,phone_number',
             'warehouse:id,name',
+            'biller:id,name,company_name',
             'user:id,name,email',
             'purchaseStatus:id,value,label',
             'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',

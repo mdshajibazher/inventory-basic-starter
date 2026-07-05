@@ -6,10 +6,11 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { api, type PurchaseInvoicePayload } from '@/lib/api';
+import { api, type PurchaseInvoicePayload, type PurchaseReturnPayload } from '@/lib/api';
 import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
+import { ActivityLogTimeline } from '@/components/activity-log';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
 
 type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
@@ -97,10 +98,16 @@ const emptyForm = (): FormState => ({
 });
 
 type InvoicePageMode = 'index' | 'create' | 'details' | 'edit';
+type PurchasePageKind = 'purchase' | 'return';
 
-export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: InvoicePageMode; invoiceId?: number }) {
+export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purchase' }: { mode?: InvoicePageMode; invoiceId?: number; kind?: PurchasePageKind }) {
   const router = useRouter();
   const { hasPermission } = useAuth();
+  const isReturn = kind === 'return';
+  const basePath = isReturn ? '/purchase-return-invoices' : '/purchase-invoices';
+  const pageTitle = isReturn ? 'Purchase returns' : 'Purchase invoices';
+  const singularTitle = isReturn ? 'Purchase Return' : 'Purchase Invoice';
+  const dateLabel = isReturn ? 'Return date' : 'Purchase date';
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -118,7 +125,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
 
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === form.supplierId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
-  const showReceived = Number(form.purchaseStatusId) === PURCHASE_STATUS_PARTIAL;
+  const showReceived = !isReturn && Number(form.purchaseStatusId) === PURCHASE_STATUS_PARTIAL;
   const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
   const hasVariantLine = lines.some((line) => isVariantProduct(products.find((product) => String(product.id) === line.productId)));
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
@@ -193,7 +200,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   async function loadInvoices() {
     setListLoading(true);
     try {
-      const response = await api.purchaseInvoices({ perPage: 20 });
+      const response = isReturn ? await api.purchaseReturnInvoices({ perPage: 20 }) : await api.purchaseInvoices({ perPage: 20 });
       setInvoices(response.data as Record<string, any>[]);
     } catch (error) {
       toast.error('Invoice list failed', { description: errorMessage(error) });
@@ -294,7 +301,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const payload = buildPayload(form, lines, products, totals);
+    const payload = buildPayload(form, lines, products, totals, kind);
     if (!payload) return;
 
     setSaving(true);
@@ -305,10 +312,14 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
         return;
       }
 
-      const response = editingId
-        ? await api.updatePurchaseInvoice(editingId, payload)
-        : await api.createPurchaseInvoice(payload);
-      toast.success(response.message || (editingId ? 'Purchase invoice updated' : 'Purchase invoice created'));
+      const response = isReturn
+        ? editingId
+          ? await api.updatePurchaseReturnInvoice(editingId, payload as PurchaseReturnPayload)
+          : await api.createPurchaseReturnInvoice(payload as PurchaseReturnPayload)
+        : editingId
+          ? await api.updatePurchaseInvoice(editingId, payload as PurchaseInvoicePayload)
+          : await api.createPurchaseInvoice(payload as PurchaseInvoicePayload);
+      toast.success(response.message || (editingId ? `${singularTitle} updated` : `${singularTitle} created`));
       setEditingId(null);
       resetForm();
       void loadInvoices();
@@ -321,7 +332,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
 
   async function openInvoice(id: number, mode: 'view' | 'edit') {
     try {
-      const response = await api.purchaseInvoice(id);
+      const response = isReturn ? await api.purchaseReturnInvoice(id) : await api.purchaseInvoice(id);
       const invoice = response.data as Record<string, any>;
       setSelectedInvoice(invoice);
       if (mode === 'edit') fillFormFromInvoice(invoice);
@@ -330,18 +341,32 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
     }
   }
 
+  async function approveInvoice(id: number) {
+    setSaving(true);
+    try {
+      const response = isReturn ? await api.approvePurchaseReturnInvoice(id) : await api.approvePurchaseInvoice(id);
+      toast.success(response.message || `${singularTitle} approved`);
+      setSelectedInvoice(response.data as Record<string, any>);
+      void loadInvoices();
+    } catch (error) {
+      toast.error('Approval failed', { description: errorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
       referenceNo: String(invoice.reference_no ?? ''),
-      purchaseDate: String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
+      purchaseDate: String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? todayDate()),
       supplierId: idValue(invoice.supplier_id),
       warehouseId: idValue(invoice.warehouse_id),
       purchaseStatusId: idValue(invoice.purchase_status_id ?? invoice.status),
       orderTaxRate: String(invoice.order_tax_rate ?? '0'),
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
-      paymentMode: purchasePaymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
+      paymentMode: isReturn ? 'unpaid' : purchasePaymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
       paidAmount: String(invoice.paid_amount ?? '0'),
       paymentNote: invoice.payments?.[0]?.payment_note ?? '',
       note: invoice.note ?? '',
@@ -370,9 +395,9 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
     <form onSubmit={save} className="grid gap-6">
       {mode === 'index' ? <section className="grid gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Purchase invoices</h2>
+          <h2 className="text-lg font-semibold">{pageTitle}</h2>
           <div className="flex gap-2">
-            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href="/purchase-invoices/create">Create invoice</Link>
+            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${basePath}/create`}>Create invoice</Link>
             <Button type="button" variant="secondary" onClick={() => void loadInvoices()} disabled={listLoading}>
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
@@ -382,29 +407,32 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
               <tr>
-                <th className="px-4 py-3">Purchase date</th>
+                <th className="px-4 py-3">{dateLabel}</th>
                 <th className="px-4 py-3">Reference</th>
                 <th className="px-4 py-3">Supplier</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">Approval</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {invoices.map((invoice) => (
                 <tr key={invoice.id}>
-                  <td className="px-4 py-3">{String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</td>
+                  <td className="px-4 py-3">{String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</td>
                   <td className="px-4 py-3 font-medium">{invoice.reference_no}</td>
                   <td className="px-4 py-3">{invoice.supplier?.name ?? '-'}</td>
                   <td className="px-4 py-3">{invoice.purchase_status?.label ?? invoice.status}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.grand_total))}</td>
+                  <td className="px-4 py-3"><ApprovalBadge status={invoice.approval_status} /></td>
                   <td className="px-4 py-3 text-right">
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`/purchase-invoices/${invoice.id}`}>Details</Link>
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`/purchase-invoices/${invoice.id}/edit`}>Edit</Link>
+                    {invoice.can_approve ? <Button type="button" variant="secondary" className="mr-2" disabled={saving} onClick={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
+                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${basePath}/${invoice.id}`}>Details</Link>
+                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${basePath}/${invoice.id}/edit`}>Edit</Link>
                   </td>
                 </tr>
               ))}
-              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={6}>No invoices found</td></tr> : null}
+              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={7}>No invoices found</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -412,24 +440,25 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
       {mode === 'details' ? (
         <section className="grid gap-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold tracking-tight">Purchase Invoice Details</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{singularTitle} Details</h1>
             <div className="flex gap-2">
-              <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href="/purchase-invoices">Back</Link>
-              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`/purchase-invoices/${invoiceId}/edit`}>Edit</Link> : null}
+              <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={basePath}>Back</Link>
+              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
+              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${basePath}/${invoiceId}/edit`}>Edit</Link> : null}
             </div>
           </div>
-          {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
+          {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} kind={kind} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
         </section>
       ) : null}
       {mode !== 'details' && mode !== 'index' ? <>
       <div className="flex flex-wrap items-center justify-start gap-2">
-        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href="/purchase-invoices">Back to list</Link>
+        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={basePath}>Back to list</Link>
         <Button type="button" variant="secondary" disabled={saving} onClick={resetForm}>Reset</Button>
       </div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? 'Edit Purchase Invoice' : 'Purchase Invoice'}</h1>
-          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update invoice fields and line items' : 'Receive purchased stock with optional cash payment'}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? `Edit ${singularTitle}` : singularTitle}</h1>
+          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update fields and line items' : isReturn ? 'Return purchased stock to a supplier' : 'Receive purchased stock with optional cash payment'}</p>
         </div>
         <div className="flex gap-2">
           <Button type="button" variant="secondary" disabled={loading} onClick={() => void loadOptions()}>
@@ -444,7 +473,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
         <h2 className="text-base font-semibold">Invoice</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Reference no"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
-          <Field label="Purchase date"><Input type="date" value={form.purchaseDate} onChange={(event) => setValue('purchaseDate', event.target.value)} /></Field>
+          <Field label={dateLabel}><Input type="date" value={form.purchaseDate} onChange={(event) => setValue('purchaseDate', event.target.value)} /></Field>
           <SearchableSelect
             label="Supplier"
             valueLabel={selectedSupplier?.name ?? 'Select supplier'}
@@ -471,7 +500,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
               setValue('warehouseId', String(warehouse.id));
             }}
           />
-          <Field label="Purchase Status"><Select value={form.purchaseStatusId} onValueChange={setPurchaseStatus} options={purchaseStatuses.map((status) => ({ value: String(status.id), label: status.label }))} /></Field>
+          {!isReturn ? <Field label="Purchase Status"><Select value={form.purchaseStatusId} onValueChange={setPurchaseStatus} options={purchaseStatuses.map((status) => ({ value: String(status.id), label: status.label }))} /></Field> : null}
         </div>
       </section>
 
@@ -544,7 +573,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+      {!isReturn ? <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="text-base font-semibold">Adjustments and Payment</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
@@ -558,11 +587,18 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
           {form.paymentMode === 'partial' ? <Field label="Paid amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
           <Field label="Payment note"><Input value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field>
         </div>
+      </section> : (
+      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+        <h2 className="text-base font-semibold">Adjustment</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
+        </div>
       </section>
+      )}
 
       <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
         <h2 className="text-base font-semibold">Notes</h2>
-        <Field label="Purchase note"><Textarea value={form.note} onChange={(event) => setValue('note', event.target.value)} /></Field>
+        <Field label={isReturn ? 'Return note' : 'Purchase note'}><Textarea value={form.note} onChange={(event) => setValue('note', event.target.value)} /></Field>
       </section>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-4">
@@ -583,31 +619,47 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId }: { mode?: Inv
   );
 }
 
-function PurchaseInvoiceDetails({ invoice }: { invoice: Record<string, any> }) {
+function PurchaseInvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: PurchasePageKind }) {
+  const isReturn = kind === 'return';
+
   return (
-    <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-      <div className="flex flex-wrap gap-6">
-        <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
-        <Summary label="Purchase date" value={String(invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')} />
-        <Summary label="Supplier" value={String(invoice.supplier?.name ?? '-')} />
-        <Summary label="Status" value={String(invoice.purchase_status?.label ?? invoice.status ?? '-')} />
-        <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
+    <div className="grid gap-4">
+      <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="flex flex-wrap gap-6">
+          <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
+          <Summary label={isReturn ? 'Return date' : 'Purchase date'} value={String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')} />
+          <Summary label="Supplier" value={String(invoice.supplier?.name ?? '-')} />
+          {!isReturn ? <Summary label="Status" value={String(invoice.purchase_status?.label ?? invoice.status ?? '-')} /> : null}
+          <Summary label="Approval" value={String(invoice.approval_status ?? 'approved')} />
+          {invoice.approver?.name ? <Summary label="Approved by" value={String(invoice.approver.name)} /> : null}
+          <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <tbody>
+              {(invoice.products ?? []).map((line: Record<string, any>) => (
+                <tr key={line.id} className="border-t border-neutral-100">
+                  <td className="py-2">{invoiceLineProductName(line)}</td>
+                  <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
+                  {!isReturn ? <td className="py-2 text-right">Received {money(numberValue(line.received))}</td> : null}
+                  <td className="py-2 text-right">{money(numberValue(line.total))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <tbody>
-            {(invoice.products ?? []).map((line: Record<string, any>) => (
-              <tr key={line.id} className="border-t border-neutral-100">
-                <td className="py-2">{invoiceLineProductName(line)}</td>
-                <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
-                <td className="py-2 text-right">Received {money(numberValue(line.received))}</td>
-                <td className="py-2 text-right">{money(numberValue(line.total))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
     </div>
+  );
+}
+
+function ApprovalBadge({ status }: { status: unknown }) {
+  const pending = status === 'pending';
+  return (
+    <span className={pending ? 'inline-flex rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800' : 'inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800'}>
+      {pending ? 'Pending' : 'Approved'}
+    </span>
   );
 }
 
@@ -688,7 +740,7 @@ function Summary({ label, value, strong }: { label: string; value: string; stron
   );
 }
 
-function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[], totals: ReturnType<typeof calculateTotals>): PurchaseInvoicePayload | null {
+function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[], totals: ReturnType<typeof calculateTotals>, kind: PurchasePageKind): PurchaseInvoicePayload | PurchaseReturnPayload | null {
   if (!form.referenceNo.trim()) {
     toast.error('Missing reference', { description: 'Reference no is required.' });
     return null;
@@ -712,8 +764,8 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     toast.error('Invalid received quantity', { description: 'Received quantity must be between zero and ordered quantity.' });
     return null;
   }
-  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || !item.line.expiredDate))) {
-    toast.error('Missing batch details', { description: 'Batch no and expiry date are required for batch products.' });
+  if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate)))) {
+    toast.error('Missing batch details', { description: kind === 'return' ? 'Batch no is required for batch products.' : 'Batch no and expiry date are required for batch products.' });
     return null;
   }
   if (invoiceLines.some((item) => isVariantProduct(item.product) && !productVariantById(item.product, nullableId(item.line.variantId)))) {
@@ -721,15 +773,10 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     return null;
   }
 
-  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
-  return {
+  const common = {
     reference_no: form.referenceNo.trim(),
-    purchase_date: form.purchaseDate,
     supplier_id: Number(form.supplierId),
     warehouse_id: Number(form.warehouseId),
-    status: statusId,
-    purchase_status_id: statusId,
-    payment_status: paymentStatus(form.paymentMode),
     lines: invoiceLines.map(({ line, product, values }) => {
       const variant = productVariantById(product, nullableId(line.variantId));
 
@@ -750,13 +797,30 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
       };
     }),
     order_tax_rate: numberValue(form.orderTaxRate),
+    note: nullableText(form.note),
+  };
+
+  if (kind === 'return') {
+    return {
+      ...common,
+      return_date: form.purchaseDate,
+      return_note: nullableText(form.note),
+    };
+  }
+
+  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
+  return {
+    ...common,
+    purchase_date: form.purchaseDate,
+    status: statusId,
+    purchase_status_id: statusId,
+    payment_status: paymentStatus(form.paymentMode),
     order_discount: numberValue(form.orderDiscount),
     shipping_cost: numberValue(form.shippingCost),
     paid_by_id: form.paymentMode === 'unpaid' ? null : 1,
     paying_amount: paidAmount,
     paid_amount: paidAmount,
     payment_note: nullableText(form.paymentNote),
-    note: nullableText(form.note),
   };
 }
 
@@ -987,7 +1051,7 @@ function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
   return batch?.batch_no ?? null;
 }
 
-async function validateBatchLines(lines: PurchaseInvoicePayload['lines'], products: Product[], warehouseId: number) {
+async function validateBatchLines(lines: PurchaseInvoicePayload['lines'] | PurchaseReturnPayload['lines'], products: Product[], warehouseId: number) {
   for (const line of lines) {
     if (!line.batch_no) continue;
 

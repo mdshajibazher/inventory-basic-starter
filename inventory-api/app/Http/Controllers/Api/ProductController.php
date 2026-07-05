@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
 use App\Models\Product;
 use App\Models\ProductBatch;
-use App\Models\ProductWarehouse;
 use App\Models\ProductVariant;
+use App\Models\ProductWarehouse;
 use App\Models\Tax;
 use App\Models\Unit;
 use App\Models\Variant;
@@ -25,8 +25,9 @@ class ProductController extends Controller
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
 
         logger([
-            'request' => $request->all()
+            'request' => $request->all(),
         ]);
+
         return ProductResource::collection(Product::query()
             ->with([
                 'brand:id,title',
@@ -207,6 +208,12 @@ class ProductController extends Controller
 
     private function validatedData(Request $request, ?Product $product = null): array
     {
+        if ($request->has('qty')) {
+            throw ValidationException::withMessages([
+                'qty' => ['Product stock can only be changed through purchases or stock adjustments.'],
+            ]);
+        }
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:180'],
             'code' => [
@@ -224,7 +231,6 @@ class ProductController extends Controller
             'sale_unit_id' => ['nullable', 'integer', 'exists:units,id'],
             'cost' => ['required', 'numeric', 'min:0'],
             'price' => ['required', 'numeric', 'min:0'],
-            'qty' => ['nullable', 'numeric', 'min:0'],
             'alert_quantity' => ['nullable', 'numeric', 'min:0'],
             'promotion' => ['nullable', 'boolean'],
             'promotion_price' => ['nullable', 'numeric', 'min:0'],
@@ -270,6 +276,10 @@ class ProductController extends Controller
         $data['is_batch'] = $data['is_batch'] ?? null;
         $data['is_variant'] = $data['is_batch'] ? null : ($data['is_variant'] ?? null);
         $data['is_diffPrice'] = $data['is_diffPrice'] ?? null;
+
+        if (! $product) {
+            $data['qty'] = 0;
+        }
 
         if (in_array($data['type'], ['combo', 'digital'], true)) {
             $data['cost'] = 0;
@@ -320,6 +330,7 @@ class ProductController extends Controller
             'warehousePrices.warehouse:id,name',
             'warehouseStocks.warehouse:id,name',
             'warehouseStocks.batch:id,batch_no,expired_date',
+            'activities' => fn ($query) => $query->with('causer')->latest()->limit(25),
         ];
     }
 
@@ -327,6 +338,7 @@ class ProductController extends Controller
     {
         if ($request->boolean('is_batch') || ! $request->boolean('is_variant')) {
             $product->variants()->delete();
+
             return;
         }
 
@@ -381,6 +393,7 @@ class ProductController extends Controller
     {
         if (! $request->boolean('is_diffPrice')) {
             $product->warehousePrices()->update(['price' => null]);
+
             return;
         }
 
@@ -391,24 +404,25 @@ class ProductController extends Controller
             $price = $diffPrices[$index] ?? null;
             $price = $price === '' ? null : $price;
 
-            ProductWarehouse::updateOrCreate(
-                [
-                    'product_id' => $product->id,
-                    'warehouse_id' => $warehouseId,
-                    'variant_id' => null,
-                    'product_batch_id' => null,
-                ],
-                [
-                    'qty' => 0,
-                    'price' => $price,
-                ]
-            );
+            $warehousePrice = ProductWarehouse::firstOrNew([
+                'product_id' => $product->id,
+                'warehouse_id' => $warehouseId,
+                'variant_id' => null,
+                'product_batch_id' => null,
+            ]);
+
+            if (! $warehousePrice->exists) {
+                $warehousePrice->qty = 0;
+            }
+
+            $warehousePrice->price = $price;
+            $warehousePrice->save();
         }
     }
 
     private function deleteStoredImage(?string $image): void
     {
-        if (!$image) {
+        if (! $image) {
             return;
         }
 

@@ -4,7 +4,6 @@ namespace App\Actions\Sales;
 
 use App\Models\Account;
 use App\Models\CashRegister;
-use App\Models\Coupon;
 use App\Models\Customer;
 use App\Models\GiftCard;
 use App\Models\Payment;
@@ -19,7 +18,6 @@ use App\Models\Sale;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\PaymentService;
-use App\Services\ProductStockService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -29,6 +27,7 @@ class StoreSalesInvoiceAction
     public function execute(array $data, User $user, ?UploadedFile $document = null): Sale
     {
         return DB::transaction(function () use ($data, $user, $document) {
+            $billerId = $user->requireCurrentBillerId();
             $cashRegister = CashRegister::query()
                 ->where('user_id', $user->id)
                 ->where('warehouse_id', $data['warehouse_id'])
@@ -38,13 +37,6 @@ class StoreSalesInvoiceAction
             $totals = $this->calculateTotals($data);
             $documentPath = $document?->store('sale/documents', 'public');
 
-            if (! empty($data['coupon_active']) && ! empty($data['coupon_id'])) {
-                Coupon::query()
-                    ->whereKey($data['coupon_id'])
-                    ->lockForUpdate()
-                    ->increment('used');
-            }
-
             $sale = Sale::create([
                 'reference_no' => $data['reference_no'],
                 'sale_date' => $data['sale_date'] ?? now()->toDateString(),
@@ -52,7 +44,7 @@ class StoreSalesInvoiceAction
                 'cash_register_id' => $cashRegister?->id,
                 'customer_id' => $data['customer_id'],
                 'warehouse_id' => $data['warehouse_id'],
-                'biller_id' => $data['biller_id'],
+                'biller_id' => $billerId,
                 'item' => $totals['item'],
                 'total_qty' => $totals['total_qty'],
                 'total_discount' => $totals['total_discount'],
@@ -66,11 +58,12 @@ class StoreSalesInvoiceAction
                 'shipping_cost' => $totals['shipping_cost'],
                 'grand_total' => $totals['grand_total'],
                 'sale_status' => $data['sale_status'],
-                'payment_status' => $data['payment_status'],
-                'paid_amount' => (float) ($data['paid_amount'] ?? 0),
+                'payment_status' => 2,
+                'paid_amount' => 0,
                 'document' => $documentPath,
                 'sale_note' => $data['sale_note'] ?? null,
                 'staff_note' => $data['staff_note'] ?? null,
+                'approval_status' => 'pending',
             ]);
 
             foreach ($data['product_id'] as $index => $productId) {
@@ -82,20 +75,11 @@ class StoreSalesInvoiceAction
                 $variantId = null;
                 $batchId = null;
 
-                if ((int) $data['sale_status'] === 1) {
-                    if ($product->type === 'combo') {
-                        $this->deductComboStock($product, (float) $data['qty'][$index], (int) $data['warehouse_id'], "product_id.{$index}");
-                    } elseif ($unit === null && (string) ($data['sale_unit'][$index] ?? '') === 'n/a') {
-                        $baseQuantity = $qty;
-                        $cost = $this->costSnapshot($product, $qty, $baseQuantity);
-                    }
-
-                    if ($product->type !== 'combo') {
-                        [$variantId, $batchId] = $this->deductProductStock($product, $data, $index, $baseQuantity);
-                    }
-                } else {
-                    [$variantId, $batchId] = $this->resolveItemReferences($product, $data, $index);
+                if ($unit === null && (string) ($data['sale_unit'][$index] ?? '') === 'n/a') {
+                    $baseQuantity = $qty;
+                    $cost = $this->costSnapshot($product, $qty, $baseQuantity);
                 }
+                [$variantId, $batchId] = $this->resolveItemReferences($product, $data, $index);
 
                 $productSale = ProductSale::create([
                     'sale_id' => $sale->id,
@@ -114,23 +98,6 @@ class StoreSalesInvoiceAction
                     'total_cost' => $cost['total_cost'],
                 ]);
 
-                if ((int) $data['sale_status'] === 1 && $product->type !== 'digital') {
-                    app(ProductStockService::class)->recordMovement([
-                        'product_id' => $product->id,
-                        'warehouse_id' => $data['warehouse_id'],
-                        'product_batch_id' => $batchId,
-                        'variant_id' => $variantId,
-                        'unit_id' => $unit?->id,
-                        'user_id' => $user->id,
-                        'source_type' => 'product_sale',
-                        'source_id' => $productSale->id,
-                        'type' => 'product_sale',
-                        'quantity' => -1 * (float) $data['qty'][$index],
-                        'quantity_base' => -1 * $baseQuantity,
-                        'reference_no' => $sale->reference_no,
-                        'movement_date' => $sale->sale_date?->toDateString(),
-                    ]);
-                }
             }
 
             $this->createPaymentIfNeeded($sale, $data, $user, $cashRegister);

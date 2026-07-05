@@ -7,9 +7,10 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/lib/api';
-import type { Branch, Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/lib/types';
+import type { Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
+import { ActivityLogTimeline } from '@/components/activity-log';
 import { Button, Field, Input, Select, Textarea } from '@/components/ui';
 
 type ProductOptions = {
@@ -36,7 +37,6 @@ type FormState = {
   invoiceDate: string;
   customerId: string;
   warehouseId: string;
-  billerId: string;
   orderTaxRate: string;
   orderDiscount: string;
   shippingCost: string;
@@ -75,7 +75,6 @@ const emptyForm = (kind: InvoiceKind = 'sales'): FormState => ({
   invoiceDate: todayDate(),
   customerId: 'none',
   warehouseId: 'none',
-  billerId: 'none',
   orderTaxRate: '0',
   orderDiscount: '0',
   shippingCost: '0',
@@ -91,11 +90,10 @@ type InvoiceKind = 'sales' | 'returns';
 
 export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }: { mode?: InvoicePageMode; invoiceId?: number; kind?: InvoiceKind }) {
   const router = useRouter();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const labels = invoiceLabels(kind);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -110,8 +108,11 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
 
   const selectedCustomer = customers.find((customer) => String(customer.id) === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
-  const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
-  const hasVariantLine = lines.some((line) => isVariantProduct(products.find((product) => String(product.id) === line.productId)));
+  const currentBranchLabel = user?.current_biller
+    ? user.current_biller.company_name
+      ? `${user.current_biller.name} - ${user.current_biller.company_name}`
+      : user.current_biller.name
+    : 'No branch selected';
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchCustomers = useCallback(async (query: string) => {
@@ -132,21 +133,18 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
   const loadOptions = useCallback(async () => {
     setLoading(true);
     try {
-      const [customerResponse, warehouseResponse, billerResponse, productResponse, productOptionsResponse] = await Promise.all([
+      const [customerResponse, warehouseResponse, productResponse, productOptionsResponse] = await Promise.all([
         api.customers({ perPage: 30 }),
         api.warehouses({ perPage: 30, activeOnly: true }),
-        api.branches({ perPage: 100, activeOnly: true }),
         api.products({ perPage: 30 }),
         api.productOptions(),
       ]);
       const nextCustomers = customerResponse.data as Customer[];
       const nextWarehouses = warehouseResponse.data as Warehouse[];
-      const nextBillers = billerResponse.data as Branch[];
       const nextProducts = (productResponse.data as Product[]).filter(isInvoiceProductSupported);
       const productOptions = productOptionsResponse.data as ProductOptions;
       setCustomers(nextCustomers);
       setWarehouses(nextWarehouses);
-      setBillers(nextBillers);
       setProducts(nextProducts);
       setTaxes(productOptions.taxes ?? []);
       setUnits(productOptions.units ?? []);
@@ -154,7 +152,6 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         ...current,
         customerId: current.customerId === 'none' ? idValue(nextCustomers[0]?.id) : current.customerId,
         warehouseId: current.warehouseId === 'none' ? idValue(nextWarehouses[0]?.id) : current.warehouseId,
-        billerId: current.billerId === 'none' ? idValue(nextBillers[0]?.id) : current.billerId,
       }));
     } catch (error) {
       toast.error('Load failed', { description: errorMessage(error) });
@@ -218,15 +215,16 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
   }
 
   function selectWarehouse(warehouse: Warehouse) {
+    const nextWarehouseId = String(warehouse.id);
+    const warehouseChanged = form.warehouseId !== nextWarehouseId;
+
     setWarehouses((current) => upsertById(current, warehouse));
-    setForm((current) => ({ ...current, warehouseId: String(warehouse.id) }));
+    setForm((current) => ({ ...current, warehouseId: nextWarehouseId }));
     if (kind === 'returns') return;
 
-    setLines((current) => current.map((line) => {
-      const product = products.find((item) => String(item.id) === line.productId);
-      const unitId = nullableId(line.unitId) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
-      return product ? { ...line, price: String(unitPriceForProductUnit(product, unitId, units)) } : line;
-    }));
+    if (warehouseChanged) {
+      setLines([emptyLine()]);
+    }
   }
 
   function selectProduct(lineKey: string, product: Product) {
@@ -237,7 +235,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
     }
 
     const availableQty = warehouseStockForProduct(product, warehouseId);
-    if (kind === 'sales' && availableQty <= 0) {
+    if (kind === 'sales' && !isVariantProduct(product) && availableQty <= 0) {
       toast.error('No stock available', {
         description: `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`,
       });
@@ -271,6 +269,13 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       const product = products.find((item) => String(item.id) === line.productId);
       const variant = productVariantById(product, nullableId(variantId));
       const unitId = nullableId(line.unitId) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
+      const warehouseId = nullableId(form.warehouseId);
+
+      if (product && variant && kind === 'sales' && warehouseStockForProduct(product, warehouseId, variant.variant_id) <= 0) {
+        toast.error('No stock available', {
+          description: `${product.name} - ${variant.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`,
+        });
+      }
 
       return {
         ...line,
@@ -293,7 +298,6 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       ...emptyForm(kind),
       customerId: idValue(customers[0]?.id),
       warehouseId: idValue(warehouses[0]?.id),
-      billerId: idValue(billers[0]?.id),
     });
     setLines([emptyLine()]);
   }
@@ -343,6 +347,20 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
     }
   }
 
+  async function approveInvoice(id: number) {
+    setSaving(true);
+    try {
+      const response = kind === 'returns' ? await api.approveReturnInvoice(id) : await api.approveSalesInvoice(id);
+      toast.success(response.message || `${labels.singular} approved`);
+      setSelectedInvoice(response.data as Record<string, any>);
+      void loadInvoices();
+    } catch (error) {
+      toast.error('Approval failed', { description: errorMessage(error) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -350,7 +368,6 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       invoiceDate: String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? todayDate()),
       customerId: idValue(invoice.customer_id),
       warehouseId: idValue(invoice.warehouse_id),
-      billerId: idValue(invoice.biller_id),
       orderTaxRate: String(invoice.order_tax_rate ?? '0'),
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
@@ -399,6 +416,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Paid</th>
+                <th className="px-4 py-3">Approval</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -410,13 +428,15 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                   <td className="px-4 py-3">{invoice.customer?.name ?? '-'}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.grand_total))}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.paid_amount))}</td>
+                  <td className="px-4 py-3"><ApprovalBadge status={invoice.approval_status} /></td>
                   <td className="px-4 py-3 text-right">
+                    {invoice.can_approve ? <Button type="button" variant="secondary" className="mr-2" disabled={saving} onClick={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
                     <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}`}>Details</Link>
                     <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}/edit`}>Edit</Link>
                   </td>
                 </tr>
               ))}
-              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={6}>No invoices found</td></tr> : null}
+              {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={7}>No invoices found</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -427,6 +447,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             <h1 className="text-2xl font-semibold tracking-tight">{labels.singularTitle} Details</h1>
             <div className="flex gap-2">
               <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={labels.basePath}>Back</Link>
+              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
               {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${labels.basePath}/${invoiceId}/edit`}>Edit</Link> : null}
             </div>
           </div>
@@ -480,7 +501,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             detailFor={(warehouse) => warehouse.address || warehouse.email || warehouse.phone || ''}
             onSelect={selectWarehouse}
           />
-          <Field label="Branch"><Select value={form.billerId} onValueChange={(value) => setValue('billerId', value)} options={billerOptions(billers)} /></Field>
+          <Field label="Branch"><Input value={currentBranchLabel} readOnly /></Field>
         </div>
       </section>
 
@@ -494,21 +515,25 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             Add line
           </Button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-left text-sm">
-            <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-              <tr>
-                {['Product', ...(hasVariantLine ? ['Variant'] : []), 'Qty', 'Unit', ...(hasBatchLine ? ['Batch no'] : []), 'Unit price', 'Discount', 'Tax %', 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => {
-                const product = products.find((item) => String(item.id) === line.productId);
-                const lineRequiresBatch = isBatchProduct(product);
+        <div className="grid gap-3">
+          {lines.map((line, index) => {
+            const product = products.find((item) => String(item.id) === line.productId);
+            const lineRequiresBatch = isBatchProduct(product);
+            const selectedVariant = productVariantById(product, nullableId(line.variantId));
+            const currentStock = product && (!isVariantProduct(product) || selectedVariant)
+              ? currentStockLabel(product, nullableId(form.warehouseId), selectedVariant?.variant_id)
+              : null;
 
-                return (
-                <tr key={line.key} className="border-t border-neutral-100">
-                  <td className="min-w-72 px-3 py-2">
+            return (
+              <div key={line.key} className="rounded-md border border-neutral-200 bg-white p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-neutral-900">Line {index + 1}</div>
+                  <Button type="button" variant="ghost" className="h-9 w-9 px-0" disabled={lines.length === 1} onClick={() => removeLine(line.key)} aria-label="Remove line">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-12">
+                  <div className={isVariantProduct(product) ? 'lg:col-span-7' : 'lg:col-span-9'}>
                     <SearchableSelect
                       label="Product"
                       valueLabel={productLabel(line.productId, line.variantId, products)}
@@ -518,37 +543,55 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                       labelFor={(product) => `${product.name} (${product.code})`}
                       detailFor={(product) => {
                         const warehouseId = nullableId(form.warehouseId);
+                        if (isVariantProduct(product)) {
+                          return `Base price ${money(baseUnitPriceForProduct(product))} | Select variant for stock`;
+                        }
                         return `Base price ${money(baseUnitPriceForProduct(product))} | Qty ${money(warehouseStockForProduct(product, warehouseId))}`;
                       }}
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
-                  </td>
-                  {hasVariantLine ? <td className="px-3 py-2">
-                    {isVariantProduct(product) ? (
-                      <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
+                    {currentStock && !isVariantProduct(product) ? (
+                      <div className="mt-1 text-xs font-medium text-neutral-500">
+                        Current stock: {currentStock}
+                      </div>
                     ) : null}
-                  </td> : null}
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
-                  <td className="px-3 py-2">
+                  </div>
+                  {isVariantProduct(product) ? (
+                    <div className="lg:col-span-3">
+                      <Field label="Variant">
+                        <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
+                        {currentStock ? (
+                          <div className="mt-1 text-xs font-medium text-neutral-500">
+                            Current stock: {currentStock}
+                          </div>
+                        ) : null}
+                      </Field>
+                    </div>
+                  ) : null}
+                  <div className="lg:col-span-2">
+                    <Field label="Qty"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></Field>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                  <Field label="Unit">
                     {product && product.type !== 'combo' ? (
                       <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
-                    ) : null}
-                  </td>
-                  {hasBatchLine ? <td className="px-3 py-2">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : null}</td> : null}
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></td>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium">{money(calculateLine(line).subtotal)}</td>
-                  <td className="px-3 py-2 text-right">
-                    <Button type="button" variant="ghost" className="h-9 w-9 px-0" disabled={lines.length === 1} onClick={() => removeLine(line.key)} aria-label="Remove line">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    ) : <div className="h-10" />}
+                  </Field>
+                  {lineRequiresBatch ? (
+                    <Field label="Batch no"><Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /></Field>
+                  ) : null}
+                  <Field label="Unit price"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></Field>
+                  <Field label="Discount"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
+                  <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
+                  <div className="rounded-md border border-neutral-200 px-3 py-2">
+                    <div className="text-xs font-medium uppercase text-neutral-500">Line total</div>
+                    <div className="mt-1 whitespace-nowrap text-sm font-semibold">{money(calculateLine(line).subtotal)}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -596,28 +639,42 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
 
 function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
   return (
-    <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-      <div className="flex flex-wrap gap-6">
-        <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
-        <Summary label={kind === 'returns' ? 'Return date' : 'Sale date'} value={String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')} />
-        <Summary label="Customer" value={String(invoice.customer?.name ?? '-')} />
-        <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
-        {kind === 'sales' ? <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} /> : null}
+    <div className="grid gap-4">
+      <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="flex flex-wrap gap-6">
+          <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
+          <Summary label={kind === 'returns' ? 'Return date' : 'Sale date'} value={String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')} />
+          <Summary label="Customer" value={String(invoice.customer?.name ?? '-')} />
+          <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
+          {kind === 'sales' ? <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} /> : null}
+          <Summary label="Approval" value={String(invoice.approval_status ?? 'approved')} />
+          {invoice.approver?.name ? <Summary label="Approved by" value={String(invoice.approver.name)} /> : null}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <tbody>
+              {(invoice.products ?? []).map((line: Record<string, any>) => (
+                <tr key={line.id} className="border-t border-neutral-100">
+                  <td className="py-2">{invoiceLineProductName(line)}</td>
+                  <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
+                  <td className="py-2 text-right">{money(numberValue(line.total))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <tbody>
-            {(invoice.products ?? []).map((line: Record<string, any>) => (
-              <tr key={line.id} className="border-t border-neutral-100">
-                <td className="py-2">{invoiceLineProductName(line)}</td>
-                <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
-                <td className="py-2 text-right">{money(numberValue(line.total))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
     </div>
+  );
+}
+
+function ApprovalBadge({ status }: { status: unknown }) {
+  const pending = status === 'pending';
+  return (
+    <span className={pending ? 'inline-flex rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800' : 'inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800'}>
+      {pending ? 'Pending' : 'Approved'}
+    </span>
   );
 }
 
@@ -739,8 +796,8 @@ function buildPayload(
     toast.error('Missing reference', { description: 'Reference no is required.' });
     return null;
   }
-  if (form.customerId === 'none' || form.warehouseId === 'none' || form.billerId === 'none') {
-    toast.error('Missing invoice fields', { description: 'Customer, warehouse, and branch are required.' });
+  if (form.customerId === 'none' || form.warehouseId === 'none') {
+    toast.error('Missing invoice fields', { description: 'Customer and warehouse are required.' });
     return null;
   }
 
@@ -774,7 +831,6 @@ function buildPayload(
     sale_date: kind === 'sales' ? form.invoiceDate : undefined,
     customer_id: Number(form.customerId),
     warehouse_id: Number(form.warehouseId),
-    biller_id: Number(form.billerId),
     lines: invoiceLines.map(({ line, product, values }) => {
       const variant = productVariantById(product, nullableId(line.variantId));
 
@@ -872,10 +928,6 @@ function dateOnly(value: unknown) {
 
 function taxForProduct(product: Product, taxes: Tax[]) {
   return taxes.find((tax) => tax.id === product.tax_id)?.rate ?? 0;
-}
-
-function billerOptions(billers: Branch[]) {
-  return [{ value: 'none', label: 'Select branch' }, ...billers.map((biller) => ({ value: String(biller.id), label: biller.name }))];
 }
 
 function productLabel(productId: string, variantId: string, products: Product[]) {
@@ -1018,9 +1070,12 @@ function unitRootFactor(unitId: number, units: Unit[]) {
   return null;
 }
 
-function warehouseStockForProduct(product: Product, warehouseId?: number | null) {
+function warehouseStockForProduct(product: Product, warehouseId?: number | null, variantId?: number | null) {
   const warehouseStocks = warehouseId
-    ? product.warehouse_prices?.filter((item) => Number(item.warehouse_id) === warehouseId)
+    ? product.warehouse_prices?.filter((item) => (
+      Number(item.warehouse_id) === warehouseId &&
+      (variantId ? Number(item.variant_id) === Number(variantId) : true)
+    ))
     : [];
 
   if (warehouseStocks?.length) {
@@ -1032,6 +1087,11 @@ function warehouseStockForProduct(product: Product, warehouseId?: number | null)
   }
 
   return numberValue(product.qty ?? product.quantity);
+}
+
+function currentStockLabel(product: Product, warehouseId?: number | null, variantId?: number | null) {
+  const unitCode = product.unit?.unit_code ? ` ${product.unit.unit_code}` : '';
+  return `${money(warehouseStockForProduct(product, warehouseId, variantId))}${unitCode}`;
 }
 
 function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {

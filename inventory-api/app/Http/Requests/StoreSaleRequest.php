@@ -29,7 +29,7 @@ class StoreSaleRequest extends FormRequest
             'sale_date' => ['nullable', 'date'],
             'customer_id' => ['required', 'integer', Rule::exists('customers', 'id')->where('is_active', true)],
             'warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('is_active', true)],
-            'biller_id' => ['required', 'integer', Rule::exists('billers', 'id')->where('is_active', true)],
+            'biller_id' => ['nullable', 'integer', Rule::exists('billers', 'id')->where('is_active', true)],
             'sale_status' => ['required', 'integer'],
             'payment_status' => ['required', 'integer'],
 

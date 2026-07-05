@@ -11,7 +11,10 @@ class PurchaseProductReturn extends Model
 
     protected $fillable = [
         'return_id',
+        'date',
         'product_id',
+        'product_batch_id',
+        'variant_id',
         'qty',
         'purchase_unit_id',
         'net_unit_cost',
@@ -25,7 +28,10 @@ class PurchaseProductReturn extends Model
     {
         return [
             'return_id' => 'integer',
+            'date' => 'date',
             'product_id' => 'integer',
+            'product_batch_id' => 'integer',
+            'variant_id' => 'integer',
             'qty' => 'float',
             'purchase_unit_id' => 'integer',
             'net_unit_cost' => 'float',
@@ -49,5 +55,15 @@ class PurchaseProductReturn extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(Unit::class, 'purchase_unit_id');
+    }
+
+    public function batch(): BelongsTo
+    {
+        return $this->belongsTo(ProductBatch::class, 'product_batch_id');
+    }
+
+    public function variant(): BelongsTo
+    {
+        return $this->belongsTo(Variant::class);
     }
 }

@@ -1,5 +1,5 @@
 import { tokenStorage } from './storage';
-import type { CustomerLedgerReport, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport } from './types';
+import type { CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, SmsLog } from './types';
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -21,7 +21,6 @@ export type ProductPayload = {
   sale_unit_id?: number | null;
   cost: number;
   price: number;
-  qty?: number | null;
   alert_quantity?: number | null;
   tax_id?: number | null;
   tax_method?: number | null;
@@ -127,6 +126,22 @@ type AccountPayload = {
   is_active?: boolean;
 };
 
+type ExpenseCategoryPayload = {
+  code: string;
+  name: string;
+  is_active?: boolean;
+};
+
+export type ExpensePayload = {
+  reference_no: string;
+  expense_category_id: number;
+  warehouse_id: number;
+  account_id: number;
+  amount: number;
+  note?: string | null;
+  expense_date?: string | null;
+};
+
 export type GeneralSettingPayload = {
   site_title: string;
   site_logo?: UploadImage | null;
@@ -137,6 +152,33 @@ export type GeneralSettingPayload = {
   company_address?: string | null;
   company_email?: string | null;
   company_phone?: string | null;
+  bulksmsbd_api_url?: string | null;
+  bulksmsbd_api_key?: string | null;
+  bulksmsbd_sender_id?: string | null;
+  sales_invoice_approver_ids?: number[];
+  return_invoice_approver_ids?: number[];
+  purchase_invoice_approver_ids?: number[];
+  payment_approver_ids?: number[];
+  sales_invoice_mail_notification_enabled?: boolean;
+  sales_invoice_mail_notification_user_ids?: number[];
+  sales_invoice_sms_notification_enabled?: boolean;
+  sales_invoice_sms_notification_user_ids?: number[];
+  return_invoice_mail_notification_enabled?: boolean;
+  return_invoice_mail_notification_user_ids?: number[];
+  return_invoice_sms_notification_enabled?: boolean;
+  return_invoice_sms_notification_user_ids?: number[];
+  purchase_invoice_mail_notification_enabled?: boolean;
+  purchase_invoice_mail_notification_user_ids?: number[];
+  purchase_invoice_sms_notification_enabled?: boolean;
+  purchase_invoice_sms_notification_user_ids?: number[];
+  payment_mail_notification_enabled?: boolean;
+  payment_mail_notification_user_ids?: number[];
+  payment_sms_notification_enabled?: boolean;
+  payment_sms_notification_user_ids?: number[];
+  customer_sales_invoice_sms_notification_enabled?: boolean;
+  customer_sales_invoice_mail_notification_enabled?: boolean;
+  customer_return_invoice_sms_notification_enabled?: boolean;
+  customer_return_invoice_mail_notification_enabled?: boolean;
 };
 
 export type PaymentPayload = {
@@ -205,7 +247,6 @@ export type SalesInvoicePayload = {
   sale_date?: string | null;
   customer_id: number;
   warehouse_id: number;
-  biller_id: number;
   sale_status: number;
   payment_status: number;
   lines: SalesInvoiceLinePayload[];
@@ -265,6 +306,11 @@ export type PurchaseInvoicePayload = {
   document?: UploadImage | null;
 };
 
+export type PurchaseReturnPayload = Omit<PurchaseInvoicePayload, 'purchase_date' | 'status' | 'purchase_status_id' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_note' | 'order_discount' | 'shipping_cost'> & {
+  return_date?: string | null;
+  return_note?: string | null;
+};
+
 export type BatchAvailabilityResponse = {
   valid: boolean;
   qty: number;
@@ -285,6 +331,17 @@ type UserPayload = {
   phone: string;
   password?: string;
   is_active?: boolean;
+  biller_ids: number[];
+};
+
+export type LoginResponse = {
+  data: {
+    token?: string;
+    user?: unknown;
+    requires_branch?: boolean;
+    branches?: unknown[];
+  };
+  message?: string;
 };
 
 function isFormData(body: BodyInit | null | undefined): body is FormData {
@@ -301,6 +358,10 @@ function appendNullableNumber(formData: FormData, key: string, value?: number | 
 
 function appendNullableString(formData: FormData, key: string, value?: string | null) {
   formData.append(key, value === null || value === undefined ? '' : value);
+}
+
+function appendNumberPayloadArray(formData: FormData, key: string, values?: number[]) {
+  values?.forEach((value, index) => formData.append(`${key}[${index}]`, String(value)));
 }
 
 function appendImage(formData: FormData, key: string, image?: UploadImage | null) {
@@ -359,6 +420,33 @@ function generalSettingFormData(payload: GeneralSettingPayload) {
   appendNullableString(formData, 'company_address', payload.company_address);
   appendNullableString(formData, 'company_email', payload.company_email);
   appendNullableString(formData, 'company_phone', payload.company_phone);
+  appendNullableString(formData, 'bulksmsbd_api_url', payload.bulksmsbd_api_url);
+  appendNullableString(formData, 'bulksmsbd_api_key', payload.bulksmsbd_api_key);
+  appendNullableString(formData, 'bulksmsbd_sender_id', payload.bulksmsbd_sender_id);
+  appendNumberPayloadArray(formData, 'sales_invoice_approver_ids', payload.sales_invoice_approver_ids);
+  appendNumberPayloadArray(formData, 'return_invoice_approver_ids', payload.return_invoice_approver_ids);
+  appendNumberPayloadArray(formData, 'purchase_invoice_approver_ids', payload.purchase_invoice_approver_ids);
+  appendNumberPayloadArray(formData, 'payment_approver_ids', payload.payment_approver_ids);
+  appendBoolean(formData, 'sales_invoice_mail_notification_enabled', payload.sales_invoice_mail_notification_enabled);
+  appendNumberPayloadArray(formData, 'sales_invoice_mail_notification_user_ids', payload.sales_invoice_mail_notification_user_ids);
+  appendBoolean(formData, 'sales_invoice_sms_notification_enabled', payload.sales_invoice_sms_notification_enabled);
+  appendNumberPayloadArray(formData, 'sales_invoice_sms_notification_user_ids', payload.sales_invoice_sms_notification_user_ids);
+  appendBoolean(formData, 'return_invoice_mail_notification_enabled', payload.return_invoice_mail_notification_enabled);
+  appendNumberPayloadArray(formData, 'return_invoice_mail_notification_user_ids', payload.return_invoice_mail_notification_user_ids);
+  appendBoolean(formData, 'return_invoice_sms_notification_enabled', payload.return_invoice_sms_notification_enabled);
+  appendNumberPayloadArray(formData, 'return_invoice_sms_notification_user_ids', payload.return_invoice_sms_notification_user_ids);
+  appendBoolean(formData, 'purchase_invoice_mail_notification_enabled', payload.purchase_invoice_mail_notification_enabled);
+  appendNumberPayloadArray(formData, 'purchase_invoice_mail_notification_user_ids', payload.purchase_invoice_mail_notification_user_ids);
+  appendBoolean(formData, 'purchase_invoice_sms_notification_enabled', payload.purchase_invoice_sms_notification_enabled);
+  appendNumberPayloadArray(formData, 'purchase_invoice_sms_notification_user_ids', payload.purchase_invoice_sms_notification_user_ids);
+  appendBoolean(formData, 'payment_mail_notification_enabled', payload.payment_mail_notification_enabled);
+  appendNumberPayloadArray(formData, 'payment_mail_notification_user_ids', payload.payment_mail_notification_user_ids);
+  appendBoolean(formData, 'payment_sms_notification_enabled', payload.payment_sms_notification_enabled);
+  appendNumberPayloadArray(formData, 'payment_sms_notification_user_ids', payload.payment_sms_notification_user_ids);
+  appendBoolean(formData, 'customer_sales_invoice_sms_notification_enabled', payload.customer_sales_invoice_sms_notification_enabled);
+  appendBoolean(formData, 'customer_sales_invoice_mail_notification_enabled', payload.customer_sales_invoice_mail_notification_enabled);
+  appendBoolean(formData, 'customer_return_invoice_sms_notification_enabled', payload.customer_return_invoice_sms_notification_enabled);
+  appendBoolean(formData, 'customer_return_invoice_mail_notification_enabled', payload.customer_return_invoice_mail_notification_enabled);
   return formData;
 }
 
@@ -375,7 +463,6 @@ function productFormData(payload: ProductPayload) {
   appendNullableNumber(formData, 'sale_unit_id', payload.sale_unit_id);
   formData.append('cost', String(payload.cost));
   formData.append('price', String(payload.price));
-  appendNullableNumber(formData, 'qty', payload.qty);
   appendNullableNumber(formData, 'alert_quantity', payload.alert_quantity);
   appendNullableNumber(formData, 'tax_id', payload.tax_id);
   appendNullableNumber(formData, 'tax_method', payload.tax_method);
@@ -429,7 +516,6 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   appendNullableString(formData, 'sale_date', payload.sale_date);
   formData.append('customer_id', String(payload.customer_id));
   formData.append('warehouse_id', String(payload.warehouse_id));
-  formData.append('biller_id', String(payload.biller_id));
   formData.append('sale_status', String(payload.sale_status));
   formData.append('payment_status', String(payload.payment_status));
   appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
@@ -465,7 +551,6 @@ function returnInvoiceFormData(payload: ReturnInvoicePayload) {
   appendNullableString(formData, 'return_date', payload.return_date);
   formData.append('customer_id', String(payload.customer_id));
   formData.append('warehouse_id', String(payload.warehouse_id));
-  formData.append('biller_id', String(payload.biller_id));
   appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
   appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
   appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
@@ -515,6 +600,29 @@ function purchaseInvoiceFormData(payload: PurchaseInvoicePayload) {
   appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
   appendNullableString(formData, 'payment_note', payload.payment_note);
   appendNullableString(formData, 'note', payload.note);
+  appendImage(formData, 'document', payload.document);
+  return formData;
+}
+
+function purchaseReturnFormData(payload: PurchaseReturnPayload) {
+  const formData = new FormData();
+  formData.append('reference_no', payload.reference_no);
+  appendNullableString(formData, 'return_date', payload.return_date);
+  formData.append('supplier_id', String(payload.supplier_id));
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableStringArray(formData, 'product_code', payload.lines.map((line) => line.product_code));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
+  appendNullableStringArray(formData, 'purchase_unit', payload.lines.map((line) => line.purchase_unit));
+  appendNumberArray(formData, 'net_unit_cost', payload.lines.map((line) => line.net_unit_cost));
+  appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
+  appendNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
+  appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
+  appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);
+  appendNullableString(formData, 'return_note', payload.return_note ?? payload.note);
   appendImage(formData, 'document', payload.document);
   return formData;
 }
@@ -587,11 +695,11 @@ const putForm = (formData: FormData) => {
 };
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<{ data: { token: string; user: unknown } }>('/login', {
+  login: (email: string, password: string, billerId?: number) =>
+    request<LoginResponse>('/login', {
       method: 'POST',
       auth: false,
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, biller_id: billerId }),
     }),
   me: () => request<{ data: unknown }>('/me'),
   logout: () => request<{ message: string }>('/logout', { method: 'POST' }),
@@ -658,13 +766,57 @@ export const api = {
   createAccount: (payload: AccountPayload) => request<{ data: unknown }>('/accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateAccount: (id: number, payload: AccountPayload) => request<{ data: unknown }>(`/accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteAccount: (id: number) => request<{ message: string }>(`/accounts/${id}`, { method: 'DELETE' }),
+  expenseCategories: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/expense-categories${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`),
+  'expense-categories': (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/expense-categories${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`),
+  createExpenseCategory: (payload: ExpenseCategoryPayload) =>
+    request<{ data: unknown }>('/expense-categories', { method: 'POST', body: JSON.stringify(payload) }),
+  updateExpenseCategory: (id: number, payload: ExpenseCategoryPayload) =>
+    request<{ data: unknown }>(`/expense-categories/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteExpenseCategory: (id: number) => request<{ message: string }>(`/expense-categories/${id}`, { method: 'DELETE' }),
+  expenses: (params: { page?: number; perPage?: number; search?: string; warehouseId?: number | null; accountId?: number | null; expenseCategoryId?: number | null; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<Expense>>(`/expenses${queryString({
+      page: params.page,
+      per_page: params.perPage,
+      search: params.search,
+      warehouse_id: params.warehouseId,
+      account_id: params.accountId,
+      expense_category_id: params.expenseCategoryId,
+      from: params.from,
+      to: params.to,
+    })}`),
+  createExpense: (payload: ExpensePayload) =>
+    request<{ data: Expense; message: string }>('/expenses', { method: 'POST', body: JSON.stringify(payload) }),
+  updateExpense: (id: number, payload: ExpensePayload) =>
+    request<{ data: Expense; message: string }>(`/expenses/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteExpense: (id: number) => request<{ message: string }>(`/expenses/${id}`, { method: 'DELETE' }),
   generalSettings: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/general-settings${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
   createGeneralSetting: (payload: GeneralSettingPayload) =>
     request<{ data: unknown }>('/general-settings', { method: 'POST', body: generalSettingFormData(payload) }),
   updateGeneralSetting: (id: number, payload: GeneralSettingPayload) =>
     request<{ data: unknown }>(`/general-settings/${id}`, { method: 'POST', body: putForm(generalSettingFormData(payload)) }),
-  deleteGeneralSetting: (id: number) => request<{ message: string }>(`/general-settings/${id}`, { method: 'DELETE' }),
+  emailLogs: (params: { page?: number; perPage?: number; search?: string; status?: string; recordType?: string; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<EmailLog>>(`/email-logs${queryString({
+      page: params.page,
+      per_page: params.perPage,
+      search: params.search,
+      status: params.status,
+      record_type: params.recordType,
+      from: params.from,
+      to: params.to,
+    })}`),
+  smsLogs: (params: { page?: number; perPage?: number; search?: string; status?: string; recordType?: string; from?: string; to?: string } = {}) =>
+    request<PaginatedResponse<SmsLog>>(`/sms-logs${queryString({
+      page: params.page,
+      per_page: params.perPage,
+      search: params.search,
+      status: params.status,
+      record_type: params.recordType,
+      from: params.from,
+      to: params.to,
+    })}`),
   accountStatement: (id: number, params: { page?: number; perPage?: number; from?: string; to?: string } = {}) =>
     request<PaginatedResponse<Payment>>(`/accounts/${id}/statement${queryString({ page: params.page, per_page: params.perPage, from: params.from, to: params.to })}`),
   customers: (params: { page?: number; perPage?: number; search?: string } = {}) =>
@@ -685,6 +837,18 @@ export const api = {
     request<PaginatedResponse<unknown>>(`/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`),
   profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
     request<ProfitReport>(`/reports/profit${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`),
+  exportProfitReportPdf: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
+    download(
+      `/reports/profit/pdf${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`,
+      `profit-report-${params.startDate ?? 'start'}-to-${params.endDate ?? 'end'}.pdf`
+    ),
+  datewiseProductReport: (params: { productId: number; startDate?: string; endDate?: string }) =>
+    request<DatewiseProductReport>(`/reports/datewise-products${queryString({ product_id: params.productId, start_date: params.startDate, end_date: params.endDate })}`),
+  exportDatewiseProductReportPdf: (params: { productId: number; startDate?: string; endDate?: string }) =>
+    download(
+      `/reports/datewise-products/pdf${queryString({ product_id: params.productId, start_date: params.startDate, end_date: params.endDate })}`,
+      `datewise-product-report-${params.startDate ?? 'start'}-to-${params.endDate ?? 'end'}.pdf`
+    ),
   productStockHistory: (productId: number, params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/products/${productId}/stock-history${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
   exportProductStockHistory: (productId: number, search?: string) =>
@@ -703,30 +867,42 @@ export const api = {
   updateProduct: (id: number, payload: ProductPayload) => request<{ data: unknown }>(`/products/${id}`, { method: 'POST', body: putForm(productFormData(payload)) }),
   deleteProduct: (id: number) => request<{ message: string }>(`/products/${id}`, { method: 'DELETE' }),
   purchaseStatuses: () => request<{ data: unknown[] }>('/purchase-statuses'),
-  salesInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null } = {}) =>
-    request<PaginatedResponse<unknown>>(`/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId })}`),
-  saleInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; outstandingOnly?: boolean } = {}) =>
-    request<PaginatedResponse<InvoiceOption>>(`/sales-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, outstanding_only: params.outstandingOnly })}`),
+  salesInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
+  saleInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; outstandingOnly?: boolean; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(`/sales-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, outstanding_only: params.outstandingOnly, approved_only: params.approvedOnly })}`),
   salesInvoice: (id: number) => request<{ data: unknown }>(`/sales-invoices/${id}`),
   createSalesInvoice: (payload: SalesInvoicePayload) => request<{ data: unknown; message: string }>('/sales-invoices', { method: 'POST', body: salesInvoiceFormData(payload) }),
   updateSalesInvoice: (id: number, payload: SalesInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/sales-invoices/${id}`, { method: 'POST', body: putForm(salesInvoiceFormData(payload)) }),
-  returnInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null } = {}) =>
-    request<PaginatedResponse<unknown>>(`/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId })}`),
-  returnInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number } = {}) =>
-    request<PaginatedResponse<InvoiceOption>>(`/return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId })}`),
+  approveSalesInvoice: (id: number) => request<{ data: unknown; message: string }>(`/sales-invoices/${id}/approve`, { method: 'POST' }),
+  returnInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
+  returnInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(`/return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
   returnInvoice: (id: number) => request<{ data: unknown }>(`/return-invoices/${id}`),
   createReturnInvoice: (payload: ReturnInvoicePayload) => request<{ data: unknown; message: string }>('/return-invoices', { method: 'POST', body: returnInvoiceFormData(payload) }),
   updateReturnInvoice: (id: number, payload: ReturnInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/return-invoices/${id}`, { method: 'POST', body: putForm(returnInvoiceFormData(payload)) }),
-  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null } = {}) =>
-    request<PaginatedResponse<unknown>>(`/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId })}`),
-  purchaseInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; outstandingOnly?: boolean } = {}) =>
-    request<PaginatedResponse<InvoiceOption>>(`/purchase-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, outstanding_only: params.outstandingOnly })}`),
+  approveReturnInvoice: (id: number) => request<{ data: unknown; message: string }>(`/return-invoices/${id}/approve`, { method: 'POST' }),
+  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
+  purchaseInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; outstandingOnly?: boolean; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(`/purchase-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, outstanding_only: params.outstandingOnly, approved_only: params.approvedOnly })}`),
   purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
   createPurchaseInvoice: (payload: PurchaseInvoicePayload) => request<{ data: unknown; message: string }>('/purchase-invoices', { method: 'POST', body: purchaseInvoiceFormData(payload) }),
   updatePurchaseInvoice: (id: number, payload: PurchaseInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/purchase-invoices/${id}`, { method: 'POST', body: putForm(purchaseInvoiceFormData(payload)) }),
+  approvePurchaseInvoice: (id: number) => request<{ data: unknown; message: string }>(`/purchase-invoices/${id}/approve`, { method: 'POST' }),
+  purchaseReturnInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<unknown>>(`/purchase-return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
+  purchaseReturnInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; approvedOnly?: boolean } = {}) =>
+    request<PaginatedResponse<InvoiceOption>>(`/purchase-return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
+  purchaseReturnInvoice: (id: number) => request<{ data: unknown }>(`/purchase-return-invoices/${id}`),
+  createPurchaseReturnInvoice: (payload: PurchaseReturnPayload) => request<{ data: unknown; message: string }>('/purchase-return-invoices', { method: 'POST', body: purchaseReturnFormData(payload) }),
+  updatePurchaseReturnInvoice: (id: number, payload: PurchaseReturnPayload) =>
+    request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}`, { method: 'POST', body: putForm(purchaseReturnFormData(payload)) }),
+  approvePurchaseReturnInvoice: (id: number) => request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}/approve`, { method: 'POST' }),
   payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; direction?: PaymentDirection | 'all' } = {}) =>
     request<PaginatedResponse<Payment>>(`/payments${queryString({
       page: params.page,
@@ -739,4 +915,6 @@ export const api = {
     })}`),
   createPayment: (payload: PaymentPayload) =>
     request<{ data: Payment; message: string }>('/payments', { method: 'POST', body: JSON.stringify(payload) }),
+  payment: (id: number) => request<{ data: Payment }>(`/payments/${id}`),
+  approvePayment: (id: number) => request<{ data: Payment; message: string }>(`/payments/${id}/approve`, { method: 'POST' }),
 };

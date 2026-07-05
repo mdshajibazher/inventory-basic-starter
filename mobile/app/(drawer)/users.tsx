@@ -16,11 +16,12 @@ import {
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
-import type { PaginationMeta, Permission, Role, User } from '@/src/types';
+import type { Branch, PaginationMeta, Permission, Role, User } from '@/src/types';
 
 type UserOptions = {
   roles: Role[];
   permissions: Permission[];
+  branches: Branch[];
 };
 
 type RouteParams = {
@@ -35,6 +36,7 @@ type UserForm = {
   phone: string;
   password: string;
   isActive: boolean;
+  billerIds: number[];
 };
 
 const emptyForm: UserForm = {
@@ -43,6 +45,7 @@ const emptyForm: UserForm = {
   phone: '',
   password: '',
   isActive: true,
+  billerIds: [],
 };
 
 const perPage = 15;
@@ -60,6 +63,7 @@ function userToForm(user: User): UserForm {
     phone: user.phone ?? '',
     password: '',
     isActive: Boolean(user.is_active),
+    billerIds: user.biller_ids ?? user.billers?.map((branch) => branch.id) ?? [],
   };
 }
 
@@ -87,7 +91,7 @@ export default function UsersScreen() {
   const { hasPermission, refreshUser } = useAuth();
   const route = useRoute();
   const [users, setUsers] = useState<User[]>([]);
-  const [options, setOptions] = useState<UserOptions>({ roles: [], permissions: [] });
+  const [options, setOptions] = useState<UserOptions>({ roles: [], permissions: [], branches: [] });
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -189,7 +193,7 @@ export default function UsersScreen() {
 
   function openCreateModal() {
     setEditingUser(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, billerIds: options.branches[0] ? [options.branches[0].id] : [] });
     setModalVisible(true);
   }
 
@@ -217,6 +221,15 @@ export default function UsersScreen() {
     setForm(emptyForm);
   }
 
+  function toggleBranch(branchId: number) {
+    setForm((current) => ({
+      ...current,
+      billerIds: current.billerIds.includes(branchId)
+        ? current.billerIds.filter((id) => id !== branchId)
+        : [...current.billerIds, branchId],
+    }));
+  }
+
   function closeRoleModal() {
     setRoleModalVisible(false);
     setEditingUser(null);
@@ -240,6 +253,11 @@ export default function UsersScreen() {
       return;
     }
 
+    if (!form.billerIds.length) {
+      Alert.alert('Missing branch', 'Select at least one branch.');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -248,6 +266,7 @@ export default function UsersScreen() {
         phone: form.phone.trim(),
         password: form.password.trim() || undefined,
         is_active: form.isActive,
+        biller_ids: form.billerIds,
       };
 
       if (editingUser) {
@@ -362,6 +381,7 @@ export default function UsersScreen() {
             <DataTable.Title style={styles.nameColumn}>Name</DataTable.Title>
             <DataTable.Title style={styles.emailColumn}>Email</DataTable.Title>
             <DataTable.Title style={styles.phoneColumn}>Phone</DataTable.Title>
+            <DataTable.Title style={styles.branchColumn}>Branches</DataTable.Title>
             <DataTable.Title style={styles.roleColumn}>Roles</DataTable.Title>
             <DataTable.Title style={styles.permissionColumn}>Permissions</DataTable.Title>
             <DataTable.Title style={styles.actionColumn}>Action</DataTable.Title>
@@ -372,6 +392,9 @@ export default function UsersScreen() {
               <DataTable.Cell style={styles.nameColumn}>{user.name}</DataTable.Cell>
               <DataTable.Cell style={styles.emailColumn}>{user.email}</DataTable.Cell>
               <DataTable.Cell style={styles.phoneColumn}>{user.phone ?? '-'}</DataTable.Cell>
+              <DataTable.Cell style={styles.branchColumn}>
+                {user.billers?.map((branch) => branch.name).join(', ') || user.current_biller?.name || '-'}
+              </DataTable.Cell>
               <DataTable.Cell style={styles.roleColumn}>
                 {userRoles(user).map((role) => role.name).join(', ') || '-'}
               </DataTable.Cell>
@@ -461,6 +484,26 @@ export default function UsersScreen() {
               secureTextEntry
               onChangeText={(value) => updateForm('password', value)}
             />
+
+            <View style={styles.permissionGroup}>
+              <Text variant="titleMedium" style={styles.groupTitle}>
+                Branch
+              </Text>
+              {options.branches.map((branch) => (
+                <Checkbox.Item
+                  key={branch.id}
+                  label={branch.company_name ? `${branch.name} - ${branch.company_name}` : branch.name}
+                  status={form.billerIds.includes(branch.id) ? 'checked' : 'unchecked'}
+                  onPress={() => toggleBranch(branch.id)}
+                  disabled={saving}
+                />
+              ))}
+              {!options.branches.length ? (
+                <Text variant="bodyMedium" style={styles.muted}>
+                  No active branches found.
+                </Text>
+              ) : null}
+            </View>
 
             <View style={styles.switchRow}>
               <Text>Active</Text>
@@ -600,6 +643,9 @@ const styles = StyleSheet.create({
   },
   phoneColumn: {
     flex: 1,
+  },
+  branchColumn: {
+    flex: 1.2,
   },
   roleColumn: {
     flex: 1.2,

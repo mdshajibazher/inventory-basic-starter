@@ -24,7 +24,7 @@ class StoreReturnInvoiceRequest extends FormRequest
             'return_date' => ['nullable', 'date'],
             'customer_id' => ['required', 'integer', Rule::exists('customers', 'id')->where('is_active', true)],
             'warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('is_active', true)],
-            'biller_id' => ['required', 'integer', Rule::exists('billers', 'id')->where('is_active', true)],
+            'biller_id' => ['nullable', 'integer', Rule::exists('billers', 'id')->where('is_active', true)],
 
             'product_id' => ['required', 'array', 'min:1'],
             'product_id.*' => ['required', 'integer', Rule::exists('products', 'id')->where('is_active', true)],

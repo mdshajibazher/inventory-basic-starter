@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Payment;
 use App\Models\Purchase;
+use App\Models\ReturnInvoice;
+use App\Models\ReturnPurchase;
 use App\Models\Sale;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -16,9 +18,11 @@ class PaymentService
         return DB::transaction(function () use ($data, $user) {
             $data = $this->normalize($data);
             $this->validateBusinessRules($data);
+            $this->validateDocumentBranch($data, $user);
 
             $payment = Payment::create([
                 'user_id' => $user->id,
+                'biller_id' => $user->requireCurrentBillerId(),
                 'purchase_id' => $data['purchase_id'] ?? null,
                 'sale_id' => $data['sale_id'] ?? null,
                 'sale_return_id' => $data['sale_return_id'] ?? null,
@@ -34,9 +38,8 @@ class PaymentService
                 'change' => round((float) ($data['change'] ?? 0), 2),
                 'paying_method' => $data['paying_method'],
                 'payment_note' => $data['payment_note'] ?? null,
+                'approval_status' => ApprovalService::PENDING,
             ]);
-
-            $this->recalculateLinkedInvoice($payment);
 
             return $payment->load($this->relations());
         });
@@ -65,6 +68,7 @@ class PaymentService
             ->where('sale_id', $sale->id)
             ->where('payment_type', Payment::TYPE_SALE_PAYMENT)
             ->where('direction', Payment::DIRECTION_IN)
+            ->where('approval_status', ApprovalService::APPROVED)
             ->sum('amount');
 
         $sale->paid_amount = min(round($paidAmount, 2), (float) $sale->grand_total);
@@ -84,6 +88,7 @@ class PaymentService
             ->where('purchase_id', $purchase->id)
             ->where('payment_type', Payment::TYPE_PURCHASE_PAYMENT)
             ->where('direction', Payment::DIRECTION_OUT)
+            ->where('approval_status', ApprovalService::APPROVED)
             ->sum('amount');
 
         $purchase->paid_amount = min(round($paidAmount, 2), (float) $purchase->grand_total);
@@ -95,6 +100,7 @@ class PaymentService
     {
         return [
             'account:id,name,account_no',
+            'biller:id,name,company_name',
             'customer:id,name,email,phone_number',
             'supplier:id,name,email,phone_number',
             'sale:id,reference_no,grand_total',
@@ -102,6 +108,7 @@ class PaymentService
             'saleReturn:id,reference_no,grand_total',
             'purchaseReturn:id,reference_no,grand_total',
             'user:id,name,email',
+            'approver:id,name,email',
         ];
     }
 
@@ -202,6 +209,34 @@ class PaymentService
         foreach ($documentFields as $field) {
             if ($field !== $allowedDocument && ! empty($data[$field])) {
                 $errors[$field][] = "The {$field} field is not allowed for {$type}.";
+            }
+        }
+    }
+
+    private function validateDocumentBranch(array $data, User $user): void
+    {
+        $billerId = $user->requireCurrentBillerId();
+        $checks = [
+            'sale_id' => [Sale::class, 'sale_id'],
+            'purchase_id' => [Purchase::class, 'purchase_id'],
+            'sale_return_id' => [ReturnInvoice::class, 'sale_return_id'],
+            'purchase_return_id' => [ReturnPurchase::class, 'purchase_return_id'],
+        ];
+
+        foreach ($checks as $field => [$model, $errorKey]) {
+            if (empty($data[$field])) {
+                continue;
+            }
+
+            $belongsToBranch = $model::query()
+                ->whereKey($data[$field])
+                ->where('biller_id', $billerId)
+                ->exists();
+
+            if (! $belongsToBranch) {
+                throw ValidationException::withMessages([
+                    $errorKey => ['The linked invoice does not belong to the selected branch.'],
+                ]);
             }
         }
     }

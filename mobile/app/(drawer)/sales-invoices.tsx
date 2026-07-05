@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
+import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/src/lib/api';
-import type { Branch, Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/src/types';
+import type { Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/src/types';
 
 type ProductOptions = {
   taxes?: Tax[];
@@ -70,7 +71,6 @@ const initialForm = (kind: InvoiceKind = 'sales') => ({
   invoiceDate: todayDate(),
   customerId: null as number | null,
   warehouseId: null as number | null,
-  billerId: null as number | null,
   orderTaxRate: '0',
   orderDiscount: '0',
   shippingCost: '0',
@@ -83,11 +83,10 @@ const initialForm = (kind: InvoiceKind = 'sales') => ({
 type FormState = ReturnType<typeof initialForm>;
 
 export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' }: { mode?: InvoiceScreenMode; invoiceId?: number; kind?: InvoiceKind }) {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const labels = invoiceLabels(kind);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [billers, setBillers] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxes, setTaxes] = useState<Tax[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -102,7 +101,11 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
 
   const selectedCustomer = customers.find((customer) => customer.id === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === form.warehouseId);
-  const selectedBiller = billers.find((biller) => biller.id === form.billerId);
+  const currentBranchLabel = user?.current_biller
+    ? user.current_biller.company_name
+      ? `${user.current_biller.name} - ${user.current_biller.company_name}`
+      : user.current_biller.name
+    : 'No branch selected';
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchCustomers = useCallback(async (query: string) => {
@@ -123,24 +126,21 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
   const loadOptions = useCallback(async () => {
     setLoading(true);
     try {
-      const [customerResponse, warehouseResponse, billerResponse, productResponse, productOptionsResponse] =
+      const [customerResponse, warehouseResponse, productResponse, productOptionsResponse] =
         await Promise.all([
           api.customers({ perPage: 100 }),
           api.warehouses({ perPage: 100, activeOnly: true }),
-          api.branches({ perPage: 100, activeOnly: true }),
           api.products({ perPage: 100 }),
           api.productOptions(),
         ]);
 
       const nextCustomers = customerResponse.data as Customer[];
       const nextWarehouses = warehouseResponse.data as Warehouse[];
-      const nextBillers = billerResponse.data as Branch[];
       const nextProducts = (productResponse.data as Product[]).filter(isInvoiceProductSupported);
       const productOptions = productOptionsResponse.data as ProductOptions;
 
       setCustomers(nextCustomers);
       setWarehouses(nextWarehouses);
-      setBillers(nextBillers);
       setProducts(nextProducts);
       setTaxes(productOptions.taxes ?? []);
       setUnits(productOptions.units ?? []);
@@ -148,7 +148,6 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         ...current,
         customerId: current.customerId ?? nextCustomers[0]?.id ?? null,
         warehouseId: current.warehouseId ?? nextWarehouses[0]?.id ?? null,
-        billerId: current.billerId ?? nextBillers[0]?.id ?? null,
       }));
     } catch (error) {
       Alert.alert('Load failed', error instanceof Error ? error.message : 'Try again.');
@@ -205,15 +204,15 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
   }
 
   function selectWarehouse(warehouse: Warehouse) {
+    const warehouseChanged = form.warehouseId !== warehouse.id;
+
     setWarehouses((current) => upsertById(current, warehouse));
     setForm((current) => ({ ...current, warehouseId: warehouse.id }));
     if (kind === 'returns') return;
 
-    setLines((current) => current.map((line) => {
-      const product = products.find((item) => item.id === line.productId);
-      const unitId = line.unitId ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
-      return product ? { ...line, price: String(unitPriceForProductUnit(product, unitId, units)) } : line;
-    }));
+    if (warehouseChanged) {
+      setLines([emptyLine()]);
+    }
   }
 
   function selectProduct(lineKey: string, product: Product) {
@@ -223,7 +222,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     }
 
     const availableQty = warehouseStockForProduct(product, form.warehouseId);
-    if (kind === 'sales' && availableQty <= 0) {
+    if (kind === 'sales' && !isVariantProduct(product) && availableQty <= 0) {
       Alert.alert('No stock available', `${product.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`);
       return;
     }
@@ -256,6 +255,10 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       const variant = productVariantById(product, variantId);
       const unitId = line.unitId ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale');
 
+      if (product && variant && kind === 'sales' && warehouseStockForProduct(product, form.warehouseId, variant.variant_id) <= 0) {
+        Alert.alert('No stock available', `${product.name} - ${variant.name} has no stock in ${selectedWarehouse?.name ?? 'the selected warehouse'}.`);
+      }
+
       return {
         ...line,
         variantId,
@@ -278,7 +281,6 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       invoiceDate: todayDate(),
       customerId: customers[0]?.id ?? null,
       warehouseId: warehouses[0]?.id ?? null,
-      billerId: billers[0]?.id ?? null,
     });
     setLines([emptyLine()]);
   }
@@ -327,6 +329,19 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     }
   }
 
+  async function approveInvoice(id: number) {
+    setSaving(true);
+    try {
+      const response = kind === 'returns' ? await api.approveReturnInvoice(id) : await api.approveSalesInvoice(id);
+      setSelectedInvoice(response.data as Record<string, any>);
+      void loadInvoices();
+    } catch (error) {
+      Alert.alert('Approval failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -334,7 +349,6 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       invoiceDate: String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? todayDate()),
       customerId: Number(invoice.customer_id),
       warehouseId: Number(invoice.warehouse_id),
-      billerId: Number(invoice.biller_id),
       orderTaxRate: String(invoice.order_tax_rate ?? '0'),
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
@@ -400,7 +414,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
               <Text variant="titleSmall">{invoice.reference_no}</Text>
               <Text variant="bodySmall" style={styles.muted}>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.customer?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
+              <Text variant="bodySmall" style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
             </View>
+            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
             <Button compact onPress={() => router.push({ pathname: labels.detailRoute, params: { id: String(invoice.id) } })}>Details</Button>
             <Button compact onPress={() => router.push({ pathname: labels.editRoute, params: { id: String(invoice.id) } })}>Edit</Button>
           </View>
@@ -411,7 +427,10 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         <View style={styles.panel}>
           <View style={styles.sectionHeader}>
             <Text variant="titleMedium">{labels.title} details</Text>
-            <Button mode="outlined" onPress={() => router.push(labels.indexRoute)}>Back</Button>
+            <View style={styles.rowActions}>
+              {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
+              <Button mode="outlined" onPress={() => router.push(labels.indexRoute)}>Back</Button>
+            </View>
           </View>
           {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} /> : <Text style={styles.muted}>Loading invoice...</Text>}
         </View>
@@ -449,14 +468,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           detailFor={(warehouse) => warehouse.address || warehouse.email || warehouse.phone || ''}
           onSelect={selectWarehouse}
         />
-        <SelectField
-          label="Branch"
-          valueLabel={selectedBiller?.name ?? 'Select branch'}
-          options={billers}
-          keyFor={(biller) => biller.id}
-          labelFor={(biller) => biller.name}
-          onSelect={(biller) => setValue('billerId', biller.id)}
-        />
+        <TextInput mode="outlined" label="Branch" value={currentBranchLabel} editable={false} />
       </View>
 
       <View style={styles.panel}>
@@ -471,6 +483,9 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           const selectedUnit = unitOptions.find((unit) => unit.id === line.unitId);
           const lineRequiresBatch = isBatchProduct(product);
           const lineTotal = calculateLine(line).subtotal;
+          const currentStock = product && (!isVariantProduct(product) || selectedVariant)
+            ? currentStockLabel(product, form.warehouseId, selectedVariant?.variant_id)
+            : null;
           return (
             <View key={line.key} style={styles.lineCard}>
               <View style={styles.sectionHeader}>
@@ -486,11 +501,20 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
                 search={searchProducts}
                 keyFor={(item) => item.id}
                 labelFor={(item) => `${item.name} (${item.code})`}
-                detailFor={(item) => `Base price ${money(baseUnitPriceForProduct(item))} | Qty ${money(warehouseStockForProduct(item, form.warehouseId))}`}
+                detailFor={(item) => (
+                  isVariantProduct(item)
+                    ? `Base price ${money(baseUnitPriceForProduct(item))} | Select variant for stock`
+                    : `Base price ${money(baseUnitPriceForProduct(item))} | Qty ${money(warehouseStockForProduct(item, form.warehouseId))}`
+                )}
                 onSelect={(item) => {
                   selectProduct(line.key, item);
                 }}
               />
+              {currentStock && !isVariantProduct(product) ? (
+                <Text variant="bodySmall" style={styles.muted}>
+                  Current stock: {currentStock}
+                </Text>
+              ) : null}
               <View style={styles.formRow}>
                 <TextInput mode="outlined" label="Qty" keyboardType="numeric" value={line.qty} onChangeText={(value) => updateLine(line.key, 'qty', value)} style={styles.formField} />
                 {lineRequiresBatch ? <TextInput mode="outlined" label="Batch no *" value={line.batchNo} onChangeText={(value) => updateLine(line.key, 'batchNo', value)} style={styles.formField} /> : null}
@@ -504,6 +528,11 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
                     onSelect={(variant) => selectVariant(line.key, variant.variant_id)}
                     style={styles.formField}
                   />
+                ) : null}
+                {currentStock && isVariantProduct(product) ? (
+                  <Text variant="bodySmall" style={[styles.muted, styles.formField]}>
+                    Current stock: {currentStock}
+                  </Text>
                 ) : null}
                 {product && product.type !== 'combo' ? (
                   <SelectField
@@ -600,15 +629,19 @@ export default function SalesInvoicesIndexScreen() {
 
 function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
   return (
-    <View style={styles.detailBox}>
-      <Text variant="titleSmall">{invoice.reference_no}</Text>
-      <Text>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
-      <Text style={styles.muted}>{invoice.customer?.name ?? '-'}</Text>
-      <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
-      {kind === 'sales' ? <Text>Paid: {money(numberValue(invoice.paid_amount))}</Text> : null}
-      {(invoice.products ?? []).map((line: Record<string, any>) => (
-        <Text key={line.id} style={styles.muted}>{line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))} | {money(numberValue(line.total))}</Text>
-      ))}
+    <View style={styles.detailStack}>
+      <View style={styles.detailBox}>
+        <Text variant="titleSmall">{invoice.reference_no}</Text>
+        <Text>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
+        <Text style={styles.muted}>{invoice.customer?.name ?? '-'}</Text>
+        <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
+        {kind === 'sales' ? <Text>Paid: {money(numberValue(invoice.paid_amount))}</Text> : null}
+        <Text style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
+        {(invoice.products ?? []).map((line: Record<string, any>) => (
+          <Text key={line.id} style={styles.muted}>{line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))} | {money(numberValue(line.total))}</Text>
+        ))}
+      </View>
+      <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
     </View>
   );
 }
@@ -766,8 +799,8 @@ function buildPayload(
     Alert.alert('Missing reference', 'Reference no is required.');
     return null;
   }
-  if (!form.customerId || !form.warehouseId || !form.billerId) {
-    Alert.alert('Missing invoice fields', 'Customer, warehouse, and branch are required.');
+  if (!form.customerId || !form.warehouseId) {
+    Alert.alert('Missing invoice fields', 'Customer and warehouse are required.');
     return null;
   }
 
@@ -801,7 +834,6 @@ function buildPayload(
     sale_date: kind === 'sales' ? form.invoiceDate : undefined,
     customer_id: form.customerId,
     warehouse_id: form.warehouseId,
-    biller_id: form.billerId,
     lines: invoiceLines.map(({ line, product, values }) => {
       const variant = productVariantById(product, line.variantId);
 
@@ -1009,9 +1041,12 @@ function unitRootFactor(unitId: number, units: Unit[]) {
   return null;
 }
 
-function warehouseStockForProduct(product: Product, warehouseId?: number | null) {
+function warehouseStockForProduct(product: Product, warehouseId?: number | null, variantId?: number | null) {
   const warehouseStocks = warehouseId
-    ? product.warehouse_prices?.filter((item) => Number(item.warehouse_id) === warehouseId)
+    ? product.warehouse_prices?.filter((item) => (
+      Number(item.warehouse_id) === warehouseId &&
+      (variantId ? Number(item.variant_id) === Number(variantId) : true)
+    ))
     : [];
 
   if (warehouseStocks?.length) {
@@ -1023,6 +1058,11 @@ function warehouseStockForProduct(product: Product, warehouseId?: number | null)
   }
 
   return numberValue(product.qty ?? product.quantity);
+}
+
+function currentStockLabel(product: Product, warehouseId?: number | null, variantId?: number | null) {
+  const unitCode = product.unit?.unit_code ? ` ${product.unit.unit_code}` : '';
+  return `${money(warehouseStockForProduct(product, warehouseId, variantId))}${unitCode}`;
 }
 
 function firstBatchNoForProduct(product: Product, warehouseId?: number | null) {
@@ -1329,6 +1369,9 @@ const styles = StyleSheet.create({
     borderColor: '#eeeeee',
     backgroundColor: '#fafafa',
   },
+  detailStack: {
+    gap: 12,
+  },
   formRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1392,6 +1435,14 @@ const styles = StyleSheet.create({
   lineTotal: {
     textAlign: 'right',
     color: '#333333',
+  },
+  pending: {
+    color: '#92400e',
+    fontWeight: '700',
+  },
+  approved: {
+    color: '#047857',
+    fontWeight: '700',
   },
   summaryTable: {
     minWidth: 360,

@@ -46,6 +46,10 @@ export function ProductStocksPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductStock | null>(null);
+  const [variantStockProduct, setVariantStockProduct] = useState<ProductStock | null>(null);
+  const [variantStockOpen, setVariantStockOpen] = useState(false);
+  const [stockBreakdownProduct, setStockBreakdownProduct] = useState<ProductStock | null>(null);
+  const [stockBreakdownOpen, setStockBreakdownOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [historyRows, setHistoryRows] = useState<StockMovement[]>([]);
@@ -151,6 +155,16 @@ export function ProductStocksPage() {
     void loadHistory(product.id, 1);
   }
 
+  function openVariantStock(product: ProductStock) {
+    setVariantStockProduct(product);
+    setVariantStockOpen(true);
+  }
+
+  function openStockBreakdown(product: ProductStock) {
+    setStockBreakdownProduct(product);
+    setStockBreakdownOpen(true);
+  }
+
   function openAdjust(product: ProductStock, movement?: StockMovement) {
     setSelectedProduct(product);
     setEditingMovement(movement ?? null);
@@ -250,6 +264,15 @@ export function ProductStocksPage() {
                           <History className="h-4 w-4" />
                           History
                         </Button>
+                        {isVariantProduct(item) ? (
+                          <Button type="button" variant="secondary" onClick={() => openVariantStock(item)}>
+                            Variant Stock
+                          </Button>
+                        ) : (
+                          <Button type="button" variant="secondary" onClick={() => openStockBreakdown(item)}>
+                            Stock Breakdown
+                          </Button>
+                        )}
                         {canAdjust ? (
                           <Button type="button" variant="secondary" onClick={() => openAdjust(item)}>
                             <SlidersHorizontal className="h-4 w-4" />
@@ -266,6 +289,68 @@ export function ProductStocksPage() {
           <Pagination meta={pagination} loading={loading} onPage={setPage} />
         </>
       ) : <EmptyState label={loading ? 'Loading stock...' : 'No stock products found'} />}
+
+      <Modal title={stockBreakdownProduct ? `${stockBreakdownProduct.name} Stock Breakdown` : 'Stock Breakdown'} open={stockBreakdownOpen} onOpenChange={setStockBreakdownOpen}>
+        <div className="overflow-x-auto rounded-md border border-neutral-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+              <tr>
+                {['Warehouse', 'Batch', 'Expired Date', 'Stock'].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {stockBreakdownRows(stockBreakdownProduct).map((row) => (
+                <tr key={`${row.warehouseName}-${row.batchNo}-${row.expiredDate}`}>
+                  <td className="px-3 py-2 font-medium">{row.warehouseName}</td>
+                  <td className="px-3 py-2">{row.batchNo}</td>
+                  <td className="px-3 py-2">{row.expiredDate}</td>
+                  <td className="px-3 py-2 font-medium">{formatQty(row.qty)} {stockBreakdownProduct?.unit?.unit_code ?? ''}</td>
+                </tr>
+              ))}
+              {!stockBreakdownRows(stockBreakdownProduct).length ? (
+                <tr><td className="px-3 py-6 text-center text-neutral-500" colSpan={4}>No stock breakdown found</td></tr>
+              ) : null}
+            </tbody>
+            <tfoot className="border-t border-neutral-200 bg-neutral-50">
+              <tr>
+                <td className="px-3 py-3 font-semibold" colSpan={3}>Total stock</td>
+                <td className="px-3 py-3 font-semibold">{formatQty(stockBreakdownTotal(stockBreakdownProduct))} {stockBreakdownProduct?.unit?.unit_code ?? ''}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Modal>
+
+      <Modal title={variantStockProduct ? `${variantStockProduct.name} Variant Stock` : 'Variant Stock'} open={variantStockOpen} onOpenChange={setVariantStockOpen}>
+        <div className="overflow-x-auto rounded-md border border-neutral-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+              <tr>
+                {['Variant', 'Item Code', 'Warehouse', 'Stock'].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {variantStockRows(variantStockProduct).map((row) => (
+                <tr key={`${row.variantId}-${row.warehouseName}`}>
+                  <td className="px-3 py-2 font-medium">{row.variantName}</td>
+                  <td className="px-3 py-2 text-neutral-500">{row.itemCode}</td>
+                  <td className="px-3 py-2">{row.warehouseName}</td>
+                  <td className="px-3 py-2 font-medium">{formatQty(row.qty)} {variantStockProduct?.unit?.unit_code ?? ''}</td>
+                </tr>
+              ))}
+              {!variantStockRows(variantStockProduct).length ? (
+                <tr><td className="px-3 py-6 text-center text-neutral-500" colSpan={4}>No variant stock found</td></tr>
+              ) : null}
+            </tbody>
+            <tfoot className="border-t border-neutral-200 bg-neutral-50">
+              <tr>
+                <td className="px-3 py-3 font-semibold" colSpan={3}>Total stock</td>
+                <td className="px-3 py-3 font-semibold">{formatQty(variantStockTotal(variantStockProduct))} {variantStockProduct?.unit?.unit_code ?? ''}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Modal>
 
       <Modal title={selectedProduct ? `${selectedProduct.name} History` : 'Stock History'} open={historyOpen} onOpenChange={setHistoryOpen}>
         <div className="mb-3 flex justify-end">
@@ -431,6 +516,47 @@ function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
   }
 
   return null;
+}
+
+function isVariantProduct(product: ProductStock | null | undefined) {
+  return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function variantStockRows(product: ProductStock | null) {
+  if (!product) return [];
+
+  return (product.variants ?? []).flatMap((variant) => {
+    const stocks = (product.stocks ?? []).filter((stock) => Number(stock.variant_id) === Number(variant.variant_id));
+
+    return stocks.map((stock) => ({
+      variantId: variant.variant_id,
+      variantName: variant.name,
+      itemCode: variant.item_code,
+      warehouseName: stock.warehouse_name ?? `Warehouse ${stock.warehouse_id}`,
+      qty: Number(stock.qty) || 0,
+    }));
+  });
+}
+
+function variantStockTotal(product: ProductStock | null) {
+  return variantStockRows(product).reduce((sum, row) => sum + row.qty, 0);
+}
+
+function stockBreakdownRows(product: ProductStock | null) {
+  if (!product) return [];
+
+  return (product.stocks ?? [])
+    .filter((stock) => !stock.variant_id)
+    .map((stock) => ({
+      warehouseName: stock.warehouse_name ?? `Warehouse ${stock.warehouse_id}`,
+      batchNo: stock.batch_no ?? '-',
+      expiredDate: stock.expired_date ?? '-',
+      qty: Number(stock.qty) || 0,
+    }));
+}
+
+function stockBreakdownTotal(product: ProductStock | null) {
+  return stockBreakdownRows(product).reduce((sum, row) => sum + row.qty, 0);
 }
 
 function MovementBadge({ type }: { type: string }) {
