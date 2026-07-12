@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 import type { EmailLog, PaginationMeta } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 
-const perPage = 15;
+const defaultPerPage = 15;
 
 export function EmailLogsPage() {
   const router = useRouter();
@@ -17,6 +17,7 @@ export function EmailLogsPage() {
   const [logs, setLogs] = useState<EmailLog[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -32,7 +33,7 @@ export function EmailLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (!hasPermission('general-settings-index')) router.replace('/dashboard');
@@ -57,7 +58,7 @@ export function EmailLogsPage() {
       <SearchBox value={search} onChange={setSearch} placeholder="Search user, email, subject, message, status, provider response" />
 
       {logs.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[1200px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
@@ -96,7 +97,7 @@ export function EmailLogsPage() {
         </div>
       )}
 
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
     </div>
   );
 }

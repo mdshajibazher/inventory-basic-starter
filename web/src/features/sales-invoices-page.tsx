@@ -5,13 +5,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Box, CircleCheck, Download, Eye, FileText, Pencil, Plus, Printer, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/lib/api';
-import type { Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/lib/types';
-import { errorMessage } from '@/lib/utils';
+import type { Customer, PaginationMeta, Product, ProductVariant, Tax, Unit, Warehouse } from '@/lib/types';
+import { clsx, errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActivityLogTimeline } from '@/components/activity-log';
-import { Button, Field, Input, Select, Textarea } from '@/components/ui';
+import { Pagination, TableWrap } from '@/components/resource-shell';
+import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 
 type ProductOptions = {
   taxes?: Tax[];
@@ -100,11 +101,19 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
   const [form, setForm] = useState<FormState>(() => emptyForm(kind));
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<'all' | 'pending' | 'approved'>('all');
   const [selectedInvoice, setSelectedInvoice] = useState<Record<string, any> | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approvalTarget, setApprovalTarget] = useState<number | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const selectedCustomer = customers.find((customer) => String(customer.id) === form.customerId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
@@ -169,21 +178,34 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
 
   useEffect(() => {
     void loadOptions();
-    if (mode === 'index') void loadInvoices();
   }, [loadOptions]);
+
+  useEffect(() => {
+    if (mode === 'index') void loadInvoices(page);
+  }, [approvalStatus, debouncedSearch, kind, mode, page, perPage]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [search]);
 
   useEffect(() => {
     if (!invoiceId || mode === 'index' || mode === 'create') return;
     void openInvoice(invoiceId, mode === 'edit' ? 'edit' : 'view');
   }, [invoiceId, mode]);
 
-  async function loadInvoices() {
+  async function loadInvoices(nextPage = page) {
     setListLoading(true);
     try {
       const response = kind === 'returns'
-        ? await api.returnInvoices({ perPage: 20 })
-        : await api.salesInvoices({ perPage: 20 });
+        ? await api.returnInvoices({ page: nextPage, perPage, search: debouncedSearch, approvalStatus: approvalStatus === 'all' ? undefined : approvalStatus })
+        : await api.salesInvoices({ page: nextPage, perPage, search: debouncedSearch, approvalStatus: approvalStatus === 'all' ? undefined : approvalStatus });
       setInvoices(response.data as Record<string, any>[]);
+      setPagination(response.meta ?? null);
     } catch (error) {
       toast.error('Invoice list failed', { description: errorMessage(error) });
     } finally {
@@ -361,6 +383,23 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
     }
   }
 
+  function requestApproval(id: number) {
+    setApprovalTarget(id);
+  }
+
+  async function exportInvoicePdf() {
+    if (!selectedInvoice?.id) return;
+
+    setExportingPdf(true);
+    try {
+      await api.exportSalesInvoicePdf(Number(selectedInvoice.id), String(selectedInvoice.reference_no ?? selectedInvoice.id));
+    } catch (error) {
+      toast.error('PDF export failed', { description: errorMessage(error) });
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -407,7 +446,11 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             </Button>
           </div>
         </div>
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+          <Field label="Search"><Input value={search} placeholder="Search reference or customer" onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && event.preventDefault()} /></Field>
+          <Field label="Approval Status"><Select value={approvalStatus} onValueChange={(value) => { setApprovalStatus(value as 'all' | 'pending' | 'approved'); setPage(1); }} options={[{ value: 'all', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }]} /></Field>
+        </div>
+        <TableWrap loading={listLoading}>
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
               <tr>
@@ -430,54 +473,93 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                   <td className="px-4 py-3">{money(numberValue(invoice.paid_amount))}</td>
                   <td className="px-4 py-3"><ApprovalBadge status={invoice.approval_status} /></td>
                   <td className="px-4 py-3 text-right">
-                    {invoice.can_approve ? <Button type="button" variant="secondary" className="mr-2" disabled={saving} onClick={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}`}>Details</Link>
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${labels.basePath}/${invoice.id}/edit`}>Edit</Link>
+                    {invoice.can_approve ? <ApproveActionButton disabled={saving} onClick={() => requestApproval(Number(invoice.id))} /> : null}
+                    <Link className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100" href={`${labels.basePath}/${invoice.id}`} aria-label={`View ${labels.singular}`} title="View"><Eye className="h-4 w-4" /></Link>
+                    <Link className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${labels.basePath}/${invoice.id}/edit`} aria-label={`Edit ${labels.singular}`} title="Edit"><Pencil className="h-4 w-4" /></Link>
                   </td>
                 </tr>
               ))}
               {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={7}>No invoices found</td></tr> : null}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
+        <Pagination meta={pagination} loading={listLoading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
       </section> : null}
       {mode === 'details' ? (
         <section className="grid gap-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold tracking-tight">{labels.singularTitle} Details</h1>
-            <div className="flex gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">{labels.singularTitle} Details</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-neutral-500">
+                <Link className="hover:text-neutral-900" href="/dashboard">Dashboard</Link>
+                <span>/</span>
+                <Link className="hover:text-neutral-900" href={labels.basePath}>{labels.plural}</Link>
+                <span>/</span>
+                <span>{labels.singularTitle} Details</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={labels.basePath}>Back</Link>
-              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
-              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${labels.basePath}/${invoiceId}/edit`}>Edit</Link> : null}
+              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => requestApproval(Number(selectedInvoice.id))}>Approve</Button> : null}
+              {invoiceId ? (
+                <Link className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${labels.basePath}/${invoiceId}/edit`} aria-label={`Edit ${labels.singular}`} title="Edit"><Pencil className="h-4 w-4" /></Link>
+              ) : null}
+              <Button type="button" variant="secondary" disabled={!selectedInvoice || exportingPdf} onClick={() => void exportInvoicePdf()}>
+                <Printer className="h-4 w-4" />
+                {exportingPdf ? 'Generating...' : 'Print'}
+              </Button>
+              {selectedInvoice?.document_url ? (
+                <a className="inline-flex h-10 items-center gap-2 rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={String(selectedInvoice.document_url)} download>
+                  <Download className="h-4 w-4" />
+                  Download
+                </a>
+              ) : (
+                <Button type="button" variant="secondary" disabled>
+                  <Download className="h-4 w-4" />
+                  Download
+                </Button>
+              )}
             </div>
           </div>
-          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
+          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} canEditCost={hasPermission('sales-edit')} onInvoiceUpdated={setSelectedInvoice} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
         </section>
       ) : null}
       {mode !== 'details' && mode !== 'index' ? <>
-      <div className="flex flex-wrap items-center justify-start gap-2">
-        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={labels.basePath}>Back to list</Link>
-        <Button type="button" variant="secondary" disabled={saving} onClick={resetForm}>Reset</Button>
-      </div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? `Edit ${labels.singularTitle}` : labels.singularTitle}</h1>
-          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update invoice fields and line items' : labels.description}</p>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50" href={labels.basePath}>
+              <ArrowLeft className="h-4 w-4" />
+              Back to list
+            </Link>
+            <Button type="button" variant="secondary" className="border-slate-200 text-slate-800 shadow-sm" disabled={saving} onClick={resetForm}>
+              <RefreshCw className="h-4 w-4" />
+              Reset
+            </Button>
+          </div>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">{editingId ? `Edit ${labels.singularTitle}` : labels.singularTitle}</h1>
+          <p className="mt-2 text-base text-slate-500">{editingId ? 'Update invoice fields and line items' : labels.description}</p>
         </div>
         <div className="flex gap-2">
-          <Button type="button" variant="secondary" disabled={loading} onClick={() => void loadOptions()}>
+          <Button type="button" variant="secondary" className="border-slate-200 text-slate-800 shadow-sm" disabled={loading} onClick={() => void loadOptions()}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button type="submit" disabled={saving || loading}>{saving ? 'Saving...' : editingId ? 'Update invoice' : 'Create invoice'}</Button>
+          <Button type="submit" className="bg-blue-600 px-5 shadow-sm hover:bg-blue-700" disabled={saving || loading}>
+            <FileText className="h-4 w-4" />
+            {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
+          </Button>
         </div>
       </div>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Invoice</h2>
-        <div className="grid gap-4 md:grid-cols-4">
-          <Field label="Reference no"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
-          <Field label={kind === 'returns' ? 'Return date' : 'Sale date'}><Input type="date" value={form.invoiceDate} onChange={(event) => setValue('invoiceDate', event.target.value)} /></Field>
+      <section className="grid gap-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <FileText className="h-5 w-5 text-blue-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Invoice</h2>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Field label="Reference No"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
+          <Field label={kind === 'returns' ? 'Return Date' : 'Sale Date'}><Input type="date" value={form.invoiceDate} onChange={(event) => setValue('invoiceDate', event.target.value)} /></Field>
           <SearchableSelect
             label="Customer"
             valueLabel={selectedCustomer?.name ?? 'Select customer'}
@@ -501,18 +583,21 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             detailFor={(warehouse) => warehouse.address || warehouse.email || warehouse.phone || ''}
             onSelect={selectWarehouse}
           />
-          <Field label="Branch"><Input value={currentBranchLabel} readOnly /></Field>
+          <div className="md:col-span-2">
+            <Field label="Branch"><Input value={currentBranchLabel} readOnly /></Field>
+          </div>
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">Products</h2>
+          <div className="flex items-center gap-3">
+            <Box className="h-5 w-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-slate-950">Products</h2>
           </div>
-          <Button type="button" variant="secondary" onClick={addLine}>
+          <Button type="button" variant="secondary" className="border-blue-200 text-blue-600 hover:bg-blue-50" onClick={addLine}>
             <Plus className="h-4 w-4" />
-            Add line
+            Add Line
           </Button>
         </div>
         <div className="grid gap-3">
@@ -525,15 +610,20 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
               : null;
 
             return (
-              <div key={line.key} className="rounded-md border border-neutral-200 bg-white p-3">
+              <div key={line.key} className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-neutral-900">Line {index + 1}</div>
-                  <Button type="button" variant="ghost" className="h-9 w-9 px-0" disabled={lines.length === 1} onClick={() => removeLine(line.key)} aria-label="Remove line">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="text-sm font-semibold text-slate-950">Line {index + 1}</div>
+                  <ActionButton
+                    icon={Trash2}
+                    text="Remove line"
+                    color="text-red-500 hover:text-red-600"
+                    bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                    disabled={lines.length === 1}
+                    onClick={() => removeLine(line.key)}
+                  />
                 </div>
-                <div className="grid gap-3 lg:grid-cols-12">
-                  <div className={isVariantProduct(product) ? 'lg:col-span-7' : 'lg:col-span-9'}>
+                <div className="grid gap-3 xl:grid-cols-12">
+                  <div className={isVariantProduct(product) ? 'xl:col-span-2' : 'xl:col-span-3'}>
                     <SearchableSelect
                       label="Product"
                       valueLabel={productLabel(line.productId, line.variantId, products)}
@@ -557,7 +647,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                     ) : null}
                   </div>
                   {isVariantProduct(product) ? (
-                    <div className="lg:col-span-3">
+                    <div className="xl:col-span-2">
                       <Field label="Variant">
                         <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
                         {currentStock ? (
@@ -568,25 +658,34 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                       </Field>
                     </div>
                   ) : null}
-                  <div className="lg:col-span-2">
+                  <div className="xl:col-span-1">
                     <Field label="Qty"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></Field>
                   </div>
-                </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-                  <Field label="Unit">
-                    {product && product.type !== 'combo' ? (
-                      <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
-                    ) : <div className="h-10" />}
-                  </Field>
+                  <div className="xl:col-span-2">
+                    <Field label="Unit">
+                      {product && product.type !== 'combo' ? (
+                        <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
+                      ) : <div className="h-10" />}
+                    </Field>
+                  </div>
                   {lineRequiresBatch ? (
-                    <Field label="Batch no"><Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /></Field>
+                    <div className="xl:col-span-2">
+                      <Field label="Batch No"><Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /></Field>
+                    </div>
                   ) : null}
-                  <Field label="Unit price"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></Field>
-                  <Field label="Discount"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
-                  <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
-                  <div className="rounded-md border border-neutral-200 px-3 py-2">
-                    <div className="text-xs font-medium uppercase text-neutral-500">Line total</div>
-                    <div className="mt-1 whitespace-nowrap text-sm font-semibold">{money(calculateLine(line).subtotal)}</div>
+                  <div className={lineRequiresBatch || isVariantProduct(product) ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                    <Field label="Unit Price (৳)"><Input type="number" step="0.01" min="0" value={line.price} onChange={(event) => updateLine(line.key, 'price', event.target.value)} /></Field>
+                  </div>
+                  <div className={lineRequiresBatch || isVariantProduct(product) ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                    <Field label="Discount (৳)"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
+                  </div>
+                  <div className={lineRequiresBatch ? 'xl:col-span-1' : 'xl:col-span-1'}>
+                    <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
+                  </div>
+                  <div className={lineRequiresBatch ? 'xl:col-span-1' : 'xl:col-span-1'}>
+                    <Field label="Line Total (৳)">
+                      <Input value={money(calculateLine(line).subtotal)} readOnly className="bg-slate-100 font-semibold text-slate-700" />
+                    </Field>
                   </div>
                 </div>
               </div>
@@ -595,32 +694,38 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">{kind === 'returns' ? 'Adjustments' : 'Adjustments and Payment'}</h2>
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <SlidersHorizontal className="h-5 w-5 text-blue-600" />
+          <h2 className="text-xl font-semibold text-slate-950">{kind === 'returns' ? 'Adjustments' : 'Adjustments and Payment'}</h2>
+        </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
-          {kind === 'sales' ? <Field label="Order discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field> : null}
-          {kind === 'sales' ? <Field label="Shipping cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field> : null}
-          {kind === 'sales' ? <Field label="Payment status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
+          <Field label="Order Tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
+          {kind === 'sales' ? <Field label="Order Discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Shipping Cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Payment Status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
             { value: 'unpaid', label: 'Unpaid' },
             { value: 'partial', label: 'Partial cash' },
             { value: 'paid', label: 'Paid cash' },
           ]} /></Field> : null}
-          {kind === 'sales' && form.paymentMode === 'partial' ? <Field label="Paid amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
-          {kind === 'sales' ? <Field label="Payment note"><Input value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field> : null}
+          {kind === 'sales' && form.paymentMode === 'partial' ? <Field label="Paid Amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
+          {kind === 'sales' ? <Field label="Payment Note"><Input placeholder="Payment note (optional)" value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field> : null}
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Notes</h2>
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <FileText className="h-5 w-5 text-blue-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Notes</h2>
+        </div>
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label={kind === 'returns' ? 'Return note' : 'Sale note'}><Textarea value={form.saleNote} onChange={(event) => setValue('saleNote', event.target.value)} /></Field>
-          <Field label="Staff note"><Textarea value={form.staffNote} onChange={(event) => setValue('staffNote', event.target.value)} /></Field>
+          <Field label={kind === 'returns' ? 'Return Note' : 'Sale Note'}><Textarea placeholder={kind === 'returns' ? 'Add return note (optional)' : 'Add sale note (optional)'} value={form.saleNote} onChange={(event) => setValue('saleNote', event.target.value)} /></Field>
+          <Field label="Staff Note"><Textarea placeholder="Add staff note (optional)" value={form.staffNote} onChange={(event) => setValue('staffNote', event.target.value)} /></Field>
         </div>
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="grid gap-3 text-sm sm:grid-cols-5">
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 divide-slate-200 text-sm sm:grid-cols-5 sm:divide-x">
           <Summary label="Total qty" value={money(totals.totalQty)} />
           <Summary label="Items subtotal" value={money(totals.totalPrice)} />
           <Summary label="Discount" value={money(totals.totalDiscount)} />
@@ -630,41 +735,257 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       </section>
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="submit" disabled={saving || loading}>{saving ? 'Saving...' : editingId ? 'Update invoice' : 'Create invoice'}</Button>
+        <Button type="submit" className="bg-blue-600 px-6 shadow-sm hover:bg-blue-700" disabled={saving || loading}>
+          <FileText className="h-4 w-4" />
+          {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
+        </Button>
       </div>
       </> : null}
+      <Modal title="Approve Invoice" open={approvalTarget !== null} onOpenChange={(open) => !open && setApprovalTarget(null)}>
+        <div className="grid gap-4">
+          <p className="text-sm text-neutral-700">Approve this {labels.singular.toLowerCase()}? This will apply its inventory and financial effects.</p>
+          <div className="flex justify-end gap-2"><Button type="button" variant="secondary" disabled={saving} onClick={() => setApprovalTarget(null)}>Cancel</Button><Button type="button" disabled={saving} onClick={() => { if (approvalTarget !== null) void approveInvoice(approvalTarget).finally(() => setApprovalTarget(null)); }}>{saving ? 'Approving...' : 'Approve invoice'}</Button></div>
+        </div>
+      </Modal>
     </form>
   );
 }
 
-function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
+function InvoiceDetails({ invoice, kind, canEditCost, onInvoiceUpdated }: { invoice: Record<string, any>; kind: InvoiceKind; canEditCost: boolean; onInvoiceUpdated: (invoice: Record<string, any>) => void }) {
+  const [costLine, setCostLine] = useState<Record<string, any> | null>(null);
+  const [costValue, setCostValue] = useState('');
+  const [savingCost, setSavingCost] = useState(false);
+  const lines = (invoice.products ?? []) as Record<string, any>[];
+  const subtotal = numberValue(invoice.total_price);
+  const orderDiscount = numberValue(invoice.order_discount) + numberValue(invoice.coupon_discount);
+  const orderTax = numberValue(invoice.order_tax);
+  const shippingCost = numberValue(invoice.shipping_cost);
+  const grandTotal = numberValue(invoice.grand_total);
+  const paidAmount = numberValue(invoice.paid_amount);
+  const dueAmount = numberValue(invoice.due_amount);
+  const changeAmount = Math.max(paidAmount - grandTotal, 0);
+  const lineCostTotal = round2(lines.reduce((sum, line) => sum + detailLineCost(line), 0));
+  const profit = round2(grandTotal - lineCostTotal);
+  const showProfit = kind === 'sales' && lines.some((line) => detailLineCost(line) > 0);
+  const payment = invoice.payments?.[0] ?? null;
+  const invoiceDate = String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-');
+  const invoiceTime = timeOnly(invoice.created_at);
+  const note = String((kind === 'returns' ? invoice.return_note : invoice.sale_note) ?? '-');
+
+  function openCostEditor(line: Record<string, any>) {
+    setCostLine(line);
+    setCostValue(String(detailLineUnitCost(line)));
+  }
+
+  async function saveCost() {
+    if (!costLine?.id || !invoice.id) return;
+    const unitCost = numberValue(costValue);
+    if (unitCost < 0) {
+      toast.error('Cost must be zero or greater.');
+      return;
+    }
+
+    setSavingCost(true);
+    try {
+      const response = await api.updateSalesInvoiceLineCost(Number(invoice.id), Number(costLine.id), unitCost);
+      onInvoiceUpdated(response.data as Record<string, any>);
+      setCostLine(null);
+      toast.success('Sale cost updated');
+    } catch (error) {
+      toast.error('Cost update failed', { description: errorMessage(error) });
+    } finally {
+      setSavingCost(false);
+    }
+  }
+
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="flex flex-wrap gap-6">
-          <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
-          <Summary label={kind === 'returns' ? 'Return date' : 'Sale date'} value={String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')} />
-          <Summary label="Customer" value={String(invoice.customer?.name ?? '-')} />
-          <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
-          {kind === 'sales' ? <Summary label="Paid" value={money(numberValue(invoice.paid_amount))} /> : null}
-          <Summary label="Approval" value={String(invoice.approval_status ?? 'approved')} />
-          {invoice.approver?.name ? <Summary label="Approved by" value={String(invoice.approver.name)} /> : null}
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="grid gap-6 border-b border-neutral-200 p-5 md:grid-cols-5">
+          <DetailHeader label="Invoice No." value={String(invoice.reference_no ?? '-')} accent>
+            <span className={clsx('mt-2 inline-flex w-fit rounded px-2 py-1 text-xs font-semibold', paymentStatusClasses(invoice.payment_status))}>
+              {kind === 'sales' ? paymentStatusLabel(invoice.payment_status, paidAmount, grandTotal) : String(invoice.approval_status ?? 'approved')}
+            </span>
+          </DetailHeader>
+          <DetailHeader label="Date" value={invoiceDate}>
+            {invoiceTime ? <span className="mt-1 block text-sm text-neutral-500">{invoiceTime}</span> : null}
+          </DetailHeader>
+          <DetailHeader label="Customer" value={String(invoice.customer?.name ?? '-')} accent>
+            {invoice.customer?.phone_number ? <span className="mt-1 block text-sm text-blue-600">{invoice.customer.phone_number}</span> : null}
+          </DetailHeader>
+          <DetailHeader label={kind === 'returns' ? 'Return Location' : 'Sales Location'} value={String(invoice.warehouse?.name ?? invoice.biller?.name ?? '-')} accent />
+          <DetailHeader label={kind === 'returns' ? 'Returned By' : 'Sales Person'} value={String(invoice.user?.name ?? '-')} />
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <tbody>
-              {(invoice.products ?? []).map((line: Record<string, any>) => (
-                <tr key={line.id} className="border-t border-neutral-100">
-                  <td className="py-2">{invoiceLineProductName(line)}</td>
-                  <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
-                  <td className="py-2 text-right">{money(numberValue(line.total))}</td>
+
+        <div className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-neutral-950">{kind === 'returns' ? 'Return Items' : 'Sales Items'}</h2>
+          <div className="overflow-x-auto rounded-md border border-neutral-200">
+            <table className="min-w-[1120px] w-full border-collapse text-sm">
+              <thead className="bg-neutral-50 text-left text-neutral-950">
+                <tr className="[&>th]:border-r [&>th]:border-neutral-200 last:[&>th]:border-r-0">
+                  <th className="w-12 px-3 py-3 font-semibold">SL</th>
+                  <th className="px-3 py-3 font-semibold">Product</th>
+                  <th className="px-3 py-3 font-semibold">Variant</th>
+                  <th className="px-3 py-3 font-semibold">SKU / Code</th>
+                  <th className="px-3 py-3 font-semibold">Unit</th>
+                  <th className="px-3 py-3 text-right font-semibold">Quantity</th>
+                  <th className="px-3 py-3 text-right font-semibold">Unit Price</th>
+                  <th className="px-3 py-3 text-right font-semibold">Cost Price</th>
+                  <th className="px-3 py-3 text-right font-semibold">Discount</th>
+                  <th className="px-3 py-3 text-right font-semibold">Total</th>
+                  <th className="px-3 py-3 text-right font-semibold">Profit</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                {lines.map((line, index) => {
+                  const lineCost = detailLineCost(line);
+                  const lineProfit = round2(numberValue(line.total) - lineCost);
+                  return (
+                    <tr key={line.id ?? index} className="align-top [&>td]:border-r [&>td]:border-neutral-100 last:[&>td]:border-r-0">
+                      <td className="px-3 py-3 text-center text-neutral-700">{index + 1}</td>
+                      <td className="px-3 py-3">
+                        <div className="font-medium text-neutral-950">{line.product?.name ?? `#${line.product_id}`}</div>
+                        {line.product?.code ? <div className="mt-1 text-sm text-neutral-500">{line.product.code}</div> : null}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="font-medium text-neutral-700">{line.variant?.name ?? '-'}</div>
+                        {line.batch?.batch_no ? <div className="mt-1 text-sm text-neutral-500">Batch {line.batch.batch_no}</div> : null}
+                      </td>
+                      <td className="px-3 py-3 text-neutral-700">{line.variant?.item_code ?? line.product?.sku ?? line.product?.code ?? '-'}</td>
+                      <td className="px-3 py-3 text-neutral-700">{detailLineUnit(line)}</td>
+                      <td className="px-3 py-3 text-right">{money(numberValue(line.qty))}</td>
+                      <td className="px-3 py-3 text-right">{money(numberValue(line.net_unit_price))}</td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <span>{money(detailLineUnitCost(line))}</span>
+                          {kind === 'sales' && canEditCost ? <Button type="button" variant="ghost" className="h-5 w-5 cursor-pointer px-0 text-sm font-semibold text-black hover:bg-neutral-100" aria-label={`Edit cost for ${invoiceLineProductName(line)}`} title="Edit sale cost" onClick={() => openCostEditor(line)}><span aria-hidden="true">✎</span></Button> : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-right">{money(numberValue(line.discount))}</td>
+                      <td className="px-3 py-3 text-right">{money(numberValue(line.total))}</td>
+                      <td className={clsx('px-3 py-3 text-right font-semibold', lineProfit >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                        {lineCost > 0 ? money(lineProfit) : '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!lines.length ? <tr><td className="px-3 py-6 text-center text-neutral-500" colSpan={11}>No products found</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-4 pt-0 lg:grid-cols-[1fr_1.05fr]">
+          <div className="grid content-start gap-3">
+            <InfoPanel title="Payment Information">
+              <InfoRow label="Payment Method" value={paymentMethodLabel(payment?.paying_method)} />
+              <InfoRow label="Paid Amount" value={kind === 'sales' ? money(paidAmount) : '-'} />
+              <InfoRow label="Change Amount" value={kind === 'sales' ? money(changeAmount) : '-'} highlight={changeAmount > 0} />
+              <InfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
+            </InfoPanel>
+
+            <InfoPanel title="Additional Information">
+              <InfoRow label="Reference" value={String(invoice.reference_no ?? '-')} />
+              <InfoRow label="Note" value={note} />
+              <InfoRow
+                label="Overall Profit Status"
+                value={showProfit ? (profit >= 0 ? 'Profitable' : 'Loss') : '-'}
+                badge={showProfit}
+                trailing={showProfit ? money(profit) : undefined}
+                highlight={profit >= 0}
+              />
+              <InfoRow label="Approval" value={String(invoice.approval_status ?? 'approved')} badge />
+              {invoice.approver?.name ? <InfoRow label="Approved By" value={String(invoice.approver.name)} /> : null}
+            </InfoPanel>
+          </div>
+
+          <div className="overflow-hidden rounded-md border border-neutral-200">
+            <TotalRow label="Subtotal" value={money(subtotal)} />
+            <TotalRow label="Discount" value={money(orderDiscount)} />
+            <TotalRow label={`VAT (${money(numberValue(invoice.order_tax_rate))}%)`} value={money(orderTax)} />
+            {shippingCost > 0 ? <TotalRow label="Shipping Cost" value={money(shippingCost)} /> : null}
+            <TotalRow label="Grand Total" value={money(grandTotal)} primary />
+            {kind === 'sales' ? <TotalRow label="Paid Amount" value={money(paidAmount)} /> : null}
+            {kind === 'sales' ? <TotalRow label="Due Amount" value={money(dueAmount)} /> : null}
+            <TotalRow label="Total Cost" value={showProfit ? money(lineCostTotal) : '-'} />
+            <TotalRow label="Total Profit" value={showProfit ? money(profit) : '-'} success={showProfit && profit >= 0} danger={showProfit && profit < 0} />
+          </div>
         </div>
       </div>
       <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
+      <Modal title="Edit Sale Cost" open={costLine !== null} onOpenChange={(open) => !open && setCostLine(null)}>
+        <div className="grid gap-4">
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This changes the saved cost for this sale only. It updates profit reporting but does not change the product's default cost or stock.</div>
+          <div className="text-sm text-neutral-600">{costLine ? `${invoiceLineProductName(costLine)} · ${detailLineUnit(costLine)}` : ''}</div>
+          <Field label="Cost per sales unit"><Input type="number" min="0" step="0.01" value={costValue} onChange={(event) => setCostValue(event.target.value)} autoFocus /></Field>
+          <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setCostLine(null)} disabled={savingCost}>Cancel</Button><Button type="button" onClick={() => void saveCost()} disabled={savingCost}>{savingCost ? 'Saving...' : 'Save cost'}</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function DetailHeader({ label, value, accent = false, children }: { label: string; value: string; accent?: boolean; children?: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-sm text-neutral-500">{label}</div>
+      <div className={clsx('mt-3 break-words text-base font-semibold', accent ? 'text-blue-600' : 'text-neutral-950')}>{value}</div>
+      {children}
+    </div>
+  );
+}
+
+function InfoPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-neutral-200">
+      <h3 className="border-b border-neutral-200 px-3 py-3 text-sm font-semibold text-neutral-950">{title}</h3>
+      <div className="grid gap-2 p-3">{children}</div>
+    </div>
+  );
+}
+
+function InfoRow({
+  label,
+  value,
+  trailing,
+  badge = false,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  trailing?: string;
+  badge?: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(120px,0.75fr)_1fr] items-center gap-3 text-sm">
+      <div className="text-neutral-700">{label}</div>
+      <div className="flex items-center justify-between gap-3 font-medium text-neutral-950">
+        {badge ? (
+          <span className={clsx('inline-flex w-fit rounded px-2 py-1 text-xs font-semibold', highlight ? 'bg-emerald-600 text-white' : 'bg-neutral-100 text-neutral-700')}>
+            {value}
+          </span>
+        ) : (
+          <span className={highlight ? 'text-emerald-600' : undefined}>{value}</span>
+        )}
+        {trailing ? <span className={highlight ? 'text-emerald-600' : 'text-neutral-700'}>{trailing}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function TotalRow({ label, value, primary = false, success = false, danger = false }: { label: string; value: string; primary?: boolean; success?: boolean; danger?: boolean }) {
+  return (
+    <div
+      className={clsx(
+        'flex items-center justify-between gap-4 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0',
+        primary && 'bg-blue-50 text-blue-700',
+        success && 'bg-emerald-50 text-emerald-700',
+        danger && 'bg-red-50 text-red-700'
+      )}
+    >
+      <span className={clsx((primary || success || danger) && 'text-base font-semibold')}>{label}</span>
+      <span className={clsx('font-semibold', primary && 'text-xl', (success || danger) && 'text-lg')}>{value}</span>
     </div>
   );
 }
@@ -675,6 +996,21 @@ function ApprovalBadge({ status }: { status: unknown }) {
     <span className={pending ? 'inline-flex rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800' : 'inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800'}>
       {pending ? 'Pending' : 'Approved'}
     </span>
+  );
+}
+
+function ApproveActionButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      className="mr-2 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <CircleCheck className="h-4 w-4" />
+      Approve
+    </Button>
   );
 }
 
@@ -778,9 +1114,9 @@ function SearchableSelect<T>({
 
 function Summary({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div>
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={strong ? 'text-xl font-semibold' : 'text-base font-medium'}>{value}</div>
+    <div className="px-3 py-1">
+      <div className="text-xs font-medium uppercase text-slate-500">{label}</div>
+      <div className={strong ? 'mt-1 text-2xl font-bold text-blue-600' : 'mt-1 text-lg font-semibold text-slate-950'}>{value}</div>
     </div>
   );
 }
@@ -961,6 +1297,61 @@ function variantSelectOptions(product: Product | undefined | null) {
 function invoiceLineProductName(line: Record<string, any>) {
   const productName = line.product?.name ?? `#${line.product_id}`;
   return line.variant?.name ? `${productName} - ${line.variant.name}` : productName;
+}
+
+function detailLineUnit(line: Record<string, any>) {
+  if (!line.unit) return '-';
+  const unitName = line.unit.unit_name ?? line.unit.name;
+  const unitCode = line.unit.unit_code ?? line.unit.code;
+  return unitCode && unitName ? `${unitName} (${unitCode})` : String(unitName ?? unitCode ?? '-');
+}
+
+function detailLineCost(line: Record<string, any>) {
+  if (line.total_cost !== null && line.total_cost !== undefined) return numberValue(line.total_cost);
+
+  const totalCost = numberValue(line.total_cost);
+  if (totalCost > 0) return totalCost;
+
+  const unitCost = numberValue(line.unit_cost);
+  if (unitCost > 0) return round2(unitCost * numberValue(line.qty));
+
+  const productCost = numberValue(line.product?.cost);
+  return productCost > 0 ? round2(productCost * numberValue(line.qty)) : 0;
+}
+
+function detailLineUnitCost(line: Record<string, any>) {
+  const unitCost = numberValue(line.unit_cost);
+  if (unitCost > 0 || line.unit_cost === 0) return unitCost;
+  const qty = numberValue(line.qty);
+  const totalCost = numberValue(line.total_cost);
+  if (qty > 0 && totalCost > 0) return round2(totalCost / qty);
+  return numberValue(line.product?.cost);
+}
+
+function paymentStatusLabel(status: unknown, paidAmount: number, grandTotal: number) {
+  if (Number(status) === 4 || (grandTotal > 0 && paidAmount >= grandTotal)) return 'Paid';
+  if (Number(status) === 3 || paidAmount > 0) return 'Partial';
+  return 'Unpaid';
+}
+
+function paymentStatusClasses(status: unknown) {
+  if (Number(status) === 4) return 'bg-emerald-600 text-white';
+  if (Number(status) === 3) return 'bg-amber-100 text-amber-800';
+  return 'bg-neutral-100 text-neutral-700';
+}
+
+function paymentMethodLabel(method: unknown) {
+  if (!method) return '-';
+  return String(method)
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function timeOnly(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function isBatchProduct(product?: Product | null) {

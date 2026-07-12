@@ -137,6 +137,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
         ->middleware('permission:sales-index|sales-add|sales-edit|purchases-index|purchases-add|purchases-edit');
     Route::get('/products', [ProductController::class, 'index'])->middleware('permission:products-index');
     Route::post('/products', [ProductController::class, 'store'])->middleware('permission:products-add');
+    Route::get('/products/{product}/barcode', [ProductController::class, 'barcode'])->middleware('permission:products-index');
     Route::get('/products/{product}', [ProductController::class, 'show'])->middleware('permission:products-index|products-edit');
     Route::match(['put', 'patch'], '/products/{product}', [ProductController::class, 'update'])->middleware('permission:products-edit');
     Route::delete('/products/{product}', [ProductController::class, 'destroy'])->middleware('permission:products-delete');
@@ -149,8 +150,10 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
 
     Route::get('/sales-invoices', [SalesInvoiceController::class, 'index'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::post('/sales-invoices', [SalesInvoiceController::class, 'store'])->middleware('permission:sales-add');
+    Route::get('/sales-invoices/{sale}/pdf', [SalesInvoiceController::class, 'pdf'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::get('/sales-invoices/{sale}', [SalesInvoiceController::class, 'show'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::match(['put', 'patch'], '/sales-invoices/{sale}', [SalesInvoiceController::class, 'update'])->middleware('permission:sales-edit');
+    Route::patch('/sales-invoices/{sale}/lines/{productSale}/cost', [SalesInvoiceController::class, 'updateLineCost'])->middleware('permission:sales-edit');
     Route::post('/sales-invoices/{sale}/approve', [SalesInvoiceController::class, 'approve'])->middleware('permission:sales-index|sales-edit');
     Route::get('/return-invoices', [ReturnInvoiceController::class, 'index'])->middleware('permission:returns-index|returns-add|returns-edit');
     Route::post('/return-invoices', [ReturnInvoiceController::class, 'store'])->middleware('permission:returns-add');
@@ -179,4 +182,5 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/reports/datewise-products', DatewiseProductReportController::class)->middleware('permission:reports-profit');
     Route::get('/reports/datewise-products/pdf', [DatewiseProductReportController::class, 'pdf'])->middleware('permission:reports-profit');
     Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::post('/dashboard/clear-transactions', [DashboardController::class, 'clearTransactions'])->middleware('permission:general-settings-edit');
 });

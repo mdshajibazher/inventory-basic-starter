@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -261,3 +262,110 @@ Artisan::command('stock:backfill-movements', function () {
 
     $this->info("Backfilled {$count} stock movement rows and recalculated stock movement balances.");
 })->purpose('Backfill product stock movement ledger from existing transaction lines');
+
+Artisan::command('inventory:clear-transactions {--force : Skip confirmation} {--dry-run : Show affected row counts without deleting}', function () {
+    $tables = [
+        'payment_with_credit_card',
+        'payment_with_gift_card',
+        'payment_with_paypal',
+        'payment_with_cheque',
+        'product_stock_movements',
+        'product_adjustments',
+        'adjustments',
+        'purchase_product_return',
+        'product_returns',
+        'product_sales',
+        'product_purchases',
+        'payments',
+        'expenses',
+        'returns',
+        'sales',
+        'return_purchases',
+        'purchases',
+        'product_warehouse',
+        'product_batches',
+    ];
+
+    $existingTables = array_values(array_filter($tables, fn (string $table): bool => Schema::hasTable($table)));
+    $counts = [];
+
+    foreach ($existingTables as $table) {
+        $counts[$table] = DB::table($table)->count();
+    }
+
+    $activityLogTable = config('activitylog.table_name', 'activity_log');
+    $activityLogNames = [
+        'sales_invoice',
+        'sales_return',
+        'purchase_invoice',
+        'purchase_return',
+        'expense',
+        'payment',
+        'product_stock_movement',
+    ];
+
+    if (Schema::hasTable($activityLogTable)) {
+        $counts[$activityLogTable.' (transaction logs)'] = DB::table($activityLogTable)
+            ->whereIn('log_name', $activityLogNames)
+            ->count();
+    }
+
+    $counts['products.qty reset'] = Schema::hasTable('products') && Schema::hasColumn('products', 'qty')
+        ? DB::table('products')->where('qty', '<>', 0)->count()
+        : 0;
+
+    $counts['product_variants.qty reset'] = Schema::hasTable('product_variants') && Schema::hasColumn('product_variants', 'qty')
+        ? DB::table('product_variants')->where('qty', '<>', 0)->count()
+        : 0;
+
+    $counts['accounts.total_balance reset'] = Schema::hasTable('accounts') && Schema::hasColumn('accounts', 'total_balance')
+        ? DB::table('accounts')->whereColumn('total_balance', '<>', 'initial_balance')->count()
+        : 0;
+
+    $this->table(['Target', 'Rows'], collect($counts)->map(fn (int $count, string $target): array => [$target, $count])->all());
+
+    if ($this->option('dry-run')) {
+        $this->info('Dry run complete. No data was deleted.');
+        return 0;
+    }
+
+    if (! $this->option('force') && ! $this->confirm('This will permanently clear transactional inventory data. Continue?')) {
+        $this->warn('Cancelled.');
+        return 1;
+    }
+
+    Schema::disableForeignKeyConstraints();
+
+    try {
+        if (Schema::hasTable($activityLogTable)) {
+            DB::table($activityLogTable)
+                ->whereIn('log_name', $activityLogNames)
+                ->delete();
+        }
+
+        foreach ($existingTables as $table) {
+            DB::table($table)->truncate();
+        }
+
+        if (Schema::hasTable('products') && Schema::hasColumn('products', 'qty')) {
+            DB::table('products')->update(['qty' => 0]);
+        }
+
+        if (Schema::hasTable('product_variants') && Schema::hasColumn('product_variants', 'qty')) {
+            DB::table('product_variants')->update(['qty' => 0]);
+        }
+
+        if (Schema::hasTable('accounts') && Schema::hasColumn('accounts', 'total_balance')) {
+            DB::table('accounts')->update([
+                'total_balance' => DB::raw('COALESCE(initial_balance, 0)'),
+            ]);
+        }
+    } finally {
+        Schema::enableForeignKeyConstraints();
+    }
+
+    $this->info('Transactional inventory data cleared.');
+    $this->comment('Cleared sales, sales returns, purchases, purchase returns, expenses, payments, stock snapshots, stock movements, batches, and adjustments.');
+
+    return 0;
+})->purpose('Clear transactional inventory data while keeping master data');

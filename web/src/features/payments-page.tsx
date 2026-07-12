@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { Eye } from 'lucide-react';
 import { PageHeader, Pagination, TableWrap } from '@/components/resource-shell';
 import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 import { useAuth } from '@/context/auth-context';
@@ -59,6 +60,7 @@ export function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(15);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -83,15 +85,15 @@ export function PaymentsPage() {
       let response: PaginatedResponse<Payment>;
 
       if (view === 'customer' && statementCustomer) {
-        response = await api.customerStatement(statementCustomer.id, { page: nextPage, perPage: 15 });
+        response = await api.customerStatement(statementCustomer.id, { page: nextPage, perPage });
       } else if (view === 'supplier' && statementSupplier) {
-        response = await api.supplierStatement(statementSupplier.id, { page: nextPage, perPage: 15 });
+        response = await api.supplierStatement(statementSupplier.id, { page: nextPage, perPage });
       } else if (view === 'account' && statementAccount) {
-        response = await api.accountStatement(statementAccount.id, { page: nextPage, perPage: 15 });
+        response = await api.accountStatement(statementAccount.id, { page: nextPage, perPage });
       } else if (view === 'ledger') {
         response = await api.payments({
           page: nextPage,
-          perPage: 15,
+          perPage,
           customerId: ledgerPartyKind === 'customer' ? ledgerCustomer?.id : null,
           supplierId: ledgerPartyKind === 'supplier' ? ledgerSupplier?.id : null,
           accountId: ledgerAccount?.id,
@@ -112,7 +114,7 @@ export function PaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [ledgerAccount?.id, ledgerCustomer?.id, ledgerDirection, ledgerPartyKind, ledgerSupplier?.id, ledgerType, statementAccount, statementCustomer, statementSupplier, view]);
+  }, [ledgerAccount?.id, ledgerCustomer?.id, ledgerDirection, ledgerPartyKind, ledgerSupplier?.id, ledgerType, perPage, statementAccount, statementCustomer, statementSupplier, view]);
 
   useEffect(() => {
     void loadPayments(1);
@@ -293,8 +295,8 @@ export function PaymentsPage() {
         searchAccounts={searchAccounts}
       />
 
-      {payments.length ? <PaymentTable payments={payments} saving={saving} onApprove={(id) => void approvePayment(id)} /> : <div className="rounded-lg border border-dashed border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
-      <Pagination meta={pagination} loading={loading} onPage={(nextPage) => void loadPayments(nextPage)} />
+      {payments.length ? <PaymentTable payments={payments} loading={loading} saving={saving} onApprove={(id) => void approvePayment(id)} /> : <div className="rounded-lg border border-dashed border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
+      <Pagination meta={pagination} loading={loading} onPage={(nextPage) => void loadPayments(nextPage)} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
 
       <Modal title="Record Payment" open={modalOpen} onOpenChange={setModalOpen}>
         <form onSubmit={submitPayment} className="grid gap-4">
@@ -460,9 +462,9 @@ function Filters(props: {
   );
 }
 
-function PaymentTable({ payments, saving, onApprove }: { payments: Payment[]; saving: boolean; onApprove: (id: number) => void }) {
+function PaymentTable({ payments, loading, saving, onApprove }: { payments: Payment[]; loading: boolean; saving: boolean; onApprove: (id: number) => void }) {
   return (
-    <TableWrap>
+    <TableWrap loading={loading}>
       <table className="min-w-full text-sm">
         <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
           <tr>
@@ -491,7 +493,7 @@ function PaymentTable({ payments, saving, onApprove }: { payments: Payment[]; sa
                 {payment.direction === 'in' ? '+' : '-'}{money(payment.amount)}
               </td>
               <td className="px-4 py-3 text-right">
-                <Link className="mr-2 inline-flex h-10 items-center rounded-md px-3 text-sm font-medium hover:bg-neutral-100" href={`/payments/${payment.id}`}>Details</Link>
+                <Link className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100" href={`/payments/${payment.id}`} aria-label="View payment" title="View payment"><Eye className="h-4 w-4" /></Link>
                 {payment.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => onApprove(payment.id)}>Approve</Button> : null}
               </td>
             </tr>

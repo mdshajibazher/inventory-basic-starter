@@ -2,15 +2,16 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { Pencil, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
-import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
+import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 import { useAuth } from '@/context/auth-context';
 import { api, type ExpensePayload } from '@/lib/api';
 import type { Account, Expense, ExpenseCategory, PaginationMeta, Warehouse } from '@/lib/types';
 import { errorMessage, toNumber } from '@/lib/utils';
 
-const perPage = 15;
+const defaultPerPage = 15;
 const noneValue = '__none__';
 
 type ExpenseForm = {
@@ -39,6 +40,7 @@ export function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -72,7 +74,7 @@ export function ExpensesPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (!hasPermission('expenses-index')) router.replace('/dashboard');
@@ -189,7 +191,7 @@ export function ExpensesPage() {
       <PageHeader title="Expenses" subtitle={`${expenses.length} shown from ${pagination?.total ?? expenses.length}`} actionLabel="Add Expense" canAdd={canAdd} onAdd={openCreate} />
       <SearchBox value={search} onChange={setSearch} placeholder="Search reference, category, warehouse, account, note" />
       {expenses.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
@@ -213,9 +215,28 @@ export function ExpensesPage() {
                   <td className="px-4 py-3">{expense.account_name ?? '-'}</td>
                   <td className="px-4 py-3 text-right font-medium">{money(expense.amount)}</td>
                   <td className="max-w-xs truncate px-4 py-3">{expense.note ?? '-'}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {canEdit ? <Button variant="ghost" onClick={() => openEdit(expense)}>Edit</Button> : null}
-                    {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(expense)}>Delete</Button> : null}
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {canEdit ? (
+                        <ActionButton
+                          icon={Pencil}
+                          text="Edit expense"
+                          color="text-amber-600 hover:text-amber-700"
+                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                          onClick={() => openEdit(expense)}
+                        />
+                      ) : null}
+                      {canDelete ? (
+                        <ActionButton
+                          icon={Trash2}
+                          text="Delete expense"
+                          color="text-red-500 hover:text-red-600"
+                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                          disabled={saving}
+                          onClick={() => void remove(expense)}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -225,7 +246,7 @@ export function ExpensesPage() {
       ) : (
         <div className="rounded-lg border border-dashed border-neutral-200 bg-white p-8 text-center text-sm text-neutral-500">{loading ? 'Loading expenses...' : 'No expenses found.'}</div>
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
 
       <Modal title={`${editingExpense ? 'Edit' : 'Add'} Expense`} open={modalOpen} onOpenChange={setModalOpen}>
         <form onSubmit={save} className="grid gap-4">

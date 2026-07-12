@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { Package } from 'lucide-react';
+import { Package, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { ActivityLogTimeline } from '@/components/activity-log';
 import { StatusBadge } from '@/components/ui';
@@ -45,7 +45,7 @@ export function ProductDetailPage({ productId }: { productId: number }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {product && hasPermission('products-edit') ? (
-            <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`/products/${product.id}/edit`}>Edit</Link>
+            <Link className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`/products/${product.id}/edit`} aria-label="Edit product" title="Edit product"><Pencil className="h-4 w-4" /></Link>
           ) : null}
           <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href="/products">Back</Link>
         </div>

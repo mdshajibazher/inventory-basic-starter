@@ -53,6 +53,20 @@ export type ProductVariantPayload = {
   additional_price: number;
 };
 
+export type ProductBarcodeLabel = {
+  product_id: number;
+  variant_id?: number | null;
+  name: string;
+  code: string;
+  price: number | string;
+  promotion_price?: number | string | null;
+  barcode_symbology: string;
+  barcode_image: string;
+  barcode_mime?: string | null;
+  currency?: string | null;
+  currency_position?: string | null;
+};
+
 type BrandPayload = {
   title: string;
   image?: UploadImage | null;
@@ -833,6 +847,8 @@ export const api = {
   products: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/products${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
   product: (id: number) => request<{ data: unknown }>(`/products/${id}`),
+  productBarcode: (id: number, params: { variantId?: number | null } = {}) =>
+    request<{ data: ProductBarcodeLabel }>(`/products/${id}/barcode${queryString({ variant_id: params.variantId })}`),
   productStocks: (params: { page?: number; perPage?: number; search?: string; warehouseId?: number } = {}) =>
     request<PaginatedResponse<unknown>>(`/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`),
   profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
@@ -859,6 +875,8 @@ export const api = {
     request<{ data: unknown; message: string }>(`/stock-adjustments/${movementId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteStockAdjustment: (movementId: number) =>
     request<{ message: string }>(`/stock-adjustments/${movementId}`, { method: 'DELETE' }),
+  clearDashboardTransactions: () =>
+    request<{ message: string; output?: string }>('/dashboard/clear-transactions', { method: 'POST' }),
   checkBatchAvailability: (productId: number, batchNo: string, warehouseId: number) =>
     request<{ data: BatchAvailabilityResponse }>(
       `/check-batch-availability/${productId}/${encodeURIComponent(batchNo)}/${warehouseId}`
@@ -867,17 +885,21 @@ export const api = {
   updateProduct: (id: number, payload: ProductPayload) => request<{ data: unknown }>(`/products/${id}`, { method: 'POST', body: putForm(productFormData(payload)) }),
   deleteProduct: (id: number) => request<{ message: string }>(`/products/${id}`, { method: 'DELETE' }),
   purchaseStatuses: () => request<{ data: unknown[] }>('/purchase-statuses'),
-  salesInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean } = {}) =>
-    request<PaginatedResponse<unknown>>(`/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
+  salesInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean; approvalStatus?: 'pending' | 'approved' } = {}) =>
+    request<PaginatedResponse<unknown>>(`/sales-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly, approval_status: params.approvalStatus })}`),
   saleInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; outstandingOnly?: boolean; approvedOnly?: boolean } = {}) =>
     request<PaginatedResponse<InvoiceOption>>(`/sales-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, outstanding_only: params.outstandingOnly, approved_only: params.approvedOnly })}`),
   salesInvoice: (id: number) => request<{ data: unknown }>(`/sales-invoices/${id}`),
+  exportSalesInvoicePdf: (id: number, referenceNo?: string) =>
+    download(`/sales-invoices/${id}/pdf`, `sales-invoice-${referenceNo || id}.pdf`),
   createSalesInvoice: (payload: SalesInvoicePayload) => request<{ data: unknown; message: string }>('/sales-invoices', { method: 'POST', body: salesInvoiceFormData(payload) }),
   updateSalesInvoice: (id: number, payload: SalesInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/sales-invoices/${id}`, { method: 'POST', body: putForm(salesInvoiceFormData(payload)) }),
+  updateSalesInvoiceLineCost: (invoiceId: number, lineId: number, unitCost: number) =>
+    request<{ data: unknown; message: string }>(`/sales-invoices/${invoiceId}/lines/${lineId}/cost`, { method: 'PATCH', body: JSON.stringify({ unit_cost: unitCost }) }),
   approveSalesInvoice: (id: number) => request<{ data: unknown; message: string }>(`/sales-invoices/${id}/approve`, { method: 'POST' }),
-  returnInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean } = {}) =>
-    request<PaginatedResponse<unknown>>(`/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
+  returnInvoices: (params: { page?: number; perPage?: number; search?: string; customerId?: number | null; approvedOnly?: boolean; approvalStatus?: 'pending' | 'approved' } = {}) =>
+    request<PaginatedResponse<unknown>>(`/return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly, approval_status: params.approvalStatus })}`),
   returnInvoiceOptions: (params: { search?: string; customerId?: number | null; perPage?: number; approvedOnly?: boolean } = {}) =>
     request<PaginatedResponse<InvoiceOption>>(`/return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, customer_id: params.customerId, approved_only: params.approvedOnly })}`),
   returnInvoice: (id: number) => request<{ data: unknown }>(`/return-invoices/${id}`),
@@ -885,8 +907,8 @@ export const api = {
   updateReturnInvoice: (id: number, payload: ReturnInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/return-invoices/${id}`, { method: 'POST', body: putForm(returnInvoiceFormData(payload)) }),
   approveReturnInvoice: (id: number) => request<{ data: unknown; message: string }>(`/return-invoices/${id}/approve`, { method: 'POST' }),
-  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean } = {}) =>
-    request<PaginatedResponse<unknown>>(`/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
+  purchaseInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean; approvalStatus?: 'pending' | 'approved' } = {}) =>
+    request<PaginatedResponse<unknown>>(`/purchase-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly, approval_status: params.approvalStatus })}`),
   purchaseInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; outstandingOnly?: boolean; approvedOnly?: boolean } = {}) =>
     request<PaginatedResponse<InvoiceOption>>(`/purchase-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, outstanding_only: params.outstandingOnly, approved_only: params.approvedOnly })}`),
   purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
@@ -894,8 +916,8 @@ export const api = {
   updatePurchaseInvoice: (id: number, payload: PurchaseInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/purchase-invoices/${id}`, { method: 'POST', body: putForm(purchaseInvoiceFormData(payload)) }),
   approvePurchaseInvoice: (id: number) => request<{ data: unknown; message: string }>(`/purchase-invoices/${id}/approve`, { method: 'POST' }),
-  purchaseReturnInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean } = {}) =>
-    request<PaginatedResponse<unknown>>(`/purchase-return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
+  purchaseReturnInvoices: (params: { page?: number; perPage?: number; search?: string; supplierId?: number | null; approvedOnly?: boolean; approvalStatus?: 'pending' | 'approved' } = {}) =>
+    request<PaginatedResponse<unknown>>(`/purchase-return-invoices${queryString({ page: params.page, per_page: params.perPage, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly, approval_status: params.approvalStatus })}`),
   purchaseReturnInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; approvedOnly?: boolean } = {}) =>
     request<PaginatedResponse<InvoiceOption>>(`/purchase-return-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, approved_only: params.approvedOnly })}`),
   purchaseReturnInvoice: (id: number) => request<{ data: unknown }>(`/purchase-return-invoices/${id}`),

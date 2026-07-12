@@ -45,6 +45,7 @@ class PurchaseInvoiceController extends Controller
     {
         $perPage = min((int) $request->query('per_page', 15), 100);
         $search = trim((string) $request->query('search', ''));
+        $approvalStatus = $request->query('approval_status');
         $billerId = $request->user()?->requireCurrentBillerId();
         $canFilterApproval = Schema::hasColumn('purchases', 'approval_status');
 
@@ -52,6 +53,7 @@ class PurchaseInvoiceController extends Controller
             ->with(['supplier:id,name', 'warehouse:id,name', 'biller:id,name', 'purchaseStatus:id,value,label'])
             ->when($billerId, fn ($query) => $query->where('biller_id', $billerId))
             ->when($canFilterApproval && ($request->boolean('approved_only') || $request->boolean('outstanding_only')), fn ($query) => $query->where('approval_status', ApprovalService::APPROVED))
+            ->when($canFilterApproval && in_array($approvalStatus, [ApprovalService::PENDING, ApprovalService::APPROVED], true), fn ($query) => $query->where('approval_status', $approvalStatus))
             ->when($request->filled('supplier_id'), fn ($query) => $query->where('supplier_id', $request->integer('supplier_id')))
             ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
@@ -233,14 +235,9 @@ class PurchaseInvoiceController extends Controller
             $totalCost += $lineTotal;
         }
 
-        if ((int) $data['status'] === 4) {
-            $totalDiscount = $totalTax = $totalCost = 0.0;
-            $lines = array_fill_keys(array_keys($lines), 0.0);
-        }
-
-        $orderTaxRate = (int) $data['status'] === 4 ? 0.0 : (float) ($data['order_tax_rate'] ?? 0);
-        $orderDiscount = (int) $data['status'] === 4 ? 0.0 : (float) ($data['order_discount'] ?? 0);
-        $shippingCost = (int) $data['status'] === 4 ? 0.0 : (float) ($data['shipping_cost'] ?? 0);
+        $orderTaxRate = (float) ($data['order_tax_rate'] ?? 0);
+        $orderDiscount = (float) ($data['order_discount'] ?? 0);
+        $shippingCost = (float) ($data['shipping_cost'] ?? 0);
         $orderTax = round(max($totalCost - $orderDiscount, 0) * $orderTaxRate / 100, 2);
 
         return [
@@ -324,14 +321,14 @@ class PurchaseInvoiceController extends Controller
     {
         return match ($status) {
             1 => $qty,
-            3, 4 => 0.0,
+            3 => 0.0,
             default => min(max($requestedReceived, 0), $qty),
         };
     }
 
     private function receivedLineTotal(int $status, float $qty, float $received, float $lineTotal): float
     {
-        if (in_array($status, [3, 4], true)) {
+        if ($status === 3) {
             return 0.0;
         }
         if ($status === 2) {

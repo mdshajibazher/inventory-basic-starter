@@ -28,3 +28,55 @@ textarea {
   background: #0a0a0a;
   color: #ffffff;
 }
+
+@keyframes modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-content-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-content-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@utility animate-modal-overlay-in {
+  animation: modal-overlay-in 160ms ease-out;
+}
+
+@utility animate-modal-overlay-out {
+  animation: modal-overlay-out 120ms ease-in;
+}
+
+@utility animate-modal-content-in {
+  animation: modal-content-in 160ms ease-out;
+}
+
+@utility animate-modal-content-out {
+  animation: modal-content-out 120ms ease-in;
+}

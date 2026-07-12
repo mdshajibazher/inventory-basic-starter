@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ProductResource;
+use App\Models\GeneralSetting;
 use App\Models\Product;
 use App\Models\ProductBatch;
 use App\Models\ProductVariant;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Milon\Barcode\Facades\DNS1DFacade as DNS1D;
+use Throwable;
 
 class ProductController extends Controller
 {
@@ -133,6 +136,62 @@ class ProductController extends Controller
                 'qty' => $warehouseStock->qty,
                 'product_batch_id' => $batch->id,
                 'message' => 'ok',
+            ],
+        ]);
+    }
+
+    public function barcode(Request $request, Product $product)
+    {
+        abort_unless($product->is_active, 404);
+
+        $data = $request->validate([
+            'variant_id' => ['nullable', 'integer', 'exists:product_variants,id'],
+        ]);
+
+        $variant = null;
+        if (! empty($data['variant_id'])) {
+            $variant = ProductVariant::query()
+                ->with('variant:id,name')
+                ->where('product_id', $product->id)
+                ->findOrFail($data['variant_id']);
+        }
+
+        $code = $variant?->item_code ?: $product->code;
+        $name = $variant
+            ? trim($product->name.' - '.($variant->variant?->name ?: $variant->item_code))
+            : $product->name;
+        $price = (float) $product->price + (float) ($variant?->additional_price ?? 0);
+        $settings = GeneralSetting::query()->latest()->first();
+
+        try {
+            $barcodeImage = DNS1D::getBarcodePNG($code, $product->barcode_symbology);
+            $barcodeMime = 'image/png';
+
+            if (! $barcodeImage) {
+                $barcodeImage = base64_encode(DNS1D::getBarcodeSVG($code, $product->barcode_symbology));
+                $barcodeMime = 'image/svg+xml';
+            }
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'message' => 'Unable to generate barcode for this product code and symbology.',
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => [
+                'product_id' => $product->id,
+                'variant_id' => $variant?->id,
+                'name' => $name,
+                'code' => $code,
+                'price' => $price,
+                'promotion_price' => $product->promotion_price,
+                'barcode_symbology' => $product->barcode_symbology,
+                'barcode_image' => $barcodeImage,
+                'barcode_mime' => $barcodeMime,
+                'currency' => $settings?->currency,
+                'currency_position' => $settings?->currency_position ?: 'prefix',
             ],
         ]);
     }

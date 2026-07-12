@@ -23,6 +23,10 @@ class ApprovalService
 
     public const APPROVED = 'approved';
 
+    private const PURCHASE_STATUS_RECEIVED = 1;
+
+    private const PURCHASE_STATUS_PENDING = 3;
+
     public function canApprove(User $user, string $type): bool
     {
         return in_array($user->id, $this->approverIds($type), true);
@@ -134,6 +138,18 @@ class ApprovalService
             $this->assertPending($purchase);
             $purchase->loadMissing(['products.product', 'products.unit']);
 
+            if ((int) $purchase->status === self::PURCHASE_STATUS_PENDING) {
+                foreach ($purchase->products as $line) {
+                    $line->forceFill([
+                        'recieved' => (float) $line->qty,
+                        'total' => $this->purchaseLineTotal($line),
+                    ])->save();
+                }
+
+                $purchase->status = self::PURCHASE_STATUS_RECEIVED;
+                $purchase->load('products.product', 'products.unit');
+            }
+
             foreach ($purchase->products as $line) {
                 $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
                 $received = (float) $line->recieved;
@@ -166,6 +182,11 @@ class ApprovalService
 
             return $purchase->load(['supplier:id,name,email,phone_number', 'warehouse:id,name', 'user:id,name,email', 'approver:id,name,email', 'purchaseStatus:id,value,label', 'products']);
         });
+    }
+
+    private function purchaseLineTotal(ProductPurchase $line): float
+    {
+        return round(((float) $line->net_unit_cost * (float) $line->qty) - (float) $line->discount + (float) $line->tax, 2);
     }
 
     public function approvePurchaseReturn(ReturnPurchase $returnPurchase, User $user): ReturnPurchase

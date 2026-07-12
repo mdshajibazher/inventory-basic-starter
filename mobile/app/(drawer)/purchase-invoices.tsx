@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
@@ -51,13 +52,11 @@ type SearchableSelectFieldProps<T> = {
 const PURCHASE_STATUS_RECEIVED = 1;
 const PURCHASE_STATUS_PARTIAL = 2;
 const PURCHASE_STATUS_PENDING = 3;
-const PURCHASE_STATUS_ORDERED = 4;
 
 const fallbackPurchaseStatuses: PurchaseStatus[] = [
   { id: 1, value: '1', label: 'Received' },
   { id: 2, value: '2', label: 'Partial' },
   { id: 3, value: '3', label: 'Pending' },
-  { id: 4, value: '4', label: 'Ordered' },
 ];
 
 const emptyLine = (): InvoiceLine => ({
@@ -147,8 +146,9 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
       const nextWarehouses = warehouseResponse.data as Warehouse[];
       const nextProducts = (productResponse.data as Product[]).filter(isInvoiceProductSupported);
       const productOptions = productOptionsResponse.data as ProductOptions;
-      const nextPurchaseStatuses = (purchaseStatusResponse.data as PurchaseStatus[]).length
-        ? purchaseStatusResponse.data as PurchaseStatus[]
+      const apiPurchaseStatuses = (purchaseStatusResponse.data as PurchaseStatus[]).filter((status) => Number(status.id) !== 4 && String(status.value) !== '4');
+      const nextPurchaseStatuses = apiPurchaseStatuses.length
+        ? apiPurchaseStatuses
         : fallbackPurchaseStatuses;
 
       setSuppliers(nextSuppliers);
@@ -204,6 +204,8 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
         const nextLine = { ...line, [field]: value };
         if (field === 'qty' && isReceivedQuantitySyncedStatus(form.purchaseStatusId)) {
           nextLine.received = String(value);
+        } else if (field === 'qty' && form.purchaseStatusId === PURCHASE_STATUS_PARTIAL) {
+          nextLine.received = boundedReceivedValue(nextLine.received, String(value));
         } else if (field === 'received' && form.purchaseStatusId === PURCHASE_STATUS_PARTIAL) {
           nextLine.received = boundedReceivedValue(String(value), nextLine.qty);
         }
@@ -325,6 +327,17 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
     }
   }
 
+  function requestApproval(id: number) {
+    Alert.alert(
+      'Approve Invoice',
+      `Approve this ${isReturn ? 'purchase return' : 'purchase invoice'}? This will apply its inventory and financial effects.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: () => void approveInvoice(id) },
+      ]
+    );
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -388,9 +401,12 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
               <Text variant="titleSmall">{invoice.reference_no}</Text>
               <Text variant="bodySmall" style={styles.muted}>{isReturn ? 'Return' : 'Purchase'} date: {String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
               <Text variant="bodySmall" style={styles.muted}>{invoice.supplier?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
-              <Text variant="bodySmall" style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
+              <View style={styles.listBadgeRow}>
+                {!isReturn ? <PurchaseStatusBadge status={invoice.purchase_status?.label ?? invoice.status} /> : null}
+                <ApprovalBadge status={invoice.approval_status} />
+              </View>
             </View>
-            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
+            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => requestApproval(Number(invoice.id))}>Approve</Button> : null}
             <Button compact onPress={() => router.push({ pathname: `/(drawer)/${routeBase}-detail` as any, params: { id: String(invoice.id) } })}>Details</Button>
             <Button compact onPress={() => router.push({ pathname: `/(drawer)/${routeBase}-edit` as any, params: { id: String(invoice.id) } })}>Edit</Button>
           </View>
@@ -402,7 +418,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
           <View style={styles.sectionHeader}>
             <Text variant="titleMedium">{title} details</Text>
             <View style={styles.rowActions}>
-              {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
+              {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => requestApproval(Number(selectedInvoice.id))}>Approve</Button> : null}
               <Button mode="outlined" onPress={() => router.push(`/(drawer)/${routeBase}` as any)}>Back</Button>
             </View>
           </View>
@@ -573,22 +589,209 @@ export default function PurchaseInvoicesIndexScreen() {
 
 function PurchaseInvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: PurchaseScreenKind }) {
   const isReturn = kind === 'return';
+  const lines = (invoice.products ?? []) as Record<string, any>[];
+  const subtotal = numberValue(invoice.total_cost ?? invoice.total_price);
+  const orderDiscount = numberValue(invoice.order_discount);
+  const orderTax = numberValue(invoice.order_tax);
+  const shippingCost = numberValue(invoice.shipping_cost);
+  const grandTotal = numberValue(invoice.grand_total);
+  const paidAmount = numberValue(invoice.paid_amount);
+  const dueAmount = numberValue(invoice.due_amount);
+  const payment = invoice.payments?.[0] ?? null;
+  const invoiceDate = String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-');
+  const invoiceTime = timeOnly(invoice.created_at);
+  const note = String(invoice.return_note ?? invoice.purchase_note ?? invoice.note ?? '-');
 
   return (
-    <View style={styles.detailStack}>
-      <View style={styles.detailBox}>
-        <Text variant="titleSmall">{invoice.reference_no}</Text>
-        <Text>{isReturn ? 'Return' : 'Purchase'} date: {String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</Text>
-        <Text style={styles.muted}>{invoice.supplier?.name ?? '-'}</Text>
-        <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
-        <Text style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
-        {(invoice.products ?? []).map((line: Record<string, any>) => (
-          <Text key={line.id} style={styles.muted}>
-            {line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))}{isReturn ? '' : ` | Received ${money(numberValue(line.received))}`}
-          </Text>
-        ))}
+    <View style={styles.mobileDetailStack}>
+      <View style={styles.mobileInvoiceCard}>
+        <View style={styles.mobileInvoiceTop}>
+          <View style={styles.invoiceIconCircle}>
+            <MaterialCommunityIcons name={isReturn ? 'file-undo-outline' : 'file-document-outline'} size={28} color="#ffffff" />
+          </View>
+          <View style={styles.invoiceTitleBlock}>
+            <Text variant="bodyMedium" style={styles.mobileMuted}>Invoice No</Text>
+            <Text variant="titleLarge" style={styles.invoiceNumber}>{String(invoice.reference_no ?? '-')}</Text>
+          </View>
+          <View style={[styles.mobilePaidBadge, invoice.approval_status === 'pending' && styles.mobilePendingBadge]}>
+            <MaterialCommunityIcons name={invoice.approval_status === 'pending' ? 'clock-outline' : 'check-circle'} size={18} color={invoice.approval_status === 'pending' ? '#92400e' : '#079641'} />
+            <Text style={[styles.mobilePaidText, invoice.approval_status === 'pending' && styles.mobilePendingText]}>{invoice.approval_status === 'pending' ? 'Pending' : 'Approved'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.mobileInvoiceDivider} />
+
+        <View style={styles.mobileMetaGrid}>
+          <View style={styles.mobileMetaColumn}>
+            <MobileMeta icon="account-outline" label="Supplier" value={String(invoice.supplier?.name ?? '-')} />
+            <MobileMeta icon="phone-outline" label="Phone" value={String(invoice.supplier?.phone_number ?? '-')} />
+            <MobileMeta icon="account-group-outline" label={isReturn ? 'Created By' : 'Purchase Status'} value={String(isReturn ? invoice.user?.name ?? '-' : invoice.purchase_status?.label ?? invoice.status ?? '-')} />
+          </View>
+          <View style={styles.mobileMetaSeparator} />
+          <View style={styles.mobileMetaColumn}>
+            <MobileMeta icon="calendar-month-outline" label={isReturn ? 'Return Date' : 'Purchase Date'} value={invoiceDate} />
+            <MobileMeta icon="clock-outline" label="Time" value={invoiceTime ?? '-'} />
+            <MobileMeta icon="warehouse" label="Warehouse" value={String(invoice.warehouse?.name ?? '-')} />
+          </View>
+        </View>
       </View>
+
+      <Text variant="titleMedium" style={styles.mobileSectionTitle}>{isReturn ? 'Purchase Return Items' : 'Purchase Items'}</Text>
+      <View style={styles.mobileItemsStack}>
+        {lines.map((line, index) => (
+          <View key={line.id ?? index} style={styles.mobileItemCard}>
+            <View style={styles.mobileItemIndex}><Text style={styles.mobileItemIndexText}>{index + 1}</Text></View>
+            <ProductThumb line={line} />
+            <View style={styles.mobileItemBody}>
+              <Text variant="titleSmall" style={styles.mobileItemName} numberOfLines={2}>{invoiceLineProductName(line)}</Text>
+              <View style={styles.mobilePillRow}>
+                <Text style={styles.variantPill}>{line.variant?.name ?? line.batch?.batch_no ?? '-'}</Text>
+                <Text style={styles.skuPill}>SKU: {line.variant?.item_code ?? line.product?.sku ?? line.product?.code ?? '-'}</Text>
+              </View>
+              <View style={styles.mobileItemFacts}>
+                <MobileFact label="Qty" value={money(numberValue(line.qty))} />
+                {!isReturn ? <MobileFact label="Received" value={money(numberValue(line.received))} /> : null}
+                <MobileFact label="Unit" value={detailLineUnit(line)} />
+                <MobileFact label="Unit Cost" value={takaMoney(numberValue(line.net_unit_cost ?? line.net_unit_price ?? line.cost))} />
+              </View>
+            </View>
+            <View style={styles.mobileLineTotal}>
+              <Text style={styles.mobileLineTotalLabel}>Line Total</Text>
+              <Text style={styles.mobileLineTotalValue}>{takaMoney(numberValue(line.total))}</Text>
+              <Text style={styles.mobileLineProfit}>Discount: {takaMoney(numberValue(line.discount))}</Text>
+            </View>
+          </View>
+        ))}
+        {!lines.length ? <Text style={styles.muted}>No products found.</Text> : null}
+      </View>
+
+      <View style={styles.mobileTwoColumn}>
+        <View style={[styles.mobileCard, styles.mobileHalfCard]}>
+          <View style={styles.mobileCardTitleRow}>
+            <MaterialCommunityIcons name="wallet-outline" size={22} color="#0d6bdf" />
+            <Text variant="titleSmall" style={styles.mobileCardTitle}>Payment Information</Text>
+          </View>
+          <View style={styles.mobileInvoiceDivider} />
+          <MobileInfoRow label="Method" value={paymentMethodLabel(payment?.paying_method)} />
+          <MobileInfoRow label="Paid Amount" value={isReturn ? '-' : takaMoney(paidAmount)} />
+          <MobileInfoRow label="Due Amount" value={isReturn ? '-' : takaMoney(dueAmount)} />
+          <MobileInfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
+        </View>
+
+        <View style={[styles.mobileCard, styles.mobileHalfCard]}>
+          <MobileTotalRow icon="chart-pie" label="Subtotal" value={takaMoney(subtotal)} />
+          <MobileTotalRow label="Discount" value={takaMoney(orderDiscount)} />
+          <MobileTotalRow label={`VAT (${money(numberValue(invoice.order_tax_rate))}%)`} value={takaMoney(orderTax)} />
+          {!isReturn && shippingCost > 0 ? <MobileTotalRow label="Shipping Cost" value={takaMoney(shippingCost)} /> : null}
+          <View style={styles.mobileInvoiceDivider} />
+          <MobileTotalRow label="Grand Total" value={takaMoney(grandTotal)} strong blue />
+          {!isReturn ? <MobileTotalRow label="Paid Amount" value={takaMoney(paidAmount)} /> : null}
+          {!isReturn ? <MobileTotalRow label="Due Amount" value={takaMoney(dueAmount)} strong green={dueAmount <= 0} /> : null}
+        </View>
+      </View>
+
+      <View style={styles.mobileNoteCard}>
+        <View style={styles.mobileNoteLeft}>
+          <MaterialCommunityIcons name="note-text-outline" size={24} color="#8b45d6" />
+          <View>
+            <Text style={styles.mobileMuted}>Note</Text>
+            <Text variant="titleSmall">{note}</Text>
+          </View>
+        </View>
+        <View style={styles.mobileProfitStatus}>
+          <Text style={styles.mobileMuted}>Approval</Text>
+          <View style={styles.mobileProfitBadge}>
+            <MaterialCommunityIcons name={invoice.approval_status === 'pending' ? 'clock-outline' : 'check-circle'} size={18} color="#079641" />
+            <Text style={styles.mobileProfitBadgeText}>{String(invoice.approval_status ?? 'approved')}</Text>
+          </View>
+        </View>
+      </View>
+
       <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
+    </View>
+  );
+}
+
+function ApprovalBadge({ status }: { status: unknown }) {
+  const pending = status === 'pending';
+
+  return (
+    <View style={[styles.listBadge, pending ? styles.listApprovalPendingBadge : styles.listApprovalApprovedBadge]}>
+      <Text style={[styles.listBadgeText, pending ? styles.listApprovalPendingText : styles.listApprovalApprovedText]}>{pending ? 'Pending' : 'Approved'}</Text>
+    </View>
+  );
+}
+
+function PurchaseStatusBadge({ status }: { status: unknown }) {
+  const normalized = String(status ?? '').toLowerCase();
+  const badgeStyle = normalized.includes('received')
+    ? styles.listPurchaseReceivedBadge
+    : normalized.includes('partial')
+      ? styles.listPurchasePartialBadge
+      : normalized.includes('pending')
+        ? styles.listPurchasePendingBadge
+        : styles.listPurchaseDefaultBadge;
+  const textStyle = normalized.includes('received')
+    ? styles.listPurchaseReceivedText
+    : normalized.includes('partial')
+      ? styles.listPurchasePartialText
+      : normalized.includes('pending')
+        ? styles.listPurchasePendingText
+        : styles.listPurchaseDefaultText;
+
+  return (
+    <View style={[styles.listBadge, badgeStyle]}>
+      <Text style={[styles.listBadgeText, textStyle]}>{String(status ?? '-')}</Text>
+    </View>
+  );
+}
+
+function MobileMeta({ icon, label, value }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string; value: string }) {
+  return (
+    <View style={styles.mobileMetaRow}>
+      <MaterialCommunityIcons name={icon} size={24} color="#23304f" />
+      <View style={styles.mobileMetaText}>
+        <Text style={styles.mobileMuted}>{label}</Text>
+        <Text variant="titleSmall" numberOfLines={2}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ProductThumb({ line }: { line: Record<string, any> }) {
+  const imageUrl = line.product?.image_url;
+  return (
+    <View style={styles.productThumb}>
+      {imageUrl ? <Image source={{ uri: String(imageUrl) }} style={styles.productThumbImage} resizeMode="cover" /> : <MaterialCommunityIcons name="package-variant-closed" size={36} color="#8a94a6" />}
+    </View>
+  );
+}
+
+function MobileFact({ label, value }: { label: string; value: string }) {
+  return (
+    <Text style={styles.mobileFactText}>
+      <Text style={styles.mobileMuted}>{label}: </Text>{value}
+    </Text>
+  );
+}
+
+function MobileInfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.mobileInfoRow}>
+      <Text style={styles.mobileMuted}>{label}</Text>
+      <Text style={styles.mobileInfoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function MobileTotalRow({ icon, label, value, strong, blue, green }: { icon?: keyof typeof MaterialCommunityIcons.glyphMap; label: string; value: string; strong?: boolean; blue?: boolean; green?: boolean }) {
+  return (
+    <View style={styles.mobileTotalRow}>
+      <View style={styles.mobileTotalLabelWrap}>
+        {icon ? <MaterialCommunityIcons name={icon} size={22} color="#0d6bdf" /> : null}
+        <Text style={[styles.mobileTotalLabel, strong && styles.mobileTotalStrongLabel, blue && styles.blueText, green && styles.greenText]}>{label}</Text>
+      </View>
+      <Text style={[styles.mobileTotalValue, strong && styles.mobileTotalStrongValue, blue && styles.blueText, green && styles.greenText]}>{value}</Text>
     </View>
   );
 }
@@ -697,8 +900,8 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
     Alert.alert('Invalid quantity', 'Line quantities must be greater than zero.');
     return null;
   }
-  if (form.purchaseStatusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received > item.values.qty)) {
-    Alert.alert('Invalid received quantity', 'Received quantity must be between zero and ordered quantity.');
+  if (form.purchaseStatusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received >= item.values.qty)) {
+    Alert.alert('Invalid received quantity', 'For partial purchases, received quantity must be less than ordered quantity.');
     return null;
   }
   if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate.trim())))) {
@@ -755,9 +958,6 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
 function calculateTotals(lines: InvoiceLine[], form: typeof initialForm) {
   const lineTotals = lines.map((line) => calculateLine(line, form.purchaseStatusId));
   const totalQty = round2(lineTotals.reduce((sum, line) => sum + line.qty, 0));
-  if (form.purchaseStatusId === PURCHASE_STATUS_ORDERED) {
-    return { totalQty, totalDiscount: 0, totalCost: 0, orderTax: 0, grandTotal: 0 };
-  }
   const lineDiscount = round2(lineTotals.reduce((sum, line) => sum + line.discount, 0));
   const orderDiscount = numberValue(form.orderDiscount);
   const totalDiscount = round2(lineDiscount + orderDiscount);
@@ -773,9 +973,6 @@ function calculateLine(line: InvoiceLine, purchaseStatusId: number) {
   const cost = numberValue(line.cost);
   const discount = numberValue(line.discount);
   const taxRate = numberValue(line.taxRate);
-  if (purchaseStatusId === PURCHASE_STATUS_ORDERED) {
-    return { qty, received, cost, discount: 0, taxRate, tax: 0, subtotal: 0 };
-  }
   const taxable = Math.max(0, cost * qty - discount);
   const tax = round2(taxable * taxRate / 100);
   const subtotal = round2(taxable + tax);
@@ -789,11 +986,11 @@ function normalizedReceived(statusId: number, line: InvoiceLine) {
 }
 
 function isReceivedQuantitySyncedStatus(statusId: number) {
-  return statusId === PURCHASE_STATUS_RECEIVED || statusId === PURCHASE_STATUS_PARTIAL;
+  return statusId === PURCHASE_STATUS_RECEIVED;
 }
 
 function isUnreceivedStatus(statusId: number) {
-  return statusId === PURCHASE_STATUS_PENDING || statusId === PURCHASE_STATUS_ORDERED;
+  return statusId === PURCHASE_STATUS_PENDING;
 }
 
 function boundedReceivedValue(received: string, qty: string) {
@@ -1030,6 +1227,36 @@ function money(value: number) {
   return value.toFixed(2);
 }
 
+function invoiceLineProductName(line: Record<string, any>) {
+  const productName = line.product?.name ?? `#${line.product_id}`;
+  return line.variant?.name ? `${productName} - ${line.variant.name}` : productName;
+}
+
+function takaMoney(value: number) {
+  return `৳${money(value)}`;
+}
+
+function detailLineUnit(line: Record<string, any>) {
+  if (!line.unit) return '-';
+  const unitName = line.unit.unit_name ?? line.unit.name;
+  const unitCode = line.unit.unit_code ?? line.unit.code;
+  return unitCode && unitName ? `${unitName} (${unitCode})` : String(unitName ?? unitCode ?? '-');
+}
+
+function paymentMethodLabel(method: unknown) {
+  if (!method) return '-';
+  return String(method)
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function timeOnly(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function nullableText(value: string) {
   const text = value.trim();
   return text ? text : null;
@@ -1108,8 +1335,99 @@ const styles = StyleSheet.create({
   lineCard: { width: '100%', maxWidth: '100%', alignSelf: 'stretch', gap: 10, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eeeeee', backgroundColor: '#fafafa' },
   listItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#eeeeee' },
   listItemText: { flex: 1, minWidth: 0 },
+  listBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  listBadge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 },
+  listBadgeText: { fontSize: 12, fontWeight: '700' },
+  listApprovalPendingBadge: { backgroundColor: '#fef3c7' },
+  listApprovalPendingText: { color: '#92400e' },
+  listApprovalApprovedBadge: { backgroundColor: '#d1fae5' },
+  listApprovalApprovedText: { color: '#047857' },
+  listPurchaseReceivedBadge: { backgroundColor: '#d1fae5' },
+  listPurchaseReceivedText: { color: '#047857' },
+  listPurchasePartialBadge: { backgroundColor: '#e0f2fe' },
+  listPurchasePartialText: { color: '#075985' },
+  listPurchasePendingBadge: { backgroundColor: '#fef3c7' },
+  listPurchasePendingText: { color: '#92400e' },
+  listPurchaseDefaultBadge: { backgroundColor: '#f3f4f6' },
+  listPurchaseDefaultText: { color: '#374151' },
   detailBox: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eeeeee', backgroundColor: '#fafafa' },
   detailStack: { gap: 12 },
+  mobileDetailStack: { gap: 14 },
+  mobileInvoiceCard: {
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e1e7f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  mobileInvoiceTop: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+  invoiceIconCircle: { width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 26, backgroundColor: '#1670e8' },
+  invoiceTitleBlock: { flex: 1, minWidth: 0 },
+  invoiceNumber: { color: '#0b66d8', fontWeight: '800' },
+  mobilePaidBadge: { alignItems: 'center', flexDirection: 'row', gap: 7, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: '#d7f6df' },
+  mobilePendingBadge: { backgroundColor: '#fef3c7' },
+  mobilePaidText: { color: '#087338', fontSize: 15, fontWeight: '800' },
+  mobilePendingText: { color: '#92400e' },
+  mobileInvoiceDivider: { height: 1, backgroundColor: '#e7ebf2' },
+  mobileMetaGrid: { flexDirection: 'row', gap: 12 },
+  mobileMetaColumn: { flex: 1, gap: 14 },
+  mobileMetaSeparator: { width: 1, backgroundColor: '#e7ebf2' },
+  mobileMetaRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
+  mobileMetaText: { flex: 1, minWidth: 0 },
+  mobileMuted: { color: '#667085', fontSize: 13 },
+  mobileSectionTitle: { color: '#071126', fontWeight: '800' },
+  mobileItemsStack: { gap: 8 },
+  mobileItemCard: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5eaf2',
+    backgroundColor: '#ffffff',
+  },
+  mobileItemIndex: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#e8f1ff' },
+  mobileItemIndexText: { color: '#0b66d8', fontSize: 12, fontWeight: '800' },
+  productThumb: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 12, backgroundColor: '#f1f4f8' },
+  productThumbImage: { width: '100%', height: '100%' },
+  mobileItemBody: { flex: 1, minWidth: 0, gap: 6 },
+  mobileItemName: { color: '#111827', fontWeight: '800' },
+  mobilePillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  variantPill: { overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: '#eef2ff', color: '#364ab7', fontSize: 12, fontWeight: '700' },
+  skuPill: { overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: '#f3f4f6', color: '#4b5563', fontSize: 12, fontWeight: '700' },
+  mobileItemFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  mobileFactText: { color: '#111827', fontSize: 13, fontWeight: '600' },
+  mobileLineTotal: { alignItems: 'flex-end', minWidth: 86 },
+  mobileLineTotalLabel: { color: '#667085', fontSize: 12 },
+  mobileLineTotalValue: { color: '#0b66d8', fontSize: 16, fontWeight: '800' },
+  mobileLineProfit: { color: '#667085', fontSize: 12 },
+  mobileTwoColumn: { gap: 10 },
+  mobileCard: { gap: 10, padding: 13, borderRadius: 14, borderWidth: 1, borderColor: '#e1e7f0', backgroundColor: '#ffffff' },
+  mobileHalfCard: { width: '100%' },
+  mobileCardTitleRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  mobileCardTitle: { color: '#071126', fontWeight: '800' },
+  mobileInfoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  mobileInfoValue: { flex: 1, color: '#111827', fontWeight: '700', textAlign: 'right' },
+  mobileTotalRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 3 },
+  mobileTotalLabelWrap: { alignItems: 'center', flexDirection: 'row', gap: 7 },
+  mobileTotalLabel: { color: '#374151', fontWeight: '700' },
+  mobileTotalValue: { color: '#111827', fontWeight: '800' },
+  mobileTotalStrongLabel: { fontSize: 16 },
+  mobileTotalStrongValue: { fontSize: 18 },
+  blueText: { color: '#0b66d8' },
+  greenText: { color: '#079641' },
+  mobileNoteCard: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 12, padding: 13, borderRadius: 14, borderWidth: 1, borderColor: '#e9d5ff', backgroundColor: '#fbf7ff' },
+  mobileNoteLeft: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  mobileProfitStatus: { alignItems: 'flex-end', gap: 5 },
+  mobileProfitBadge: { alignItems: 'center', flexDirection: 'row', gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 999, backgroundColor: '#dcfce7' },
+  mobileProfitBadgeText: { color: '#087338', fontWeight: '800' },
   formRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10, width: '100%', maxWidth: '100%' },
   formField: { minWidth: 0, flexBasis: '46%', flexGrow: 1, flexShrink: 1 },
   datePickerModal: { alignSelf: 'center', backgroundColor: '#ffffff', borderRadius: 8, padding: 14, width: '92%', maxWidth: 360 },

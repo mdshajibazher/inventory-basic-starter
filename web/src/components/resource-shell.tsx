@@ -1,7 +1,7 @@
 'use client';
 
 import { Plus, Search } from 'lucide-react';
-import { Button, Input } from './ui';
+import { Button, Input, Select } from './ui';
 import type { PaginationMeta } from '@/lib/types';
 
 export function PageHeader({
@@ -50,35 +50,80 @@ export function SearchBox({
   );
 }
 
-export function TableWrap({ children }: { children: React.ReactNode }) {
-  return <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">{children}</div>;
+export function TableWrap({ children, loading = false }: { children: React.ReactNode; loading?: boolean }) {
+  return (
+    <div className="relative overflow-x-auto rounded-lg border border-neutral-200 bg-white" aria-busy={loading}>
+      {children}
+      {loading ? <div className="absolute inset-0 z-10 flex min-h-28 items-center justify-center bg-white/75" role="status" aria-label="Loading table data"><span className="h-7 w-7 animate-spin rounded-full border-2 border-neutral-300 border-t-black" /></div> : null}
+    </div>
+  );
 }
 
 export function Pagination({
   meta,
   loading,
   onPage,
+  onPerPageChange,
 }: {
   meta: PaginationMeta | null;
   loading: boolean;
   onPage: (page: number) => void;
+  onPerPageChange: (perPage: number) => void;
 }) {
-  if (!meta || meta.last_page <= 1) return null;
+  if (!meta) return null;
+  const pages = paginationPages(meta.current_page, meta.last_page);
+
   return (
     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="text-sm text-neutral-500">
-        Page {meta.current_page} of {meta.last_page}
+      <div className="w-full sm:w-40">
+        <Select
+          value={String(meta.per_page)}
+          onValueChange={(value) => onPerPageChange(Number(value))}
+          disabled={loading}
+          options={[10, 15, 20, 50, 100].map((perPage) => ({ value: String(perPage), label: `${perPage} Per Page` }))}
+        />
       </div>
-      <div className="flex gap-2">
-        <Button variant="secondary" disabled={loading || meta.current_page <= 1} onClick={() => onPage(Math.max(1, meta.current_page - 1))}>
-          Previous
+      <div className="flex items-center gap-1" aria-label="Pagination">
+        <Button type="button" variant="secondary" className="h-7 w-7 px-0" aria-label="Previous page" disabled={loading || meta.current_page <= 1} onClick={() => onPage(meta.current_page - 1)}>
+          <span className="text-base leading-none text-black">{'<'}</span>
         </Button>
-        <Button variant="secondary" disabled={loading || meta.current_page >= meta.last_page} onClick={() => onPage(Math.min(meta.last_page, meta.current_page + 1))}>
-          Next
+        {pages.map((page, index) => page === null ? (
+          <span key={`ellipsis-${index}`} className="flex h-7 w-7 items-center justify-center text-sm text-neutral-500">...</span>
+        ) : (
+          <Button
+            key={page}
+            type="button"
+            variant={page === meta.current_page ? 'primary' : 'secondary'}
+            className="h-7 w-7 px-0"
+            aria-label={`Page ${page}`}
+            aria-current={page === meta.current_page ? 'page' : undefined}
+            disabled={loading}
+            onClick={() => onPage(page)}
+          >
+            {page}
+          </Button>
+        ))}
+        <Button type="button" variant="secondary" className="h-7 w-7 px-0" aria-label="Next page" disabled={loading || meta.current_page >= meta.last_page} onClick={() => onPage(meta.current_page + 1)}>
+          <span className="text-base leading-none text-black">{'>'}</span>
         </Button>
       </div>
     </div>
   );
+}
+
+function paginationPages(currentPage: number, lastPage: number): Array<number | null> {
+  if (lastPage <= 5) return Array.from({ length: lastPage }, (_, index) => index + 1);
+
+  const pages = new Set([1, lastPage, currentPage - 1, currentPage, currentPage + 1]);
+  const sorted = [...pages].filter((page) => page >= 1 && page <= lastPage).sort((a, b) => a - b);
+  const result: Array<number | null> = [];
+
+  sorted.forEach((page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) result.push(null);
+    result.push(page);
+  });
+
+  return result;
 }
 
 export function EmptyState({ label }: { label: string }) {

@@ -11,8 +11,8 @@ import { useAuth } from '@/context/auth-context';
 import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 import { EmptyState, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 
-const perPage = 15;
-const historyPerPage = 10;
+const defaultPerPage = 15;
+const defaultHistoryPerPage = 10;
 
 type AdjustmentForm = {
   warehouseId: string;
@@ -42,6 +42,7 @@ export function ProductStocksPage() {
   const [items, setItems] = useState<ProductStock[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -55,6 +56,7 @@ export function ProductStocksPage() {
   const [historyRows, setHistoryRows] = useState<StockMovement[]>([]);
   const [historyMeta, setHistoryMeta] = useState<PaginationMeta | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
+  const [historyPerPage, setHistoryPerPage] = useState(defaultHistoryPerPage);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState('all');
@@ -81,7 +83,7 @@ export function ProductStocksPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, selectedWarehouseId]);
+  }, [debouncedSearch, page, perPage, selectedWarehouseId]);
 
   const loadOptions = useCallback(async () => {
     try {
@@ -107,7 +109,7 @@ export function ProductStocksPage() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyPage]);
+  }, [historyPage, historyPerPage]);
 
   useEffect(() => {
     if (!hasPermission('product-stocks-index')) router.replace('/dashboard');
@@ -242,7 +244,7 @@ export function ProductStocksPage() {
 
       {items.length ? (
         <>
-          <TableWrap>
+          <TableWrap loading={loading}>
             <table className="min-w-full divide-y divide-neutral-200 text-sm">
               <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
                 <tr>
@@ -286,7 +288,7 @@ export function ProductStocksPage() {
               </tbody>
             </table>
           </TableWrap>
-          <Pagination meta={pagination} loading={loading} onPage={setPage} />
+          <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
         </>
       ) : <EmptyState label={loading ? 'Loading stock...' : 'No stock products found'} />}
 
@@ -396,10 +398,10 @@ export function ProductStocksPage() {
             </tbody>
           </table>
         </div>
-        <Pagination meta={historyMeta} loading={historyLoading} onPage={(nextPage) => {
-          setHistoryPage(nextPage);
-          if (selectedProduct) void loadHistory(selectedProduct.id, nextPage);
-        }} />
+          <Pagination meta={historyMeta} loading={historyLoading} onPage={(nextPage) => {
+            setHistoryPage(nextPage);
+            if (selectedProduct) void loadHistory(selectedProduct.id, nextPage);
+          }} onPerPageChange={(nextPerPage) => { setHistoryPerPage(nextPerPage); setHistoryPage(1); if (selectedProduct) void loadHistory(selectedProduct.id, 1); }} />
       </Modal>
 
       <Modal title={editingMovement ? 'Edit Stock Adjustment' : 'Adjust Stock'} open={adjustOpen} onOpenChange={(open) => open ? setAdjustOpen(true) : closeAdjust()}>

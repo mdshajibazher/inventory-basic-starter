@@ -1,17 +1,17 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Building2, ImageIcon, Tags, Truck } from 'lucide-react';
+import { Building2, ImageIcon, Pencil, Tags, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { Account, Brand, Branch, Category, Currency, ExpenseCategory, PaginationMeta, Supplier, Tax, Unit, UnitGroup, Warehouse } from '@/lib/types';
 import { errorMessage, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Field, Input, Modal, Select, StatusBadge, Switch } from '@/components/ui';
+import { ActionButton, Button, Field, Input, Modal, Select, StatusBadge, Switch } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 
-const perPage = 15;
+const defaultPerPage = 15;
 
 type Resource = 'brands' | 'branches' | 'suppliers' | 'categories' | 'units' | 'taxes' | 'currencies' | 'warehouses' | 'accounts' | 'expense-categories';
 
@@ -50,6 +50,7 @@ export function SimpleResourcePage<T extends Resource>({ resource }: { resource:
   const [items, setItems] = useState<ResourceMap[T][]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,7 +75,7 @@ export function SimpleResourcePage<T extends Resource>({ resource }: { resource:
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, resource]);
+  }, [debouncedSearch, page, perPage, resource]);
 
   useEffect(() => {
     if (!hasPermission(`${resourceMeta.permission}-index`)) router.replace('/dashboard');
@@ -178,13 +179,13 @@ export function SimpleResourcePage<T extends Resource>({ resource }: { resource:
         <p className="mb-3 text-sm text-amber-700">Units cannot be edited after creation. Units already used in invoices cannot be deleted.</p>
       ) : null}
       {items.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           {renderTable(resource, items, { canEdit, canDelete, openEdit, remove, saving })}
         </TableWrap>
       ) : (
         <EmptyState label={loading ? 'Loading...' : `No ${resourceMeta.title.toLowerCase()} found.`} />
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
       <Modal title={`${editing ? 'Edit' : 'Add'} ${singular(resourceMeta.title)}`} open={open} onOpenChange={setOpen}>
         <form onSubmit={save} className="grid gap-4">
           {renderFields(resource, form, setValue, { units: optionUnits, categories: optionCategories, unitGroups, editingId: editing?.id })}
@@ -661,9 +662,28 @@ function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency
   actions: { canEdit: boolean; canDelete: boolean; openEdit: (item: T) => void; remove: (item: T) => void; saving: boolean }
 ) {
   const actionCells = (item: T) => (
-    <td className="whitespace-nowrap px-4 py-3 text-right">
-      {actions.canEdit ? <Button variant="ghost" onClick={() => actions.openEdit(item)}>Edit</Button> : null}
-      {actions.canDelete ? <Button variant="danger" disabled={actions.saving} onClick={() => void actions.remove(item)}>Delete</Button> : null}
+    <td className="whitespace-nowrap px-4 py-3">
+      <div className="flex items-center justify-end gap-1">
+        {actions.canEdit ? (
+          <ActionButton
+            icon={Pencil}
+            text="Edit"
+            color="text-amber-600 hover:text-amber-700"
+            bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+            onClick={() => actions.openEdit(item)}
+          />
+        ) : null}
+        {actions.canDelete ? (
+          <ActionButton
+            icon={Trash2}
+            text="Delete"
+            color="text-red-500 hover:text-red-600"
+            bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+            disabled={actions.saving}
+            onClick={() => void actions.remove(item)}
+          />
+        ) : null}
+      </div>
     </td>
   );
 
@@ -678,7 +698,7 @@ function renderTable<T extends Brand | Branch | Category | Unit | Tax | Currency
     return <Table headers={['Category', 'Image', 'Parent', 'Status', 'Action']}>{(items as Category[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3"><ResourceImage src={item.image} alt={item.name} kind="category" /></td><td className="px-4 py-3">{item.parent_category_name ?? item.parent?.name ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;
   }
   if (resource === 'units') {
-    return <Table headers={['Code', 'Unit', 'Group', 'Base', 'Operator', 'Value', 'Status', 'Action']}>{(items as Unit[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3">{item.unit_code}</td><td className="px-4 py-3 font-medium">{item.unit_name}</td><td className="px-4 py-3">{item.unit_group_title ?? item.unit_group?.title ?? '-'}</td><td className="px-4 py-3">{item.base_unit_name ?? item.base?.unit_name ?? 'Base unit'}</td><td className="px-4 py-3">{item.operator ?? '-'}</td><td className="px-4 py-3">{item.operation_value ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td><td className="whitespace-nowrap px-4 py-3 text-right">{actions.canDelete && item.can_delete !== false ? <Button variant="danger" disabled={actions.saving} onClick={() => void actions.remove(item as T)}>Delete</Button> : <span className="text-xs text-neutral-500">{item.can_delete === false ? 'In use' : '-'}</span>}</td></tr>)}</Table>;
+    return <Table headers={['Code', 'Unit', 'Group', 'Base', 'Operator', 'Value', 'Status', 'Action']}>{(items as Unit[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3">{item.unit_code}</td><td className="px-4 py-3 font-medium">{item.unit_name}</td><td className="px-4 py-3">{item.unit_group_title ?? item.unit_group?.title ?? '-'}</td><td className="px-4 py-3">{item.base_unit_name ?? item.base?.unit_name ?? 'Base unit'}</td><td className="px-4 py-3">{item.operator ?? '-'}</td><td className="px-4 py-3">{item.operation_value ?? '-'}</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td><td className="whitespace-nowrap px-4 py-3 text-right">{actions.canDelete && item.can_delete !== false ? <Button type="button" variant="ghost" className="h-9 w-9 bg-red-50 px-0 text-red-500 hover:bg-red-100" aria-label="Delete" title="Delete" disabled={actions.saving} onClick={() => void actions.remove(item as T)}><Trash2 className="h-4 w-4" /></Button> : <span className="text-xs text-neutral-500">{item.can_delete === false ? 'In use' : '-'}</span>}</td></tr>)}</Table>;
   }
   if (resource === 'taxes') {
     return <Table headers={['Tax', 'Rate', 'Status', 'Action']}>{(items as Tax[]).map((item) => <tr key={item.id} className="border-t border-neutral-100"><td className="px-4 py-3 font-medium">{item.name}</td><td className="px-4 py-3">{item.rate}%</td><td className="px-4 py-3"><StatusBadge active={item.is_active} /></td>{actionCells(item as T)}</tr>)}</Table>;

@@ -23,6 +23,8 @@ class ProductSaleResource extends JsonResource
             'tax_rate' => $this->tax_rate,
             'tax' => $this->tax,
             'total' => $this->total,
+            'unit_cost' => $this->unit_cost,
+            'total_cost' => $this->total_cost,
             'product' => $this->whenLoaded('product'),
             'unit' => $this->whenLoaded('unit'),
             'batch' => $this->whenLoaded('batch'),

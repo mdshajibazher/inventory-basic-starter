@@ -5,10 +5,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export function Screen({
   children,
   contentStyle,
-}: PropsWithChildren<{ contentStyle?: ViewStyle }>) {
+  safeStyle,
+  edges = ['top', 'right', 'bottom', 'left'],
+}: PropsWithChildren<{ contentStyle?: ViewStyle; safeStyle?: ViewStyle; edges?: Array<'top' | 'right' | 'bottom' | 'left'> }>) {
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={[styles.content, contentStyle]}>
+    <SafeAreaView edges={edges} style={[styles.safe, safeStyle]}>
+      <ScrollView style={safeStyle} contentContainerStyle={[styles.content, contentStyle]}>
         {children}
       </ScrollView>
     </SafeAreaView>

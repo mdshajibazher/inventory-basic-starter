@@ -2,12 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { KeyRound, Pencil, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { PaginationMeta, Permission, Role } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Field, Input, Modal, StatusBadge, Switch, Textarea } from '@/components/ui';
+import { ActionButton, Button, Field, Input, Modal, StatusBadge, Switch, Textarea } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 import { groupPermissions, PermissionPicker } from './users-page';
 
@@ -18,7 +19,7 @@ type RoleForm = {
 };
 
 const emptyForm: RoleForm = { name: '', description: '', isActive: true };
-const perPage = 15;
+const defaultPerPage = 15;
 
 export function RolesPage() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export function RolesPage() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -56,7 +58,7 @@ export function RolesPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (!hasPermission('users-index')) router.replace('/dashboard');
@@ -165,7 +167,7 @@ export function RolesPage() {
       <PageHeader title="Roles" subtitle={`${roles.length} shown from ${pagination?.total ?? roles.length}`} canAdd={canAdd} onAdd={openCreate} />
       <SearchBox value={search} onChange={setSearch} placeholder="Search roles, description, status" />
       {roles.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>{['Role', 'Permissions', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}</tr>
@@ -176,10 +178,37 @@ export function RolesPage() {
                   <td className="px-4 py-3"><div className="font-medium">{role.name}</div><div className="text-xs text-neutral-500">{role.description ?? '-'}</div></td>
                   <td className="px-4 py-3">{role.permissions?.length ?? 0}</td>
                   <td className="px-4 py-3"><StatusBadge active={role.is_active} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {canEdit ? <Button variant="ghost" onClick={() => openEdit(role)}>Edit</Button> : null}
-                    {canEdit ? <Button variant="ghost" onClick={() => openPermissions(role)}>Update Permission</Button> : null}
-                    {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(role)}>Delete</Button> : null}
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {canEdit ? (
+                        <ActionButton
+                          icon={Pencil}
+                          text="Edit role"
+                          color="text-amber-600 hover:text-amber-700"
+                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                          onClick={() => openEdit(role)}
+                        />
+                      ) : null}
+                      {canEdit ? (
+                        <ActionButton
+                          icon={KeyRound}
+                          text="Update permissions"
+                          color="text-sky-600 hover:text-sky-700"
+                          bgColor="bg-sky-50 hover:border-sky-100 hover:bg-sky-100"
+                          onClick={() => openPermissions(role)}
+                        />
+                      ) : null}
+                      {canDelete ? (
+                        <ActionButton
+                          icon={Trash2}
+                          text="Delete role"
+                          color="text-red-500 hover:text-red-600"
+                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                          disabled={saving}
+                          onClick={() => void remove(role)}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -189,7 +218,7 @@ export function RolesPage() {
       ) : (
         <EmptyState label={loading ? 'Loading...' : 'No roles found.'} />
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
 
       <Modal title={`${editing ? 'Edit' : 'Add'} Role`} open={modal === 'role'} onOpenChange={(open) => !open && closeModal()}>
         <form onSubmit={saveRole} className="grid gap-4">

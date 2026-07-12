@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
@@ -342,6 +343,17 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     }
   }
 
+  function requestApproval(id: number) {
+    Alert.alert(
+      'Approve Invoice',
+      `Approve this ${kind === 'returns' ? 'return invoice' : 'sales invoice'}? This will apply its inventory and financial effects.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Approve', onPress: () => void approveInvoice(id) },
+      ]
+    );
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -388,16 +400,24 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
 
   return (
     <Screen contentStyle={styles.screen}>
-      <View style={styles.header}>
+      <View style={mode === 'details' ? styles.mobileDetailHeader : styles.header}>
         <View>
-          <Text variant="headlineSmall">{editingId ? `Edit ${labels.title}` : labels.title}</Text>
-          <Text variant="bodyMedium" style={styles.muted}>
-            {editingId ? 'Update invoice fields and line items' : labels.description}
+          <Text variant={mode === 'details' ? 'headlineMedium' : 'headlineSmall'} style={mode === 'details' ? styles.mobileDetailTitle : undefined}>
+            {mode === 'details' ? `${kind === 'returns' ? 'Return' : 'Sales'} Details` : editingId ? `Edit ${labels.title}` : labels.title}
           </Text>
+          {mode !== 'details' ? (
+            <Text variant="bodyMedium" style={styles.muted}>
+              {editingId ? 'Update invoice fields and line items' : labels.description}
+            </Text>
+          ) : null}
         </View>
-        <Button mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>
-          Refresh
-        </Button>
+        {mode === 'details' ? (
+          <Button compact mode="text" icon="arrow-left" onPress={() => router.push(labels.indexRoute)}>Back</Button>
+        ) : (
+          <Button mode="outlined" loading={loading} disabled={loading} onPress={() => void loadOptions()}>
+            Refresh
+          </Button>
+        )}
       </View>
 
       {mode === 'index' ? <View style={styles.panel}>
@@ -416,7 +436,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
               <Text variant="bodySmall" style={styles.muted}>{invoice.customer?.name ?? '-'} | {money(numberValue(invoice.grand_total))}</Text>
               <Text variant="bodySmall" style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
             </View>
-            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
+            {invoice.can_approve ? <Button compact disabled={saving} onPress={() => requestApproval(Number(invoice.id))}>Approve</Button> : null}
             <Button compact onPress={() => router.push({ pathname: labels.detailRoute, params: { id: String(invoice.id) } })}>Details</Button>
             <Button compact onPress={() => router.push({ pathname: labels.editRoute, params: { id: String(invoice.id) } })}>Edit</Button>
           </View>
@@ -424,16 +444,11 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         {!invoices.length ? <Text style={styles.muted}>No invoices found.</Text> : null}
       </View> : null}
       {mode === 'details' ? (
-        <View style={styles.panel}>
-          <View style={styles.sectionHeader}>
-            <Text variant="titleMedium">{labels.title} details</Text>
-            <View style={styles.rowActions}>
-              {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
-              <Button mode="outlined" onPress={() => router.push(labels.indexRoute)}>Back</Button>
-            </View>
-          </View>
-          {selectedInvoice ? <InvoiceDetails invoice={selectedInvoice} kind={kind} /> : <Text style={styles.muted}>Loading invoice...</Text>}
-        </View>
+        selectedInvoice ? (
+          <InvoiceDetails invoice={selectedInvoice} kind={kind} canEditCost={hasPermission('sales-edit')} onInvoiceUpdated={setSelectedInvoice} />
+        ) : (
+          <View style={styles.mobileCard}><Text style={styles.muted}>Loading invoice...</Text></View>
+        )
       ) : null}
 
       {mode !== 'index' && mode !== 'details' ? <>
@@ -627,21 +642,243 @@ export default function SalesInvoicesIndexScreen() {
   return <SalesInvoicesScreen mode="index" />;
 }
 
-function InvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: InvoiceKind }) {
+function InvoiceDetails({ invoice, kind, canEditCost, onInvoiceUpdated }: { invoice: Record<string, any>; kind: InvoiceKind; canEditCost: boolean; onInvoiceUpdated: (invoice: Record<string, any>) => void }) {
+  const [costLine, setCostLine] = useState<Record<string, any> | null>(null);
+  const [costValue, setCostValue] = useState('');
+  const [savingCost, setSavingCost] = useState(false);
+  const lines = (invoice.products ?? []) as Record<string, any>[];
+  const subtotal = numberValue(invoice.total_price);
+  const orderDiscount = numberValue(invoice.order_discount) + numberValue(invoice.coupon_discount);
+  const orderTax = numberValue(invoice.order_tax);
+  const grandTotal = numberValue(invoice.grand_total);
+  const paidAmount = numberValue(invoice.paid_amount);
+  const changeAmount = Math.max(paidAmount - grandTotal, 0);
+  const totalCost = round2(lines.reduce((sum, line) => sum + detailLineCost(line), 0));
+  const totalProfit = round2(grandTotal - totalCost);
+  const showProfit = kind === 'sales' && totalCost > 0;
+  const payment = invoice.payments?.[0] ?? null;
+  const note = String((kind === 'returns' ? invoice.return_note : invoice.sale_note) ?? '-');
+  const invoiceDate = String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-');
+  const invoiceTime = timeOnly(invoice.created_at);
+
+  function openCostEditor(line: Record<string, any>) {
+    setCostLine(line);
+    setCostValue(String(detailLineUnitCost(line)));
+  }
+
+  async function saveCost() {
+    if (!costLine?.id || !invoice.id) return;
+    const unitCost = numberValue(costValue);
+    if (unitCost < 0) {
+      Alert.alert('Invalid cost', 'Cost must be zero or greater.');
+      return;
+    }
+
+    setSavingCost(true);
+    try {
+      const response = await api.updateSalesInvoiceLineCost(Number(invoice.id), Number(costLine.id), unitCost);
+      onInvoiceUpdated(response.data as Record<string, any>);
+      setCostLine(null);
+    } catch (error) {
+      Alert.alert('Cost update failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setSavingCost(false);
+    }
+  }
+
   return (
-    <View style={styles.detailStack}>
-      <View style={styles.detailBox}>
-        <Text variant="titleSmall">{invoice.reference_no}</Text>
-        <Text>{kind === 'returns' ? 'Return date' : 'Sale date'}: {String((kind === 'returns' ? invoice.return_date : invoice.sale_date) ?? dateOnly(invoice.created_at) ?? '-')}</Text>
-        <Text style={styles.muted}>{invoice.customer?.name ?? '-'}</Text>
-        <Text>Grand total: {money(numberValue(invoice.grand_total))}</Text>
-        {kind === 'sales' ? <Text>Paid: {money(numberValue(invoice.paid_amount))}</Text> : null}
-        <Text style={invoice.approval_status === 'pending' ? styles.pending : styles.approved}>{invoice.approval_status === 'pending' ? 'Pending approval' : 'Approved'}</Text>
-        {(invoice.products ?? []).map((line: Record<string, any>) => (
-          <Text key={line.id} style={styles.muted}>{line.product?.name ?? `#${line.product_id}`} | Qty {money(numberValue(line.qty))} | {money(numberValue(line.total))}</Text>
-        ))}
+    <View style={styles.mobileDetailStack}>
+      <View style={styles.mobileInvoiceCard}>
+        <View style={styles.mobileInvoiceTop}>
+          <View style={styles.invoiceIconCircle}>
+            <MaterialCommunityIcons name="file-document-outline" size={28} color="#ffffff" />
+          </View>
+          <View style={styles.invoiceTitleBlock}>
+            <Text variant="bodyMedium" style={styles.mobileMuted}>Invoice No</Text>
+            <Text variant="titleLarge" style={styles.invoiceNumber}>{String(invoice.reference_no ?? '-')}</Text>
+          </View>
+          <View style={styles.mobilePaidBadge}>
+            <MaterialCommunityIcons name="check-circle" size={18} color="#079641" />
+            <Text style={styles.mobilePaidText}>{kind === 'sales' ? paymentStatusLabel(invoice.payment_status, paidAmount, grandTotal) : String(invoice.approval_status ?? 'Approved')}</Text>
+          </View>
+        </View>
+
+        <View style={styles.mobileInvoiceDivider} />
+
+        <View style={styles.mobileMetaGrid}>
+          <View style={styles.mobileMetaColumn}>
+            <MobileMeta icon="account-outline" label="Customer" value={String(invoice.customer?.name ?? '-')} />
+            <MobileMeta icon="phone-outline" label="Phone" value={String(invoice.customer?.phone_number ?? '-')} />
+            <MobileMeta icon="account-group-outline" label={kind === 'returns' ? 'Returned By' : 'Sales Person'} value={String(invoice.user?.name ?? '-')} />
+          </View>
+          <View style={styles.mobileMetaSeparator} />
+          <View style={styles.mobileMetaColumn}>
+            <MobileMeta icon="calendar-month-outline" label="Date" value={invoiceDate} />
+            <MobileMeta icon="clock-outline" label="Time" value={invoiceTime ?? '-'} />
+            <MobileMeta icon="map-marker-outline" label={kind === 'returns' ? 'Return Location' : 'Sales Location'} value={String(invoice.warehouse?.name ?? invoice.biller?.name ?? '-')} />
+          </View>
+        </View>
       </View>
+
+      <Text variant="titleMedium" style={styles.mobileSectionTitle}>{kind === 'returns' ? 'Return Items' : 'Sales Items'}</Text>
+      <View style={styles.mobileItemsStack}>
+        {lines.map((line, index) => {
+          const lineCost = detailLineCost(line);
+          const lineProfit = round2(numberValue(line.total) - lineCost);
+          return (
+            <View key={line.id ?? index} style={styles.mobileItemCard}>
+              <View style={styles.mobileItemIndex}><Text style={styles.mobileItemIndexText}>{index + 1}</Text></View>
+              <ProductThumb line={line} />
+              <View style={styles.mobileItemBody}>
+                <Text variant="titleSmall" style={styles.mobileItemName} numberOfLines={2}>
+                  {invoiceLineProductName(line)}
+                </Text>
+                <View style={styles.mobilePillRow}>
+                  <Text style={styles.variantPill}>{line.variant?.name ?? line.batch?.batch_no ?? '-'}</Text>
+                  <Text style={styles.skuPill}>SKU: {line.variant?.item_code ?? line.product?.sku ?? line.product?.code ?? '-'}</Text>
+                </View>
+                <View style={styles.mobileItemFacts}>
+                  <MobileFact label="Qty" value={money(numberValue(line.qty))} />
+                  <MobileFact label="Unit" value={detailLineUnit(line)} />
+                  <MobileFact label="Unit Price" value={takaMoney(numberValue(line.net_unit_price))} />
+                  <View style={styles.costFact}>
+                    <MobileFact label="Cost Price" value={takaMoney(detailLineUnitCost(line))} />
+                    {kind === 'sales' && canEditCost ? <Pressable accessibilityRole="button" accessibilityLabel={`Edit cost for ${invoiceLineProductName(line)}`} onPress={() => openCostEditor(line)} style={styles.costEditButton}><MaterialCommunityIcons name="pencil-outline" size={16} color="#0d6bdf" /></Pressable> : null}
+                  </View>
+                </View>
+              </View>
+              <View style={styles.mobileLineTotal}>
+                <Text style={styles.mobileLineTotalLabel}>Line Total</Text>
+                <Text style={styles.mobileLineTotalValue}>{takaMoney(numberValue(line.total))}</Text>
+                <Text style={styles.mobileLineProfit}>Profit: {lineCost > 0 ? takaMoney(lineProfit) : '-'}</Text>
+              </View>
+            </View>
+          );
+        })}
+        {!lines.length ? <Text style={styles.muted}>No products found.</Text> : null}
+      </View>
+
+      <View style={styles.mobileTwoColumn}>
+        <View style={[styles.mobileCard, styles.mobileHalfCard]}>
+          <View style={styles.mobileCardTitleRow}>
+            <MaterialCommunityIcons name="wallet-outline" size={22} color="#0d6bdf" />
+            <Text variant="titleSmall" style={styles.mobileCardTitle}>Payment Information</Text>
+          </View>
+          <View style={styles.mobileInvoiceDivider} />
+          <MobileInfoRow label="Method" value={paymentMethodLabel(payment?.paying_method)} />
+          <MobileInfoRow label="Paid Amount" value={kind === 'sales' ? takaMoney(paidAmount) : '-'} />
+          <MobileInfoRow label="Change Amount" value={kind === 'sales' ? takaMoney(changeAmount) : '-'} />
+          <MobileInfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
+        </View>
+
+        <View style={[styles.mobileCard, styles.mobileHalfCard]}>
+          <MobileTotalRow icon="chart-pie" label="Subtotal" value={takaMoney(subtotal)} />
+          <MobileTotalRow label="Discount" value={takaMoney(orderDiscount)} />
+          <MobileTotalRow label={`VAT (${money(numberValue(invoice.order_tax_rate))}%)`} value={takaMoney(orderTax)} />
+          <View style={styles.mobileInvoiceDivider} />
+          <MobileTotalRow label="Grand Total" value={takaMoney(grandTotal)} strong blue />
+          <MobileTotalRow label="Total Cost" value={showProfit ? takaMoney(totalCost) : '-'} />
+          <MobileTotalRow label="Total Profit" value={showProfit ? takaMoney(totalProfit) : '-'} strong green />
+        </View>
+      </View>
+
+      <View style={styles.mobileNoteCard}>
+        <View style={styles.mobileNoteLeft}>
+          <MaterialCommunityIcons name="note-text-outline" size={24} color="#8b45d6" />
+          <View>
+            <Text style={styles.mobileMuted}>Note</Text>
+            <Text variant="titleSmall">{note}</Text>
+          </View>
+        </View>
+        <View style={styles.mobileProfitStatus}>
+          <Text style={styles.mobileMuted}>Profit Status</Text>
+          <View style={styles.mobileProfitBadge}>
+            <MaterialCommunityIcons name="trending-up" size={18} color="#079641" />
+            <Text style={styles.mobileProfitBadgeText}>{showProfit ? (totalProfit >= 0 ? 'Profitable' : 'Loss') : '-'}</Text>
+          </View>
+        </View>
+      </View>
+
       <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
+      <Portal>
+        <Modal visible={costLine !== null} onDismiss={() => !savingCost && setCostLine(null)} contentContainerStyle={styles.costModal}>
+          <View style={styles.costModalContent}>
+            <Text variant="titleMedium">Edit Sale Cost</Text>
+            <Text style={styles.costWarning}>This changes the saved cost for this sale only. Product default cost and stock are unchanged.</Text>
+            <Text style={styles.mobileMuted}>{costLine ? `${invoiceLineProductName(costLine)} · ${detailLineUnit(costLine)}` : ''}</Text>
+            <TextInput mode="outlined" label="Cost per sales unit" keyboardType="numeric" value={costValue} onChangeText={setCostValue} />
+            <View style={styles.costModalActions}><Button mode="outlined" disabled={savingCost} onPress={() => setCostLine(null)}>Cancel</Button><Button mode="contained" loading={savingCost} disabled={savingCost} onPress={saveCost}>Save cost</Button></View>
+          </View>
+        </Modal>
+      </Portal>
+    </View>
+  );
+}
+
+function MobileMeta({ icon, label, value }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string; value: string }) {
+  return (
+    <View style={styles.mobileMetaRow}>
+      <MaterialCommunityIcons name={icon} size={24} color="#23304f" />
+      <View style={styles.mobileMetaText}>
+        <Text style={styles.mobileMuted}>{label}</Text>
+        <Text variant="titleSmall" numberOfLines={2}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ProductThumb({ line }: { line: Record<string, any> }) {
+  const imageUrl = line.product?.image_url;
+  return (
+    <View style={styles.productThumb}>
+      {imageUrl ? (
+        <Image source={{ uri: String(imageUrl) }} style={styles.productThumbImage} resizeMode="cover" />
+      ) : (
+        <MaterialCommunityIcons name="package-variant-closed" size={36} color="#8a94a6" />
+      )}
+    </View>
+  );
+}
+
+function MobileFact({ label, value }: { label: string; value: string }) {
+  return (
+    <Text style={styles.mobileFactText}>
+      <Text style={styles.mobileMuted}>{label}: </Text>{value}
+    </Text>
+  );
+}
+
+function MobileInfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.mobileInfoRow}>
+      <Text style={styles.mobileMuted}>{label}</Text>
+      <Text style={styles.mobileInfoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function MobileTotalRow({
+  icon,
+  label,
+  value,
+  strong,
+  blue,
+  green,
+}: {
+  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  label: string;
+  value: string;
+  strong?: boolean;
+  blue?: boolean;
+  green?: boolean;
+}) {
+  return (
+    <View style={styles.mobileTotalRow}>
+      <View style={styles.mobileTotalLabelWrap}>
+        {icon ? <MaterialCommunityIcons name={icon} size={22} color="#0d6bdf" /> : null}
+        <Text style={[styles.mobileTotalLabel, strong && styles.mobileTotalStrongLabel, blue && styles.blueText, green && styles.greenText]}>{label}</Text>
+      </View>
+      <Text style={[styles.mobileTotalValue, strong && styles.mobileTotalStrongValue, blue && styles.blueText, green && styles.greenText]}>{value}</Text>
     </View>
   );
 }
@@ -950,6 +1187,60 @@ function productLabel(product: Product | undefined, variant?: ProductVariant | n
   return variant ? `${product.name} - ${variant.name} (${variant.item_code})` : `${product.name} (${product.code})`;
 }
 
+function invoiceLineProductName(line: Record<string, any>) {
+  const productName = line.product?.name ?? `#${line.product_id}`;
+  return line.variant?.name ? `${productName} / ${line.variant.name}` : productName;
+}
+
+function detailLineUnit(line: Record<string, any>) {
+  if (!line.unit) return '-';
+  const unitName = line.unit.unit_name ?? line.unit.name;
+  const unitCode = line.unit.unit_code ?? line.unit.code;
+  return unitCode && unitName ? `${unitName} (${unitCode})` : String(unitName ?? unitCode ?? '-');
+}
+
+function detailLineCost(line: Record<string, any>) {
+  if (line.total_cost !== null && line.total_cost !== undefined) return numberValue(line.total_cost);
+
+  const totalCost = numberValue(line.total_cost);
+  if (totalCost > 0) return totalCost;
+
+  const unitCost = numberValue(line.unit_cost);
+  if (unitCost > 0) return round2(unitCost * numberValue(line.qty));
+
+  const productCost = numberValue(line.product?.cost);
+  return productCost > 0 ? round2(productCost * numberValue(line.qty)) : 0;
+}
+
+function detailLineUnitCost(line: Record<string, any>) {
+  const unitCost = numberValue(line.unit_cost);
+  if (unitCost > 0 || line.unit_cost === 0) return unitCost;
+  const qty = numberValue(line.qty);
+  const totalCost = numberValue(line.total_cost);
+  if (qty > 0 && totalCost > 0) return round2(totalCost / qty);
+  return numberValue(line.product?.cost);
+}
+
+function paymentStatusLabel(status: unknown, paidAmount: number, grandTotal: number) {
+  if (Number(status) === 4 || (grandTotal > 0 && paidAmount >= grandTotal)) return 'Paid';
+  if (Number(status) === 3 || paidAmount > 0) return 'Partial';
+  return 'Unpaid';
+}
+
+function paymentMethodLabel(method: unknown) {
+  if (!method) return '-';
+  return String(method)
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function timeOnly(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function isBatchProduct(product?: Product | null) {
   return product?.is_batch === true || String(product?.is_batch) === '1';
 }
@@ -1175,6 +1466,10 @@ function money(value: number) {
   return value.toFixed(2);
 }
 
+function takaMoney(value: number) {
+  return `৳${money(value)}`;
+}
+
 function nullableText(value: string) {
   const text = value.trim();
   return text ? text : null;
@@ -1371,6 +1666,359 @@ const styles = StyleSheet.create({
   },
   detailStack: {
     gap: 12,
+  },
+  mobileDetailHeader: {
+    alignItems: 'center',
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  mobileDetailTitle: {
+    color: '#071126',
+    fontWeight: '800',
+  },
+  mobileDetailStack: {
+    gap: 14,
+  },
+  mobileInvoiceCard: {
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e1e7f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  mobileInvoiceTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  invoiceIconCircle: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 26,
+    backgroundColor: '#1670e8',
+  },
+  invoiceTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  invoiceNumber: {
+    color: '#0b66d8',
+    fontWeight: '800',
+  },
+  mobilePaidBadge: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
+    backgroundColor: '#d7f6df',
+  },
+  mobilePaidText: {
+    color: '#087338',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  mobileInvoiceDivider: {
+    height: 1,
+    backgroundColor: '#e7ebf2',
+  },
+  mobileMetaGrid: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  mobileMetaColumn: {
+    flex: 1,
+    gap: 14,
+  },
+  mobileMetaSeparator: {
+    width: 1,
+    backgroundColor: '#e7ebf2',
+  },
+  mobileMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 9,
+  },
+  mobileMetaText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mobileMuted: {
+    color: '#667085',
+    fontSize: 13,
+  },
+  mobileSectionTitle: {
+    color: '#071126',
+    fontWeight: '800',
+  },
+  mobileItemsStack: {
+    gap: 8,
+  },
+  mobileItemCard: {
+    position: 'relative',
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 122,
+    padding: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e3e8f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  mobileItemIndex: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    zIndex: 2,
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#1670e8',
+  },
+  mobileItemIndexText: {
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  productThumb: {
+    width: 86,
+    height: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    borderRadius: 10,
+    backgroundColor: '#f4f6f8',
+  },
+  productThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mobileItemBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 7,
+  },
+  mobileItemName: {
+    color: '#071126',
+    fontWeight: '800',
+  },
+  mobilePillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  variantPill: {
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#ddebff',
+    color: '#075fc4',
+    fontWeight: '700',
+  },
+  skuPill: {
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#eef0f3',
+    color: '#46505f',
+  },
+  mobileItemFacts: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 14,
+    rowGap: 5,
+  },
+  mobileFactText: {
+    minWidth: '42%',
+    color: '#111827',
+    fontSize: 13,
+  },
+  costFact: {
+    minWidth: '42%',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  costEditButton: {
+    marginLeft: 2,
+    padding: 4,
+  },
+  costModal: {
+    margin: 18,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
+  costModalContent: {
+    gap: 14,
+    padding: 16,
+  },
+  costWarning: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#fff7e6',
+    color: '#8a4b00',
+    lineHeight: 20,
+  },
+  costModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  mobileLineTotal: {
+    width: 104,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: 10,
+    borderLeftWidth: 1,
+    borderLeftColor: '#edf0f5',
+  },
+  mobileLineTotalLabel: {
+    color: '#667085',
+    fontSize: 14,
+  },
+  mobileLineTotalValue: {
+    color: '#0a0f1d',
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  mobileLineProfit: {
+    color: '#099141',
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  mobileTwoColumn: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  mobileCard: {
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e3e8f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  mobileHalfCard: {
+    flex: 1,
+    minWidth: 0,
+    gap: 9,
+  },
+  mobileCardTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  mobileCardTitle: {
+    color: '#071126',
+    fontWeight: '800',
+  },
+  mobileInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  mobileInfoValue: {
+    flex: 1,
+    color: '#111827',
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  mobileTotalRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  mobileTotalLabelWrap: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 7,
+    flex: 1,
+    minWidth: 0,
+  },
+  mobileTotalLabel: {
+    color: '#5f6877',
+    fontSize: 14,
+  },
+  mobileTotalValue: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  mobileTotalStrongLabel: {
+    fontWeight: '900',
+  },
+  mobileTotalStrongValue: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  blueText: {
+    color: '#0b66d8',
+  },
+  greenText: {
+    color: '#079641',
+  },
+  mobileNoteCard: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e3e8f0',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  mobileNoteLeft: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flex: 1,
+    gap: 10,
+    minWidth: 0,
+  },
+  mobileProfitStatus: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  mobileProfitBadge: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: '#d7f6df',
+  },
+  mobileProfitBadgeText: {
+    color: '#087338',
+    fontWeight: '900',
   },
   formRow: {
     flexDirection: 'row',

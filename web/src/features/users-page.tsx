@@ -2,12 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { KeyRound, Pencil, ShieldCheck, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import type { Branch, PaginationMeta, Permission, Role, User } from '@/lib/types';
 import { errorMessage, permissionLabel } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Checkbox, Field, Input, Modal, StatusBadge, Switch } from '@/components/ui';
+import { ActionButton, Button, Checkbox, Field, Input, Modal, StatusBadge, Switch } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 
 type UserOptions = {
@@ -26,7 +27,7 @@ type UserForm = {
 };
 
 const emptyForm: UserForm = { name: '', email: '', phone: '', password: '', isActive: true, billerIds: [] };
-const perPage = 15;
+const defaultPerPage = 15;
 
 export function UsersPage() {
   const router = useRouter();
@@ -35,6 +36,7 @@ export function UsersPage() {
   const [options, setOptions] = useState<UserOptions>({ roles: [], permissions: [], branches: [] });
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -66,7 +68,7 @@ export function UsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (!hasPermission('users-index')) router.replace('/dashboard');
@@ -215,7 +217,7 @@ export function UsersPage() {
       <PageHeader title="Users" subtitle={`${users.length} shown from ${pagination?.total ?? users.length}`} canAdd={canAdd} onAdd={openCreate} />
       <SearchBox value={search} onChange={setSearch} placeholder="Search users, email, phone, roles, permissions" />
       {users.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>{['User', 'Phone', 'Branches', 'Roles', 'Direct Permissions', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}</tr>
@@ -229,11 +231,46 @@ export function UsersPage() {
                   <td className="px-4 py-3">{userRoles(user).map((role) => role.name).join(', ') || '-'}</td>
                   <td className="px-4 py-3">{user.direct_permissions?.length ?? 0}</td>
                   <td className="px-4 py-3"><StatusBadge active={user.is_active} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {canEdit ? <Button variant="ghost" onClick={() => openEdit(user)}>Edit</Button> : null}
-                    {canEdit ? <Button variant="ghost" onClick={() => openRoles(user)}>Roles</Button> : null}
-                    {canEdit ? <Button variant="ghost" onClick={() => openPermissions(user)}>Permissions</Button> : null}
-                    {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(user)}>Delete</Button> : null}
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {canEdit ? (
+                        <ActionButton
+                          icon={Pencil}
+                          text="Edit user"
+                          color="text-amber-600 hover:text-amber-700"
+                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                          onClick={() => openEdit(user)}
+                        />
+                      ) : null}
+                      {canEdit ? (
+                        <ActionButton
+                          icon={ShieldCheck}
+                          text="Manage roles"
+                          color="text-violet-600 hover:text-violet-700"
+                          bgColor="bg-violet-50 hover:border-violet-100 hover:bg-violet-100"
+                          onClick={() => openRoles(user)}
+                        />
+                      ) : null}
+                      {canEdit ? (
+                        <ActionButton
+                          icon={KeyRound}
+                          text="Manage permissions"
+                          color="text-sky-600 hover:text-sky-700"
+                          bgColor="bg-sky-50 hover:border-sky-100 hover:bg-sky-100"
+                          onClick={() => openPermissions(user)}
+                        />
+                      ) : null}
+                      {canDelete ? (
+                        <ActionButton
+                          icon={Trash2}
+                          text="Delete user"
+                          color="text-red-500 hover:text-red-600"
+                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                          disabled={saving}
+                          onClick={() => void remove(user)}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -243,7 +280,7 @@ export function UsersPage() {
       ) : (
         <EmptyState label={loading ? 'Loading...' : 'No users found.'} />
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
 
       <Modal title={`${editing ? 'Edit' : 'Add'} User`} open={modal === 'user'} onOpenChange={(open) => !open && closeModal()}>
         <form onSubmit={saveUser} className="grid gap-4">

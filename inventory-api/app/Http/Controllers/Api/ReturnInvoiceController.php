@@ -34,12 +34,14 @@ class ReturnInvoiceController extends Controller
     {
         $perPage = min((int) $request->query('per_page', 15), 100);
         $search = trim((string) $request->query('search', ''));
+        $approvalStatus = $request->query('approval_status');
         $billerId = $request->user()?->requireCurrentBillerId();
 
         $returns = ReturnInvoice::query()
             ->with(['customer:id,name', 'warehouse:id,name', 'biller:id,name'])
             ->when($billerId, fn ($query) => $query->where('biller_id', $billerId))
             ->when($request->boolean('approved_only'), fn ($query) => $query->where('approval_status', ApprovalService::APPROVED))
+            ->when(in_array($approvalStatus, [ApprovalService::PENDING, ApprovalService::APPROVED], true), fn ($query) => $query->where('approval_status', $approvalStatus))
             ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($searchQuery) use ($search) {

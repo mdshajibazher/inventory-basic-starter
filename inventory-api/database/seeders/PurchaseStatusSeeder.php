@@ -26,7 +26,6 @@ class PurchaseStatusSeeder extends Seeder
             ['value' => '1', 'label' => 'Received'],
             ['value' => '2', 'label' => 'Partial'],
             ['value' => '3', 'label' => 'Pending'],
-            ['value' => '4', 'label' => 'Ordered'],
         ];
     }
 }

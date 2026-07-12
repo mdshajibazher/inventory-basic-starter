@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Menu, Searchbar, Text, TextInput } from 'react-native-paper';
-import { Redirect } from 'expo-router';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Button, Menu, Text, TextInput } from 'react-native-paper';
+import { Redirect, useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
 import type { ProfitReport, Warehouse } from '@/src/types';
+
+type Tone = 'green' | 'blue' | 'purple' | 'amber' | 'red' | 'orange';
 
 function monthRange() {
   const now = new Date();
@@ -24,6 +27,7 @@ function monthRange() {
 const initialRange = monthRange();
 
 export default function ProfitReportScreen() {
+  const router = useRouter();
   const { hasPermission } = useAuth();
   const [report, setReport] = useState<ProfitReport | null>(null);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -58,8 +62,12 @@ export default function ProfitReportScreen() {
 
   useEffect(() => {
     async function loadWarehouses() {
-      const response = await api.warehouses({ page: 1, perPage: 100, activeOnly: true });
-      setWarehouses(response.data as Warehouse[]);
+      try {
+        const response = await api.warehouses({ page: 1, perPage: 100, activeOnly: true });
+        setWarehouses(response.data as Warehouse[]);
+      } catch (error) {
+        Alert.alert('Warehouse options failed', error instanceof Error ? error.message : 'Unable to load warehouses.');
+      }
     }
 
     void loadWarehouses();
@@ -71,7 +79,7 @@ export default function ProfitReportScreen() {
   }, [search]);
 
   const warehouseOptions = useMemo(() => [
-    { value: 'all', label: 'All warehouses' },
+    { value: 'all', label: 'All Warehouses' },
     ...warehouses.map((warehouse) => ({ value: String(warehouse.id), label: warehouse.name })),
   ], [warehouses]);
 
@@ -121,222 +129,326 @@ export default function ProfitReportScreen() {
   const categories = report?.categories ?? [];
   const expenses = report?.expenses ?? [];
   const cash = report?.cash ?? [];
+  const totalDiscount = (summary?.sales_discounts ?? 0) + (summary?.order_discounts ?? 0) + (summary?.coupon_discounts ?? 0);
+  const totalSold = products.reduce((sum, product) => sum + Number(product.qty_sold ?? 0), 0);
+  const averageOrderValue = totalSold > 0 ? Number(summary?.net_revenue ?? 0) / totalSold : 0;
+  const profitPerProduct = products.length ? Number(summary?.net_profit ?? 0) / products.length : 0;
 
   return (
-    <Screen contentStyle={styles.screen}>
+    <Screen edges={['right', 'bottom', 'left']} safeStyle={styles.safe} contentStyle={styles.screen}>
       <View style={styles.header}>
-        <View>
-          <Text variant="headlineSmall">Profit Report</Text>
-          <Text variant="bodyMedium" style={styles.muted}>
-            {report ? `${report.filters.start_date} to ${report.filters.end_date}` : 'Current month'}
-          </Text>
+        <Pressable style={styles.iconButton} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={28} color="#050505" />
+        </Pressable>
+        <View style={styles.headerTitle}>
+          <Text variant="headlineMedium" style={styles.title}>Profit Report</Text>
+          <Text variant="bodyLarge" style={styles.muted}>{formatDate(startDate)} - {formatDate(endDate)}</Text>
         </View>
-        <View style={styles.headerActions}>
-          <Button mode="outlined" icon="refresh" loading={loading} onPress={() => void load()}>Refresh</Button>
-          <Button mode="contained" icon="file-pdf-box" loading={exporting} onPress={() => void exportPdf()}>PDF</Button>
-        </View>
+        <Pressable style={styles.iconButton} onPress={() => void exportPdf()} disabled={exporting}>
+          <MaterialCommunityIcons name="tray-arrow-up" size={28} color="#050505" />
+        </Pressable>
       </View>
 
-      <View style={styles.filters}>
-        <View style={styles.dateRow}>
-          <TextInput
-            mode="outlined"
-            label="Start"
-            value={startDate}
-            onChangeText={setStartDate}
-            style={styles.dateInput}
-          />
-          <TextInput
-            mode="outlined"
-            label="End"
-            value={endDate}
-            onChangeText={setEndDate}
-            style={styles.dateInput}
-          />
-        </View>
-        <Searchbar
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search product code or name"
-          loading={loading}
-        />
+      <View style={styles.filterBar}>
+        <FilterInput icon="calendar-month-outline" label={`${formatShortDate(startDate)} - ${formatShortDate(endDate)}`} />
         <SelectMenu
-          label="Warehouse"
           value={warehouseId}
           options={warehouseOptions}
           onSelect={setWarehouseId}
         />
+        <View style={styles.filterButtonWrap}>
+          <Button mode="contained" buttonColor="#050505" textColor="#ffffff" style={styles.filterButton} contentStyle={styles.filterButtonContent} icon="filter-outline" loading={loading} onPress={() => void load()}>
+            Filter
+          </Button>
+        </View>
       </View>
 
-      <View style={styles.summaryList}>
-        <SummaryRow label="Net revenue" value={money(summary?.net_revenue)} />
-        <SummaryRow label="Gross profit" value={money(summary?.gross_profit)} detail={`${money(summary?.net_cost_of_goods_sold)} COGS`} />
-        <SummaryRow label="Expenses" value={money(summary?.expenses)} />
-        <SummaryRow label="Net profit" value={money(summary?.net_profit)} />
-        <SummaryRow label="Margin" value={percent(summary?.margin_percent)} />
-        <SummaryRow label="Cash in" value={money(summary?.cash_in)} />
-        <SummaryRow label="Cash out" value={money(summary?.cash_out)} />
-        <SummaryRow label="Purchase returns" value={money(summary?.purchase_return_cost)} detail="COGS reduction" />
-        <SummaryRow label="Cash movement" value={money(summary?.net_cash_movement)} />
-        <SummaryRow label="Tax" value={`${money(summary?.tax_collected)} collected`} detail={`${money(summary?.tax_returned)} returned`} />
-        <SummaryRow label="Returns" value={money(summary?.returns)} detail={`${money(summary?.return_cost)} cost`} />
+      <View style={styles.hiddenSearch}>
+        <TextInput
+          mode="outlined"
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Product code or name"
+          dense
+        />
       </View>
 
-      <ScrollView style={styles.rows} contentContainerStyle={styles.rowsContent}>
-        <Section title="Cash movement">
-          {cash.length > 0 ? cash.map((row) => (
-            <InfoRow key={`${row.payment_type}-${row.direction}`} label={`${row.label} (${row.direction})`} value={money(row.amount)} />
-          )) : <Text variant="bodyMedium" style={styles.muted}>No cash movement in this date range.</Text>}
-        </Section>
+      <View style={styles.kpiGrid}>
+        <SummaryCard icon="sack-percent" tone="green" label="Net Revenue" value={money(summary?.net_revenue)} />
+        <SummaryCard icon="chart-bar" tone="blue" label="Gross Profit" value={money(summary?.gross_profit)} detail={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
+        <SummaryCard icon="receipt-text-outline" tone="purple" label="Expenses" value={money(summary?.expenses)} />
+        <SummaryCard icon="wallet-outline" tone="green" label="Net Profit" value={money(summary?.net_profit)} />
+        <SummaryCard icon="chart-pie" tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
+        <SummaryCard icon="arrow-down-bold" tone="green" label="Cash In" value={money(summary?.cash_in)} />
+        <SummaryCard icon="arrow-up-bold" tone="red" label="Cash Out" value={money(summary?.cash_out)} />
+        <SummaryCard icon="swap-horizontal" tone="blue" label="Cash Movement" value={money(summary?.net_cash_movement)} />
+        <SummaryCard icon="file-document-outline" tone="red" label="Tax" value={money(summary?.tax_collected)} detail={`Returned ${money(summary?.tax_returned)}`} />
+        <SummaryCard icon="undo-variant" tone="orange" label="Returns" value={money(summary?.returns)} detail={`Sales cost ${money(summary?.return_cost)}`} />
+        <SummaryCard icon="cart-outline" tone="blue" label="Purchase Returns" value={money(summary?.purchase_return_cost)} detail="COGS reduction" />
+        <SummaryCard icon="brightness-percent" tone="amber" label="Discounts" value={money(totalDiscount)} detail={`Shipping ${money(summary?.shipping)}`} />
+      </View>
 
-        <Section title="Expenses">
-          {expenses.length > 0 ? expenses.map((row) => (
-            <InfoRow key={row.category_id ?? row.category_name} label={row.category_name} value={money(row.amount)} />
-          )) : <Text variant="bodyMedium" style={styles.muted}>No expenses in this date range.</Text>}
-        </Section>
+      <View style={styles.chartRow}>
+        <Panel title="Profit Overview" style={styles.chartPanel}>
+          <ProfitOverview products={products} expenses={Number(summary?.expenses ?? 0)} />
+        </Panel>
+        <Panel title="Profit Distribution" style={styles.chartPanel}>
+          <View style={styles.donutRow}>
+            <Donut label="Gross Profit" value={money(summary?.gross_profit)} percent={distribution(summary?.gross_profit, summary)} tone="green" />
+            <Donut label="Expenses" value={money(summary?.expenses)} percent={distribution(summary?.expenses, summary)} tone="purple" />
+            <Donut label="Net Profit" value={money(summary?.net_profit)} percent={distribution(summary?.net_profit, summary)} tone="green" />
+          </View>
+        </Panel>
+      </View>
 
-        <Section title="Warehouse profit">
-          {warehouseBreakdown.length > 0 ? warehouseBreakdown.map((row) => (
-            <BreakdownRow key={row.id} row={row} />
-          )) : <Text variant="bodyMedium" style={styles.muted}>No warehouse rows in this date range.</Text>}
-        </Section>
+      <View style={styles.sideMetricBar}>
+        <SideMetric icon="cart-outline" tone="green" label="Total Orders" value={number(products.length)} />
+        <SideMetric icon="cube-outline" tone="blue" label="Total Items Sold" value={number(totalSold)} />
+        <SideMetric icon="clipboard-text-outline" tone="purple" label="Avg. Order Value" value={money(averageOrderValue)} />
+        <SideMetric icon="seal-variant" tone="orange" label="Profit per Order" value={money(profitPerProduct)} />
+      </View>
 
-        <Section title="Category profit">
-          {categories.length > 0 ? categories.map((row) => (
-            <BreakdownRow key={row.id} row={row} hideExpenses />
-          )) : <Text variant="bodyMedium" style={styles.muted}>No category rows in this date range.</Text>}
-        </Section>
+      <View style={styles.twoColumn}>
+        <CompactSection icon="swap-horizontal" tone="green" title="Cash Movement">
+          {cash.slice(0, 2).map((row) => (
+            <CompactRow key={`${row.payment_type}-${row.direction}`} label={row.label} middle={row.direction === 'in' ? 'In' : 'Out'} value={money(row.amount)} />
+          ))}
+          {!cash.length ? <Text style={styles.muted}>No cash movement</Text> : null}
+        </CompactSection>
 
-        {products.map((product) => (
+        <CompactSection icon="undo-variant" tone="blue" title="Top Expenses">
+          {expenses.slice(0, 2).map((row) => <CompactRow key={row.category_id ?? row.category_name} label={row.category_name} value={money(row.amount)} />)}
+          {!expenses.length ? <Text style={styles.muted}>No expenses</Text> : null}
+        </CompactSection>
+
+        <CompactSection icon="warehouse" tone="purple" title="Warehouse Profit">
+          {warehouseBreakdown.slice(0, 2).map((row) => <CompactRow key={row.id} label={row.name} value={money(row.net_profit)} />)}
+          {!warehouseBreakdown.length ? <Text style={styles.muted}>No warehouse rows</Text> : null}
+        </CompactSection>
+
+        <CompactSection icon="shape-outline" tone="blue" title="Category Profit">
+          {categories.slice(0, 2).map((row) => <CompactRow key={row.id} label={row.name} value={money(row.net_profit)} subValue={percent(row.margin_percent)} />)}
+          {!categories.length ? <Text style={styles.muted}>No category rows</Text> : null}
+        </CompactSection>
+      </View>
+
+      <Panel title="Product Profit Breakdown" icon="cart-outline" tone="green">
+        {products.slice(0, 4).map((product) => (
           <View key={product.product_id} style={styles.productRow}>
-            <View style={styles.productHeader}>
-              <View style={styles.productTitle}>
-                <Text variant="titleSmall">{product.name}</Text>
-                <Text variant="bodySmall" style={styles.muted}>{product.code}</Text>
-              </View>
-              <Text variant="titleSmall">{percent(product.margin_percent)}</Text>
+            <View style={styles.productIcon}>
+              <MaterialCommunityIcons name="fruit-cherries" size={28} color="#ef4444" />
             </View>
-            <View style={styles.metrics}>
-              <Metric label="Net sales" value={money(product.net_sales)} />
-              <Metric label="Purchase returns" value={money(product.purchase_return_cost)} />
-              <Metric label="Cost" value={money(product.cost)} />
-              <Metric label="Profit" value={money(product.profit)} />
+            <View style={styles.productName}>
+              <Text variant="titleSmall" style={styles.semibold}>{product.name}</Text>
+              <Text variant="bodySmall" style={styles.muted}>SKU: {product.code}</Text>
             </View>
-            <Text variant="bodySmall" style={styles.muted}>
-              Sold {number(product.qty_sold)} · Returned {number(product.qty_returned)} · Net returns {money(product.net_returns)}
-            </Text>
+            <Metric label="Sold" value={number(product.qty_sold)} />
+            <Metric label="Net Sales" value={money(product.net_sales)} />
+            <Metric label="Net Profit" value={money(product.profit)} subValue={percent(product.margin_percent)} />
           </View>
         ))}
-        {!loading && products.length === 0 ? (
+        {!products.length ? (
           <View style={styles.empty}>
             <Text variant="titleMedium">No profit rows</Text>
             <Text variant="bodyMedium" style={styles.muted}>No product sales or returns matched these filters.</Text>
           </View>
         ) : null}
-      </ScrollView>
+      </Panel>
     </Screen>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function SummaryCard({ icon, tone, label, value, detail }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; tone: Tone; label: string; value: string; detail?: string }) {
   return (
-    <View style={styles.section}>
-      <Text variant="titleMedium">{title}</Text>
-      <View style={styles.sectionBody}>{children}</View>
-    </View>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text variant="bodyMedium" style={styles.infoLabel}>{label}</Text>
-      <Text variant="bodyMedium">{value}</Text>
-    </View>
-  );
-}
-
-function BreakdownRow({
-  row,
-  hideExpenses = false,
-}: {
-  row: NonNullable<ProfitReport['warehouses']>[number];
-  hideExpenses?: boolean;
-}) {
-  return (
-    <View style={styles.breakdownRow}>
-      <View style={styles.productHeader}>
-        <Text variant="titleSmall" style={styles.productTitle}>{row.name}</Text>
-        <Text variant="titleSmall">{money(row.net_profit)}</Text>
+    <View style={styles.summaryCard}>
+      <View style={[styles.iconTile, toneStyle(tone).soft]}>
+        <MaterialCommunityIcons name={icon} size={28} color={toneStyle(tone).color} />
       </View>
-      <View style={styles.metrics}>
-        <Metric label="Revenue" value={money(row.net_revenue)} />
-        <Metric label="Cost" value={money(row.cost)} />
-        <Metric label="Purchase returns" value={money(row.purchase_return_cost)} />
-        {hideExpenses ? <Metric label="Margin" value={percent(row.margin_percent)} /> : <Metric label="Expenses" value={money(row.expenses)} />}
-      </View>
-      {!hideExpenses ? <Text variant="bodySmall" style={styles.muted}>Margin {percent(row.margin_percent)}</Text> : null}
-    </View>
-  );
-}
-
-function SummaryRow({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <View style={styles.summaryRow}>
-      <Text variant="bodyMedium" style={styles.muted}>{label}</Text>
-      <View style={styles.summaryValue}>
-        <Text variant="titleMedium">{value}</Text>
+      <View style={styles.summaryText}>
+        <Text variant="titleMedium" style={styles.cardLabel}>{label}</Text>
+        <Text variant="titleLarge" style={styles.cardValue}>{value}</Text>
         {detail ? <Text variant="bodySmall" style={styles.muted}>{detail}</Text> : null}
       </View>
     </View>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Panel({ title, children, icon, tone = 'green', style }: { title: string; children: ReactNode; icon?: keyof typeof MaterialCommunityIcons.glyphMap; tone?: Tone; style?: object }) {
   return (
-    <View style={styles.metric}>
-      <Text variant="bodySmall" style={styles.muted}>{label}</Text>
-      <Text variant="bodyMedium">{value}</Text>
+    <View style={[styles.panel, style]}>
+      <View style={styles.panelHeader}>
+        <View style={styles.panelTitleWrap}>
+          {icon ? (
+            <View style={[styles.smallIconTile, toneStyle(tone).soft]}>
+              <MaterialCommunityIcons name={icon} size={20} color={toneStyle(tone).color} />
+            </View>
+          ) : null}
+          <Text variant="titleMedium" style={styles.panelTitle}>{title}</Text>
+        </View>
+        <Text style={styles.linkText}>See all</Text>
+      </View>
+      {children}
     </View>
   );
 }
 
-function SelectMenu({
-  label,
-  value,
-  options,
-  onSelect,
-}: {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onSelect: (value: string) => void;
-}) {
-  const [visible, setVisible] = useState(false);
-  const selected = options.find((option) => option.value === value)?.label ?? label;
-
+function CompactSection({ icon, tone, title, children }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; tone: Tone; title: string; children: ReactNode }) {
   return (
-    <Menu
-      visible={visible}
-      onDismiss={() => setVisible(false)}
-      anchor={<Button mode="outlined" onPress={() => setVisible(true)}>{selected}</Button>}
-    >
-      {options.map((option) => (
-        <Menu.Item
-          key={option.value}
-          title={option.label}
-          onPress={() => {
-            onSelect(option.value);
-            setVisible(false);
-          }}
-        />
-      ))}
-    </Menu>
+    <Panel title={title} icon={icon} tone={tone} style={styles.compactPanel}>
+      <View style={styles.compactBody}>{children}</View>
+    </Panel>
   );
 }
 
+function CompactRow({ label, middle, value, subValue }: { label: string; middle?: string; value: string; subValue?: string }) {
+  return (
+    <View style={styles.compactRow}>
+      <Text style={styles.compactLabel}>{label}</Text>
+      {middle ? <Text style={styles.compactMiddle}>{middle}</Text> : null}
+      <View style={styles.compactValueWrap}>
+        <Text style={styles.compactValue}>{value}</Text>
+        {subValue ? <Text style={styles.positiveText}>{subValue}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function SideMetric({ icon, tone, label, value }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; tone: Tone; label: string; value: string }) {
+  return (
+    <View style={styles.sideMetric}>
+      <View style={[styles.smallIconTile, toneStyle(tone).soft]}>
+        <MaterialCommunityIcons name={icon} size={22} color={toneStyle(tone).color} />
+      </View>
+      <View style={styles.sideMetricText}>
+        <Text style={styles.muted}>{label}</Text>
+        <Text style={styles.sideMetricValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ProfitOverview({ products, expenses }: { products: ProfitReport['products']; expenses: number }) {
+  const rows = products.slice(0, 8);
+  const max = Math.max(1, ...rows.map((product) => Math.abs(Number(product.profit ?? 0))), expenses);
+
+  return (
+    <View style={styles.overview}>
+      <View style={styles.legendRow}>
+        <Legend color="#22c55e" label="Net Profit" />
+        <Legend color="#2563eb" label="Gross Profit" />
+        <Legend color="#ef4444" label="Expenses" />
+      </View>
+      <View style={styles.chartArea}>
+        {[0, 1, 2, 3].map((line) => <View key={line} style={[styles.gridLine, { top: 22 + line * 34 }]} />)}
+        <View style={styles.barRow}>
+          {(rows.length ? rows : [{ product_id: 0, name: 'No data', profit: 0, gross_profit: 0 } as ProfitReport['products'][number]]).map((product, index) => (
+            <View key={`${product.product_id}-${index}`} style={styles.barGroup}>
+              <View style={[styles.bar, styles.netBar, { height: Math.max(6, Math.abs(Number(product.profit ?? 0)) / max * 120) }]} />
+              <View style={[styles.bar, styles.grossBar, { height: Math.max(6, Math.abs(Number(product.gross_profit ?? product.profit ?? 0)) / max * 120) }]} />
+              <View style={[styles.bar, styles.expenseBar, { height: Math.max(4, expenses / max * 30) }]} />
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function Donut({ label, value, percent: percentValue, tone }: { label: string; value: string; percent: number; tone: Tone }) {
+  return (
+    <View style={styles.donutWrap}>
+      <View style={[styles.donut, { borderColor: toneStyle(tone).color }]}>
+        <View style={styles.donutHole}>
+          <Text style={styles.donutPercent}>{number(percentValue)}%</Text>
+        </View>
+      </View>
+      <Text style={styles.donutLabel}>{label}</Text>
+      <Text style={styles.donutValue}>{value}</Text>
+    </View>
+  );
+}
+
+function Metric({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+      {subValue ? <Text style={styles.positiveText}>{subValue}</Text> : null}
+    </View>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legend}>
+      <View style={[styles.legendLine, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+function FilterInput({ icon, label }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string }) {
+  return (
+    <View style={styles.filterInput}>
+      <MaterialCommunityIcons name={icon} size={19} color="#050505" />
+      <Text style={styles.filterLabel}>{label}</Text>
+      <MaterialCommunityIcons name="chevron-down" size={20} color="#050505" />
+    </View>
+  );
+}
+
+function SelectMenu({ value, options, onSelect }: { value: string; options: { value: string; label: string }[]; onSelect: (value: string) => void }) {
+  const [visible, setVisible] = useState(false);
+  const selected = options.find((option) => option.value === value)?.label ?? 'All Warehouses';
+
+  return (
+    <View style={styles.selectMenuWrap}>
+      <Menu
+        visible={visible}
+        onDismiss={() => setVisible(false)}
+        anchor={(
+          <Pressable style={styles.menuFilterInput} onPress={() => setVisible(true)}>
+            <MaterialCommunityIcons name="warehouse" size={19} color="#050505" />
+            <Text style={styles.filterLabel} numberOfLines={1}>{selected}</Text>
+            <MaterialCommunityIcons name="chevron-down" size={20} color="#050505" />
+          </Pressable>
+        )}
+      >
+        {options.map((option) => (
+          <Menu.Item
+            key={option.value}
+            title={option.label}
+            onPress={() => {
+              onSelect(option.value);
+              setVisible(false);
+            }}
+          />
+        ))}
+      </Menu>
+    </View>
+  );
+}
+
+function toneStyle(tone: Tone) {
+  const map = {
+    green: { color: '#16a34a', soft: { backgroundColor: '#dcfce7' } },
+    blue: { color: '#2563eb', soft: { backgroundColor: '#dbeafe' } },
+    purple: { color: '#7c3aed', soft: { backgroundColor: '#ede9fe' } },
+    amber: { color: '#f59e0b', soft: { backgroundColor: '#fef3c7' } },
+    red: { color: '#ef4444', soft: { backgroundColor: '#fee2e2' } },
+    orange: { color: '#f97316', soft: { backgroundColor: '#ffedd5' } },
+  };
+
+  return map[tone];
+}
+
+function distribution(value: number | undefined, summary: ProfitReport['summary'] | undefined) {
+  const total = Math.max(1, Math.abs(summary?.gross_profit ?? 0) + Math.abs(summary?.expenses ?? 0) + Math.abs(summary?.net_profit ?? 0));
+  return Math.abs(value ?? 0) / total * 100;
+}
+
 function money(value?: number) {
-  return `$${number(value ?? 0)}`;
+  return `৳${number(value ?? 0)}`;
 }
 
 function percent(value?: number) {
@@ -345,6 +457,18 @@ function percent(value?: number) {
 
 function number(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -361,114 +485,388 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 
 const styles = StyleSheet.create({
   screen: {
-    gap: 16,
+    backgroundColor: '#f8fafc',
+    gap: 14,
+    paddingBottom: 28,
+    paddingTop: 18,
+  },
+  safe: {
+    backgroundColor: '#f8fafc',
   },
   header: {
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
+    gap: 14,
+    paddingVertical: 8,
   },
-  headerActions: {
-    gap: 8,
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  headerTitle: {
+    flex: 1,
+  },
+  title: {
+    color: '#050505',
+    fontWeight: '800',
   },
   muted: {
-    color: '#6b7280',
+    color: '#64748b',
   },
-  filters: {
-    gap: 12,
+  semibold: {
+    fontWeight: '700',
   },
-  dateRow: {
+  filterBar: {
+    alignItems: 'stretch',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
-  dateInput: {
-    flex: 1,
-  },
-  summaryList: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  summaryRow: {
+  filterInput: {
     alignItems: 'center',
-    borderBottomColor: '#f3f4f6',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  summaryValue: {
-    alignItems: 'flex-end',
-  },
-  rows: {
-    flex: 1,
-  },
-  rowsContent: {
-    gap: 10,
-    paddingBottom: 20,
-  },
-  productRow: {
     backgroundColor: '#ffffff',
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
     borderWidth: 1,
-    gap: 10,
-    padding: 14,
-  },
-  productHeader: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
-  },
-  productTitle: {
-    flex: 1,
-  },
-  metrics: {
+    flexBasis: '100%',
+    flexGrow: 1,
     flexDirection: 'row',
     gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+  },
+  menuFilterInput: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    height: 44,
+    paddingHorizontal: 12,
+    width: '100%',
+  },
+  selectMenuWrap: {
+    flexBasis: '48%',
+    flexGrow: 1,
+  },
+  filterLabel: {
+    color: '#111827',
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  filterButton: {
+    borderRadius: 12,
+  },
+  filterButtonWrap: {
+    flexBasis: '100%',
+  },
+  filterButtonContent: {
+    height: 46,
+    paddingHorizontal: 8,
+  },
+  hiddenSearch: {
+    display: 'none',
+  },
+  kpiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  summaryCard: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
+    borderWidth: 1,
+    elevation: 2,
+    flexBasis: '100%',
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 112,
+    padding: 12,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+  },
+  iconTile: {
+    alignItems: 'center',
+    borderRadius: 14,
+    height: 50,
+    justifyContent: 'center',
+    width: 50,
+  },
+  summaryText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cardLabel: {
+    color: '#475569',
+    fontWeight: '500',
+  },
+  cardValue: {
+    color: '#050505',
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  chartRow: {
+    flexDirection: 'column',
+    gap: 12,
+  },
+  chartPanel: {
+    flex: 1,
+  },
+  panel: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
+    borderWidth: 1,
+    elevation: 2,
+    overflow: 'hidden',
+    padding: 16,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+  },
+  panelHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  panelTitleWrap: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  panelTitle: {
+    color: '#050505',
+    fontWeight: '800',
+  },
+  linkText: {
+    color: '#2563eb',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  smallIconTile: {
+    alignItems: 'center',
+    borderRadius: 12,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  overview: {
+    gap: 12,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    gap: 18,
+    justifyContent: 'center',
+  },
+  legend: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  legendLine: {
+    borderRadius: 999,
+    height: 4,
+    width: 20,
+  },
+  legendText: {
+    color: '#475569',
+    fontSize: 12,
+  },
+  chartArea: {
+    height: 170,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  gridLine: {
+    backgroundColor: '#e5e7eb',
+    height: 1,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  barRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-around',
+  },
+  barGroup: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: 3,
+  },
+  bar: {
+    borderRadius: 999,
+    width: 5,
+  },
+  netBar: {
+    backgroundColor: '#22c55e',
+  },
+  grossBar: {
+    backgroundColor: '#2563eb',
+  },
+  expenseBar: {
+    backgroundColor: '#ef4444',
+  },
+  donutRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  donutWrap: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  donut: {
+    alignItems: 'center',
+    borderRadius: 43,
+    borderWidth: 8,
+    height: 86,
+    justifyContent: 'center',
+    width: 86,
+  },
+  donutHole: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 33,
+    height: 66,
+    justifyContent: 'center',
+    width: 66,
+  },
+  donutPercent: {
+    color: '#0f172a',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  donutLabel: {
+    color: '#475569',
+    fontSize: 13,
+    marginTop: 8,
+  },
+  donutValue: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  sideMetricBar: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
+    borderWidth: 1,
+    elevation: 2,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+  },
+  sideMetric: {
+    alignItems: 'center',
+    borderBottomColor: '#e5e7eb',
+    borderBottomWidth: 1,
+    flexBasis: '50%',
+    flexDirection: 'row',
+    gap: 12,
+    padding: 16,
+  },
+  sideMetricText: {
+    flex: 1,
+  },
+  sideMetricValue: {
+    color: '#050505',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  twoColumn: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  compactPanel: {
+    flexBasis: '100%',
+    flexGrow: 1,
+  },
+  compactBody: {
+    gap: 10,
+  },
+  compactRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  compactLabel: {
+    color: '#111827',
+    flex: 1,
+    fontSize: 14,
+  },
+  compactMiddle: {
+    color: '#111827',
+    fontSize: 14,
+  },
+  compactValueWrap: {
+    alignItems: 'flex-end',
+  },
+  compactValue: {
+    color: '#050505',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  positiveText: {
+    color: '#16a34a',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  productRow: {
+    alignItems: 'center',
+    borderTopColor: '#e5e7eb',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingTop: 12,
+  },
+  productIcon: {
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    height: 58,
+    justifyContent: 'center',
+    width: 58,
+  },
+  productName: {
+    flexBasis: '48%',
+    flexGrow: 1,
   },
   metric: {
-    backgroundColor: '#f9fafb',
-    borderRadius: 6,
-    flex: 1,
-    padding: 10,
+    flexBasis: '30%',
+    flexGrow: 1,
+  },
+  metricLabel: {
+    color: '#475569',
+    fontSize: 13,
+  },
+  metricValue: {
+    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
   },
   empty: {
     alignItems: 'center',
     gap: 4,
     padding: 28,
-  },
-  section: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 10,
-    padding: 14,
-  },
-  sectionBody: {
-    gap: 8,
-  },
-  infoRow: {
-    alignItems: 'center',
-    borderBottomColor: '#f3f4f6',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingBottom: 8,
-  },
-  infoLabel: {
-    flex: 1,
-    paddingRight: 12,
-  },
-  breakdownRow: {
-    borderBottomColor: '#f3f4f6',
-    borderBottomWidth: 1,
-    gap: 8,
-    paddingBottom: 10,
   },
 });

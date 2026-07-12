@@ -5,13 +5,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Box, CircleCheck, Eye, FileText, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { api, type PurchaseInvoicePayload, type PurchaseReturnPayload } from '@/lib/api';
-import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
-import { errorMessage } from '@/lib/utils';
+import type { PaginationMeta, Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
+import { clsx, errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActivityLogTimeline } from '@/components/activity-log';
-import { Button, Field, Input, Select, Textarea } from '@/components/ui';
+import { Pagination, TableWrap } from '@/components/resource-shell';
+import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 
 type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
@@ -59,13 +60,11 @@ type SearchableSelectProps<T> = {
 const PURCHASE_STATUS_RECEIVED = 1;
 const PURCHASE_STATUS_PARTIAL = 2;
 const PURCHASE_STATUS_PENDING = 3;
-const PURCHASE_STATUS_ORDERED = 4;
 
 const fallbackPurchaseStatuses: PurchaseStatus[] = [
   { id: 1, value: '1', label: 'Received' },
   { id: 2, value: '2', label: 'Partial' },
   { id: 3, value: '3', label: 'Pending' },
-  { id: 4, value: '4', label: 'Ordered' },
 ];
 
 const emptyLine = (): InvoiceLine => ({
@@ -117,11 +116,18 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
   const [form, setForm] = useState<FormState>(emptyForm);
   const [lines, setLines] = useState<InvoiceLine[]>([emptyLine()]);
   const [invoices, setInvoices] = useState<Record<string, any>[]>([]);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState<'all' | 'pending' | 'approved'>('all');
   const [selectedInvoice, setSelectedInvoice] = useState<Record<string, any> | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approvalTarget, setApprovalTarget] = useState<number | null>(null);
 
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === form.supplierId);
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.warehouseId);
@@ -159,8 +165,9 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
       const nextWarehouses = warehouseResponse.data as Warehouse[];
       const nextProducts = (productResponse.data as Product[]).filter(isInvoiceProductSupported);
       const productOptions = productOptionsResponse.data as ProductOptions;
-      const nextPurchaseStatuses = (purchaseStatusResponse.data as PurchaseStatus[]).length
-        ? purchaseStatusResponse.data as PurchaseStatus[]
+      const apiPurchaseStatuses = (purchaseStatusResponse.data as PurchaseStatus[]).filter((status) => Number(status.id) !== 4 && String(status.value) !== '4');
+      const nextPurchaseStatuses = apiPurchaseStatuses.length
+        ? apiPurchaseStatuses
         : fallbackPurchaseStatuses;
 
       setSuppliers(nextSuppliers);
@@ -189,19 +196,34 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
 
   useEffect(() => {
     void loadOptions();
-    if (mode === 'index') void loadInvoices();
   }, [loadOptions]);
+
+  useEffect(() => {
+    if (mode === 'index') void loadInvoices(page);
+  }, [approvalStatus, debouncedSearch, isReturn, mode, page, perPage]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [search]);
 
   useEffect(() => {
     if (!invoiceId || mode === 'index' || mode === 'create') return;
     void openInvoice(invoiceId, mode === 'edit' ? 'edit' : 'view');
   }, [invoiceId, mode]);
 
-  async function loadInvoices() {
+  async function loadInvoices(nextPage = page) {
     setListLoading(true);
     try {
-      const response = isReturn ? await api.purchaseReturnInvoices({ perPage: 20 }) : await api.purchaseInvoices({ perPage: 20 });
+      const response = isReturn
+        ? await api.purchaseReturnInvoices({ page: nextPage, perPage, search: debouncedSearch, approvalStatus: approvalStatus === 'all' ? undefined : approvalStatus })
+        : await api.purchaseInvoices({ page: nextPage, perPage, search: debouncedSearch, approvalStatus: approvalStatus === 'all' ? undefined : approvalStatus });
       setInvoices(response.data as Record<string, any>[]);
+      setPagination(response.meta ?? null);
     } catch (error) {
       toast.error('Invoice list failed', { description: errorMessage(error) });
     } finally {
@@ -222,6 +244,8 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
         const nextLine = { ...line, [field]: value };
         if (field === 'qty' && isReceivedQuantitySyncedStatus(statusId)) {
           nextLine.received = String(value);
+        } else if (field === 'qty' && statusId === PURCHASE_STATUS_PARTIAL) {
+          nextLine.received = boundedReceivedValue(nextLine.received, String(value));
         } else if (field === 'received' && statusId === PURCHASE_STATUS_PARTIAL) {
           nextLine.received = boundedReceivedValue(String(value), nextLine.qty);
         }
@@ -355,6 +379,10 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
     }
   }
 
+  function requestApproval(id: number) {
+    setApprovalTarget(id);
+  }
+
   function fillFormFromInvoice(invoice: Record<string, any>) {
     setEditingId(Number(invoice.id));
     setForm({
@@ -403,7 +431,11 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
             </Button>
           </div>
         </div>
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+          <Field label="Search"><Input value={search} placeholder="Search reference or supplier" onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && event.preventDefault()} /></Field>
+          <Field label="Approval Status"><Select value={approvalStatus} onValueChange={(value) => { setApprovalStatus(value as 'all' | 'pending' | 'approved'); setPage(1); }} options={[{ value: 'all', label: 'All statuses' }, { value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }]} /></Field>
+        </div>
+        <TableWrap loading={listLoading}>
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
               <tr>
@@ -422,58 +454,80 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
                   <td className="px-4 py-3">{String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')}</td>
                   <td className="px-4 py-3 font-medium">{invoice.reference_no}</td>
                   <td className="px-4 py-3">{invoice.supplier?.name ?? '-'}</td>
-                  <td className="px-4 py-3">{invoice.purchase_status?.label ?? invoice.status}</td>
+                  <td className="px-4 py-3">{isReturn ? '-' : <PurchaseStatusBadge status={invoice.purchase_status?.label ?? invoice.status} />}</td>
                   <td className="px-4 py-3">{money(numberValue(invoice.grand_total))}</td>
                   <td className="px-4 py-3"><ApprovalBadge status={invoice.approval_status} /></td>
                   <td className="px-4 py-3 text-right">
-                    {invoice.can_approve ? <Button type="button" variant="secondary" className="mr-2" disabled={saving} onClick={() => void approveInvoice(Number(invoice.id))}>Approve</Button> : null}
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${basePath}/${invoice.id}`}>Details</Link>
-                    <Link className="inline-flex h-10 items-center rounded-md px-4 text-sm font-medium hover:bg-neutral-100" href={`${basePath}/${invoice.id}/edit`}>Edit</Link>
+                    {invoice.can_approve ? <ApproveActionButton disabled={saving} onClick={() => requestApproval(Number(invoice.id))} /> : null}
+                    <Link className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-500 hover:bg-blue-100" href={`${basePath}/${invoice.id}`} aria-label={`View ${singularTitle}`} title="View"><Eye className="h-4 w-4" /></Link>
+                    <Link className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${basePath}/${invoice.id}/edit`} aria-label={`Edit ${singularTitle}`} title="Edit"><Pencil className="h-4 w-4" /></Link>
                   </td>
                 </tr>
               ))}
               {!invoices.length ? <tr><td className="px-4 py-6 text-center text-neutral-500" colSpan={7}>No invoices found</td></tr> : null}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
+        <Pagination meta={pagination} loading={listLoading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
       </section> : null}
       {mode === 'details' ? (
         <section className="grid gap-4">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold tracking-tight">{singularTitle} Details</h1>
-            <div className="flex gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">{singularTitle} Details</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-neutral-500">
+                <Link className="hover:text-neutral-900" href="/dashboard">Dashboard</Link>
+                <span>/</span>
+                <Link className="hover:text-neutral-900" href={basePath}>{isReturn ? 'Purchase returns' : 'Purchase invoices'}</Link>
+                <span>/</span>
+                <span>{singularTitle} Details</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={basePath}>Back</Link>
-              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => void approveInvoice(Number(selectedInvoice.id))}>Approve</Button> : null}
-              {invoiceId ? <Link className="inline-flex h-10 items-center rounded-md bg-black px-4 text-sm font-medium text-white hover:bg-neutral-800" href={`${basePath}/${invoiceId}/edit`}>Edit</Link> : null}
+              {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => requestApproval(Number(selectedInvoice.id))}>Approve</Button> : null}
+              {invoiceId ? <Link className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${basePath}/${invoiceId}/edit`} aria-label={`Edit ${singularTitle}`} title="Edit"><Pencil className="h-4 w-4" /></Link> : null}
             </div>
           </div>
           {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} kind={kind} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}
         </section>
       ) : null}
       {mode !== 'details' && mode !== 'index' ? <>
-      <div className="flex flex-wrap items-center justify-start gap-2">
-        <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={basePath}>Back to list</Link>
-        <Button type="button" variant="secondary" disabled={saving} onClick={resetForm}>Reset</Button>
-      </div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? `Edit ${singularTitle}` : singularTitle}</h1>
-          <p className="mt-1 text-sm text-neutral-500">{editingId ? 'Update fields and line items' : isReturn ? 'Return purchased stock to a supplier' : 'Receive purchased stock with optional cash payment'}</p>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50" href={basePath}>
+              <ArrowLeft className="h-4 w-4" />
+              Back to list
+            </Link>
+            <Button type="button" variant="secondary" className="border-slate-200 text-slate-800 shadow-sm" disabled={saving} onClick={resetForm}>
+              <RefreshCw className="h-4 w-4" />
+              Reset
+            </Button>
+          </div>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">{editingId ? `Edit ${singularTitle}` : singularTitle}</h1>
+          <p className="mt-2 text-base text-slate-500">{editingId ? 'Update fields and line items' : isReturn ? 'Return purchased stock to a supplier' : 'Receive purchased stock with optional cash payment'}</p>
         </div>
         <div className="flex gap-2">
-          <Button type="button" variant="secondary" disabled={loading} onClick={() => void loadOptions()}>
+          <Button type="button" variant="secondary" className="border-slate-200 text-slate-800 shadow-sm" disabled={loading} onClick={() => void loadOptions()}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button type="submit" disabled={saving || loading}>{saving ? 'Saving...' : editingId ? 'Update invoice' : 'Create invoice'}</Button>
+          <Button type="submit" className="bg-emerald-600 px-5 shadow-sm hover:bg-emerald-700" disabled={saving || loading}>
+            <FileText className="h-4 w-4" />
+            {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
+          </Button>
         </div>
       </div>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Invoice</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Reference no"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
-          <Field label={dateLabel}><Input type="date" value={form.purchaseDate} onChange={(event) => setValue('purchaseDate', event.target.value)} /></Field>
+      <section className="grid gap-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <FileText className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Invoice</h2>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Field label="Reference No"><Input value={form.referenceNo} onChange={(event) => setValue('referenceNo', event.target.value)} /></Field>
+          <Field label={dateLabel.replace('date', 'Date')}><Input type="date" value={form.purchaseDate} onChange={(event) => setValue('purchaseDate', event.target.value)} /></Field>
           <SearchableSelect
             label="Supplier"
             valueLabel={selectedSupplier?.name ?? 'Select supplier'}
@@ -504,29 +558,38 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
         </div>
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">Products</h2>
-          <Button type="button" variant="secondary" onClick={() => setLines((current) => [...current, emptyLine()])}>
+          <div className="flex items-center gap-3">
+            <Box className="h-5 w-5 text-emerald-600" />
+            <h2 className="text-xl font-semibold text-slate-950">Products</h2>
+          </div>
+          <Button type="button" variant="secondary" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => setLines((current) => [...current, emptyLine()])}>
             <Plus className="h-4 w-4" />
-            Add line
+            Add Line
           </Button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] text-left text-sm">
-            <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-              <tr>
-                {['Product', ...(hasVariantLine ? ['Variant'] : []), 'Qty', ...(showReceived ? ['Received'] : []), 'Unit', 'Unit cost', 'Discount', 'Tax %', ...(hasBatchLine ? ['Batch no', 'Expiry'] : []), 'Line total', ''].map((header) => <th key={header} className="px-3 py-2 font-medium">{header}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => {
-                const product = products.find((item) => String(item.id) === line.productId);
-                const lineRequiresBatch = isBatchProduct(product);
+        <div className="grid gap-3">
+          {lines.map((line, index) => {
+            const product = products.find((item) => String(item.id) === line.productId);
+            const lineRequiresBatch = isBatchProduct(product);
+            const lineHasVariant = isVariantProduct(product);
 
-                return (
-                <tr key={line.key} className="border-t border-neutral-100">
-                  <td className="min-w-72 px-3 py-2">
+            return (
+              <div key={line.key} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-950">Line {index + 1}</div>
+                  <ActionButton
+                    icon={Trash2}
+                    text="Remove line"
+                    color="text-red-500 hover:text-red-600"
+                    bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                    disabled={lines.length === 1}
+                    onClick={() => setLines((current) => current.length === 1 ? current : current.filter((item) => item.key !== line.key))}
+                  />
+                </div>
+                <div className="grid gap-3 xl:grid-cols-12">
+                  <div className={lineHasVariant ? 'xl:col-span-2' : 'xl:col-span-3'}>
                     <SearchableSelect
                       label="Product"
                       valueLabel={productLabel(line.productId, line.variantId, products)}
@@ -537,72 +600,97 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
                       detailFor={(product) => `Cost ${money(baseUnitCostForProduct(product))} | Qty ${money(numberValue(product.qty ?? product.quantity))}`}
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
-                  </td>
-                  {hasVariantLine ? <td className="px-3 py-2">
-                    {isVariantProduct(product) ? (
-                      <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} />
-                    ) : null}
-                  </td> : null}
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></td>
-                  {showReceived ? <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.received} onChange={(event) => updateLine(line.key, 'received', event.target.value)} /></td> : null}
-                  <td className="px-3 py-2">
-                    {product ? (
-                      <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} />
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.cost} onChange={(event) => updateLine(line.key, 'cost', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></td>
-                  <td className="px-3 py-2"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></td>
+                  </div>
+                  {lineHasVariant || hasVariantLine ? (
+                    <div className="xl:col-span-2">
+                      <Field label="Variant">
+                        {lineHasVariant ? <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} /> : <div className="h-10" />}
+                      </Field>
+                    </div>
+                  ) : null}
+                  <div className="xl:col-span-1">
+                    <Field label="Qty"><Input type="number" step="0.01" min="0" value={line.qty} onChange={(event) => updateLine(line.key, 'qty', event.target.value)} /></Field>
+                  </div>
+                  {showReceived ? (
+                    <div className="xl:col-span-1">
+                      <Field label="Received"><Input type="number" step="0.01" min="0" value={line.received} onChange={(event) => updateLine(line.key, 'received', event.target.value)} /></Field>
+                    </div>
+                  ) : null}
+                  <div className="xl:col-span-2">
+                    <Field label="Unit">
+                      {product ? <Select value={line.unitId} onValueChange={(value) => selectLineUnit(line.key, value)} options={unitSelectOptions(productOptionsForFamily(product, units))} /> : <div className="h-10" />}
+                    </Field>
+                  </div>
                   {hasBatchLine ? (
                     <>
-                      <td className="px-3 py-2">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : null}</td>
-                      <td className="px-3 py-2">{lineRequiresBatch ? <Input required type="date" value={line.expiredDate} onChange={(event) => updateLine(line.key, 'expiredDate', event.target.value)} /> : null}</td>
+                      <div className="xl:col-span-2">
+                        <Field label="Batch No">{lineRequiresBatch ? <Input required value={line.batchNo} onChange={(event) => updateLine(line.key, 'batchNo', event.target.value)} /> : <div className="h-10" />}</Field>
+                      </div>
+                      <div className="xl:col-span-2">
+                        <Field label="Expiry">{lineRequiresBatch ? <Input required type="date" value={line.expiredDate} onChange={(event) => updateLine(line.key, 'expiredDate', event.target.value)} /> : <div className="h-10" />}</Field>
+                      </div>
                     </>
                   ) : null}
-                  <td className="whitespace-nowrap px-3 py-2 font-medium">{money(calculateLine(line, form.purchaseStatusId).subtotal)}</td>
-                  <td className="px-3 py-2 text-right">
-                    <Button type="button" variant="ghost" className="h-9 w-9 px-0" disabled={lines.length === 1} onClick={() => setLines((current) => current.length === 1 ? current : current.filter((item) => item.key !== line.key))} aria-label="Remove line">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                  <div className={hasBatchLine || showReceived || lineHasVariant ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                    <Field label="Unit Cost (৳)"><Input type="number" step="0.01" min="0" value={line.cost} onChange={(event) => updateLine(line.key, 'cost', event.target.value)} /></Field>
+                  </div>
+                  <div className={hasBatchLine || showReceived || lineHasVariant ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                    <Field label="Discount (৳)"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
+                  </div>
+                  <div className="xl:col-span-1">
+                    <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
+                  </div>
+                  <div className="xl:col-span-1">
+                    <Field label="Line Total (৳)">
+                      <Input value={money(calculateLine(line, form.purchaseStatusId).subtotal)} readOnly className="bg-slate-100 font-semibold text-slate-700" />
+                    </Field>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
-      {!isReturn ? <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Adjustments and Payment</h2>
+      {!isReturn ? <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <SlidersHorizontal className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Adjustments and Payment</h2>
+        </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
-          <Field label="Order discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field>
-          <Field label="Shipping cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field>
-          <Field label="Payment status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
+          <Field label="Order Tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
+          <Field label="Order Discount"><Input type="number" step="0.01" min="0" value={form.orderDiscount} onChange={(event) => setValue('orderDiscount', event.target.value)} /></Field>
+          <Field label="Shipping Cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field>
+          <Field label="Payment Status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
             { value: 'unpaid', label: 'Unpaid' },
             { value: 'partial', label: 'Partial cash' },
             { value: 'paid', label: 'Paid cash' },
           ]} /></Field>
-          {form.paymentMode === 'partial' ? <Field label="Paid amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
-          <Field label="Payment note"><Input value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field>
+          {form.paymentMode === 'partial' ? <Field label="Paid Amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
+          <Field label="Payment Note"><Input placeholder="Payment note (optional)" value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field>
         </div>
       </section> : (
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Adjustment</h2>
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <SlidersHorizontal className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Adjustment</h2>
+        </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <Field label="Order tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
+          <Field label="Order Tax %"><Input type="number" step="0.01" min="0" value={form.orderTaxRate} onChange={(event) => setValue('orderTaxRate', event.target.value)} /></Field>
         </div>
       </section>
       )}
 
-      <section className="grid gap-4 rounded-lg border border-neutral-200 bg-white p-4">
-        <h2 className="text-base font-semibold">Notes</h2>
-        <Field label={isReturn ? 'Return note' : 'Purchase note'}><Textarea value={form.note} onChange={(event) => setValue('note', event.target.value)} /></Field>
+      <section className="grid gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-3">
+          <FileText className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-xl font-semibold text-slate-950">Notes</h2>
+        </div>
+        <Field label={isReturn ? 'Return Note' : 'Purchase Note'}><Textarea placeholder={isReturn ? 'Add return note (optional)' : 'Add purchase note (optional)'} value={form.note} onChange={(event) => setValue('note', event.target.value)} /></Field>
       </section>
 
-      <section className="rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="grid gap-3 text-sm sm:grid-cols-5">
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 divide-slate-200 text-sm sm:grid-cols-5 sm:divide-x">
           <Summary label="Total qty" value={money(totals.totalQty)} />
           <Summary label="Items subtotal" value={money(totals.totalCost)} />
           <Summary label="Discount" value={money(totals.totalDiscount)} />
@@ -612,44 +700,175 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
       </section>
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="submit" disabled={saving || loading}>{saving ? 'Saving...' : editingId ? 'Update invoice' : 'Create invoice'}</Button>
+        <Button type="submit" className="bg-emerald-600 px-6 shadow-sm hover:bg-emerald-700" disabled={saving || loading}>
+          <FileText className="h-4 w-4" />
+          {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
+        </Button>
       </div>
       </> : null}
+      <Modal title="Approve Invoice" open={approvalTarget !== null} onOpenChange={(open) => !open && setApprovalTarget(null)}>
+        <div className="grid gap-4">
+          <p className="text-sm text-neutral-700">Approve this {singularTitle.toLowerCase()}? This will apply its inventory and financial effects.</p>
+          <div className="flex justify-end gap-2"><Button type="button" variant="secondary" disabled={saving} onClick={() => setApprovalTarget(null)}>Cancel</Button><Button type="button" disabled={saving} onClick={() => { if (approvalTarget !== null) void approveInvoice(approvalTarget).finally(() => setApprovalTarget(null)); }}>{saving ? 'Approving...' : 'Approve invoice'}</Button></div>
+        </div>
+      </Modal>
     </form>
   );
 }
 
 function PurchaseInvoiceDetails({ invoice, kind }: { invoice: Record<string, any>; kind: PurchasePageKind }) {
   const isReturn = kind === 'return';
+  const lines = (invoice.products ?? []) as Record<string, any>[];
+  const subtotal = numberValue(invoice.total_cost ?? invoice.total_price);
+  const orderDiscount = numberValue(invoice.order_discount);
+  const orderTax = numberValue(invoice.order_tax);
+  const shippingCost = numberValue(invoice.shipping_cost);
+  const grandTotal = numberValue(invoice.grand_total);
+  const paidAmount = numberValue(invoice.paid_amount);
+  const dueAmount = numberValue(invoice.due_amount);
+  const payment = invoice.payments?.[0] ?? null;
+  const invoiceDate = String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-');
+  const invoiceTime = timeOnly(invoice.created_at);
+  const note = String(invoice.return_note ?? invoice.purchase_note ?? invoice.note ?? '-');
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4">
-        <div className="flex flex-wrap gap-6">
-          <Summary label="Reference" value={String(invoice.reference_no ?? '-')} />
-          <Summary label={isReturn ? 'Return date' : 'Purchase date'} value={String(invoice.return_date ?? invoice.purchase_date ?? dateOnly(invoice.created_at) ?? '-')} />
-          <Summary label="Supplier" value={String(invoice.supplier?.name ?? '-')} />
-          {!isReturn ? <Summary label="Status" value={String(invoice.purchase_status?.label ?? invoice.status ?? '-')} /> : null}
-          <Summary label="Approval" value={String(invoice.approval_status ?? 'approved')} />
-          {invoice.approver?.name ? <Summary label="Approved by" value={String(invoice.approver.name)} /> : null}
-          <Summary label="Grand total" value={money(numberValue(invoice.grand_total))} strong />
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="grid gap-6 border-b border-neutral-200 p-5 md:grid-cols-5">
+          <DetailHeader label="Invoice No." value={String(invoice.reference_no ?? '-')} accent>
+            <span className={clsx('mt-2 inline-flex w-fit rounded px-2 py-1 text-xs font-semibold', invoice.approval_status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-600 text-white')}>
+              {String(invoice.approval_status ?? 'approved')}
+            </span>
+          </DetailHeader>
+          <DetailHeader label={isReturn ? 'Return Date' : 'Purchase Date'} value={invoiceDate}>
+            {invoiceTime ? <span className="mt-1 block text-sm text-neutral-500">{invoiceTime}</span> : null}
+          </DetailHeader>
+          <DetailHeader label="Supplier" value={String(invoice.supplier?.name ?? '-')} accent>
+            {invoice.supplier?.phone_number ? <span className="mt-1 block text-sm text-blue-600">{invoice.supplier.phone_number}</span> : null}
+          </DetailHeader>
+          <DetailHeader label="Warehouse" value={String(invoice.warehouse?.name ?? '-')} accent />
+          <DetailHeader label={isReturn ? 'Created By' : 'Purchase Status'} value={String(isReturn ? invoice.user?.name ?? '-' : invoice.purchase_status?.label ?? invoice.status ?? '-')} />
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <tbody>
-              {(invoice.products ?? []).map((line: Record<string, any>) => (
-                <tr key={line.id} className="border-t border-neutral-100">
-                  <td className="py-2">{invoiceLineProductName(line)}</td>
-                  <td className="py-2 text-right">Qty {money(numberValue(line.qty))}</td>
-                  {!isReturn ? <td className="py-2 text-right">Received {money(numberValue(line.received))}</td> : null}
-                  <td className="py-2 text-right">{money(numberValue(line.total))}</td>
+
+        <div className="p-4">
+          <h2 className="mb-3 text-sm font-semibold text-neutral-950">{isReturn ? 'Purchase Return Items' : 'Purchase Items'}</h2>
+          <div className="overflow-x-auto rounded-md border border-neutral-200">
+            <table className="min-w-[1040px] w-full border-collapse text-sm">
+              <thead className="bg-neutral-50 text-left text-neutral-950">
+                <tr className="[&>th]:border-r [&>th]:border-neutral-200 last:[&>th]:border-r-0">
+                  <th className="w-12 px-3 py-3 font-semibold">SL</th>
+                  <th className="px-3 py-3 font-semibold">Product</th>
+                  <th className="px-3 py-3 font-semibold">Variant</th>
+                  <th className="px-3 py-3 font-semibold">SKU / Code</th>
+                  <th className="px-3 py-3 font-semibold">Unit</th>
+                  <th className="px-3 py-3 text-right font-semibold">Quantity</th>
+                  {!isReturn ? <th className="px-3 py-3 text-right font-semibold">Received</th> : null}
+                  <th className="px-3 py-3 text-right font-semibold">Unit Cost</th>
+                  <th className="px-3 py-3 text-right font-semibold">Discount</th>
+                  <th className="px-3 py-3 text-right font-semibold">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                {lines.map((line, index) => (
+                  <tr key={line.id ?? index} className="align-top [&>td]:border-r [&>td]:border-neutral-100 last:[&>td]:border-r-0">
+                    <td className="px-3 py-3 text-center text-neutral-700">{index + 1}</td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium text-neutral-950">{line.product?.name ?? `#${line.product_id}`}</div>
+                      {line.product?.code ? <div className="mt-1 text-sm text-neutral-500">{line.product.code}</div> : null}
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium text-neutral-700">{line.variant?.name ?? '-'}</div>
+                      {line.batch?.batch_no ? <div className="mt-1 text-sm text-neutral-500">Batch {line.batch.batch_no}</div> : null}
+                    </td>
+                    <td className="px-3 py-3 text-neutral-700">{line.variant?.item_code ?? line.product?.sku ?? line.product?.code ?? '-'}</td>
+                    <td className="px-3 py-3 text-neutral-700">{detailLineUnit(line)}</td>
+                    <td className="px-3 py-3 text-right">{money(numberValue(line.qty))}</td>
+                    {!isReturn ? <td className="px-3 py-3 text-right">{money(numberValue(line.received))}</td> : null}
+                    <td className="px-3 py-3 text-right">{money(numberValue(line.net_unit_cost ?? line.net_unit_price ?? line.cost))}</td>
+                    <td className="px-3 py-3 text-right">{money(numberValue(line.discount))}</td>
+                    <td className="px-3 py-3 text-right font-semibold">{money(numberValue(line.total))}</td>
+                  </tr>
+                ))}
+                {!lines.length ? <tr><td className="px-3 py-6 text-center text-neutral-500" colSpan={isReturn ? 9 : 10}>No products found</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-4 pt-0 lg:grid-cols-[1fr_1.05fr]">
+          <div className="grid content-start gap-3">
+            <InfoPanel title="Payment Information">
+              <InfoRow label="Payment Method" value={paymentMethodLabel(payment?.paying_method)} />
+              <InfoRow label="Paid Amount" value={isReturn ? '-' : money(paidAmount)} />
+              <InfoRow label="Due Amount" value={isReturn ? '-' : money(dueAmount)} highlight={!isReturn && dueAmount > 0} />
+              <InfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
+            </InfoPanel>
+
+            <InfoPanel title="Additional Information">
+              <InfoRow label="Reference" value={String(invoice.reference_no ?? '-')} />
+              <InfoRow label="Note" value={note} />
+              <InfoRow label="Approval" value={String(invoice.approval_status ?? 'approved')} badge />
+              {invoice.approver?.name ? <InfoRow label="Approved By" value={String(invoice.approver.name)} /> : null}
+            </InfoPanel>
+          </div>
+
+          <div className="overflow-hidden rounded-md border border-neutral-200">
+            <TotalRow label="Subtotal" value={money(subtotal)} />
+            <TotalRow label="Discount" value={money(orderDiscount)} />
+            <TotalRow label={`VAT (${money(numberValue(invoice.order_tax_rate))}%)`} value={money(orderTax)} />
+            {!isReturn && shippingCost > 0 ? <TotalRow label="Shipping Cost" value={money(shippingCost)} /> : null}
+            <TotalRow label="Grand Total" value={money(grandTotal)} primary />
+            {!isReturn ? <TotalRow label="Paid Amount" value={money(paidAmount)} /> : null}
+            {!isReturn ? <TotalRow label="Due Amount" value={money(dueAmount)} danger={dueAmount > 0} /> : null}
+          </div>
         </div>
       </div>
       <ActivityLogTimeline logs={invoice.activity_logs ?? []} />
+    </div>
+  );
+}
+
+function DetailHeader({ label, value, accent = false, children }: { label: string; value: string; accent?: boolean; children?: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-sm text-neutral-500">{label}</div>
+      <div className={clsx('mt-3 break-words text-base font-semibold', accent ? 'text-blue-600' : 'text-neutral-950')}>{value}</div>
+      {children}
+    </div>
+  );
+}
+
+function InfoPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-neutral-200">
+      <h3 className="border-b border-neutral-200 px-3 py-3 text-sm font-semibold text-neutral-950">{title}</h3>
+      <div className="grid gap-2 p-3">{children}</div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, badge = false, highlight = false }: { label: string; value: string; badge?: boolean; highlight?: boolean }) {
+  return (
+    <div className="grid grid-cols-[minmax(120px,0.75fr)_1fr] items-center gap-3 text-sm">
+      <div className="text-neutral-700">{label}</div>
+      <div className="font-medium text-neutral-950">
+        {badge ? (
+          <span className={clsx('inline-flex w-fit rounded px-2 py-1 text-xs font-semibold', highlight ? 'bg-emerald-600 text-white' : 'bg-neutral-100 text-neutral-700')}>
+            {value}
+          </span>
+        ) : (
+          <span className={highlight ? 'text-amber-700' : undefined}>{value}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TotalRow({ label, value, primary = false, danger = false }: { label: string; value: string; primary?: boolean; danger?: boolean }) {
+  return (
+    <div className={clsx('flex items-center justify-between gap-4 border-b border-neutral-200 px-4 py-3 text-sm last:border-b-0', primary && 'bg-blue-50 text-blue-700', danger && 'bg-red-50 text-red-700')}>
+      <span className={clsx((primary || danger) && 'text-base font-semibold')}>{label}</span>
+      <span className={clsx('font-semibold', primary && 'text-xl', danger && 'text-lg')}>{value}</span>
     </div>
   );
 }
@@ -659,6 +878,38 @@ function ApprovalBadge({ status }: { status: unknown }) {
   return (
     <span className={pending ? 'inline-flex rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800' : 'inline-flex rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-800'}>
       {pending ? 'Pending' : 'Approved'}
+    </span>
+  );
+}
+
+function ApproveActionButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      className="mr-2 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <CircleCheck className="h-4 w-4" />
+      Approve
+    </Button>
+  );
+}
+
+function PurchaseStatusBadge({ status }: { status: unknown }) {
+  const normalized = String(status ?? '').toLowerCase();
+  const className = normalized.includes('received')
+    ? 'bg-emerald-100 text-emerald-800'
+    : normalized.includes('partial')
+      ? 'bg-sky-100 text-sky-800'
+      : normalized.includes('pending')
+        ? 'bg-amber-100 text-amber-800'
+        : 'bg-neutral-100 text-neutral-700';
+
+  return (
+    <span className={clsx('inline-flex rounded-full px-2 py-1 text-xs font-medium', className)}>
+      {String(status ?? '-')}
     </span>
   );
 }
@@ -733,9 +984,9 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
 
 function Summary({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div>
-      <div className="text-xs uppercase text-neutral-500">{label}</div>
-      <div className={strong ? 'text-xl font-semibold' : 'text-base font-medium'}>{value}</div>
+    <div className="px-3 py-1">
+      <div className="text-xs font-medium uppercase text-slate-500">{label}</div>
+      <div className={strong ? 'mt-1 text-2xl font-bold text-emerald-600' : 'mt-1 text-lg font-semibold text-slate-950'}>{value}</div>
     </div>
   );
 }
@@ -760,8 +1011,8 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     toast.error('Invalid quantity', { description: 'Line quantities must be greater than zero.' });
     return null;
   }
-  if (statusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received > item.values.qty)) {
-    toast.error('Invalid received quantity', { description: 'Received quantity must be between zero and ordered quantity.' });
+  if (statusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received >= item.values.qty)) {
+    toast.error('Invalid received quantity', { description: 'For partial purchases, received quantity must be less than ordered quantity.' });
     return null;
   }
   if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate)))) {
@@ -827,9 +1078,6 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
 function calculateTotals(lines: InvoiceLine[], form: FormState) {
   const lineTotals = lines.map((line) => calculateLine(line, form.purchaseStatusId));
   const totalQty = round2(lineTotals.reduce((sum, line) => sum + line.qty, 0));
-  if (Number(form.purchaseStatusId) === PURCHASE_STATUS_ORDERED) {
-    return { totalQty, totalDiscount: 0, totalCost: 0, orderTax: 0, grandTotal: 0 };
-  }
   const lineDiscount = round2(lineTotals.reduce((sum, line) => sum + line.discount, 0));
   const orderDiscount = numberValue(form.orderDiscount);
   const totalDiscount = round2(lineDiscount + orderDiscount);
@@ -846,9 +1094,6 @@ function calculateLine(line: InvoiceLine, purchaseStatusId: string | number) {
   const cost = numberValue(line.cost);
   const discount = numberValue(line.discount);
   const taxRate = numberValue(line.taxRate);
-  if (statusId === PURCHASE_STATUS_ORDERED) {
-    return { qty, received, cost, discount: 0, taxRate, tax: 0, subtotal: 0 };
-  }
   const taxable = Math.max(0, cost * qty - discount);
   const tax = round2(taxable * taxRate / 100);
   const subtotal = round2(taxable + tax);
@@ -862,11 +1107,11 @@ function normalizedReceived(statusId: number, line: InvoiceLine) {
 }
 
 function isReceivedQuantitySyncedStatus(statusId: number) {
-  return statusId === PURCHASE_STATUS_RECEIVED || statusId === PURCHASE_STATUS_PARTIAL;
+  return statusId === PURCHASE_STATUS_RECEIVED;
 }
 
 function isUnreceivedStatus(statusId: number) {
-  return statusId === PURCHASE_STATUS_PENDING || statusId === PURCHASE_STATUS_ORDERED;
+  return statusId === PURCHASE_STATUS_PENDING;
 }
 
 function boundedReceivedValue(received: string, qty: string) {
@@ -938,6 +1183,27 @@ function variantSelectOptions(product: Product | undefined | null) {
 function invoiceLineProductName(line: Record<string, any>) {
   const productName = line.product?.name ?? `#${line.product_id}`;
   return line.variant?.name ? `${productName} - ${line.variant.name}` : productName;
+}
+
+function detailLineUnit(line: Record<string, any>) {
+  if (!line.unit) return '-';
+  const unitName = line.unit.unit_name ?? line.unit.name;
+  const unitCode = line.unit.unit_code ?? line.unit.code;
+  return unitCode && unitName ? `${unitName} (${unitCode})` : String(unitName ?? unitCode ?? '-');
+}
+
+function paymentMethodLabel(method: unknown) {
+  if (!method) return '-';
+  return String(method)
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function timeOnly(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function upsertById<T extends { id: number }>(items: T[], item: T) {

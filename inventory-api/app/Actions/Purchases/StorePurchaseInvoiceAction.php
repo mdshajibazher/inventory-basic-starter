@@ -27,8 +27,6 @@ class StorePurchaseInvoiceAction
 
     private const STATUS_PENDING = 3;
 
-    private const STATUS_ORDERED = 4;
-
     public function execute(array $data, User $user, ?UploadedFile $document = null): Purchase
     {
         return DB::transaction(function () use ($data, $user, $document) {
@@ -127,22 +125,6 @@ class StorePurchaseInvoiceAction
             $totalCost += $lineTotal;
         }
 
-        if ((int) $data['status'] === self::STATUS_ORDERED) {
-            return [
-                'lines' => array_fill_keys(array_keys($lines), 0.0),
-                'item' => count($data['product_id']),
-                'total_qty' => $this->round($totalQty),
-                'total_discount' => 0.0,
-                'total_tax' => 0.0,
-                'total_cost' => 0.0,
-                'order_tax_rate' => 0.0,
-                'order_tax' => 0.0,
-                'order_discount' => 0.0,
-                'shipping_cost' => 0.0,
-                'grand_total' => 0.0,
-            ];
-        }
-
         $orderTaxRate = (float) ($data['order_tax_rate'] ?? 0);
         $orderDiscount = (float) ($data['order_discount'] ?? 0);
         $shippingCost = (float) ($data['shipping_cost'] ?? 0);
@@ -167,14 +149,14 @@ class StorePurchaseInvoiceAction
     {
         return match ($status) {
             self::STATUS_RECEIVED => $qty,
-            self::STATUS_PENDING, self::STATUS_ORDERED => 0.0,
-            default => $requestedReceived,
+            self::STATUS_PENDING => 0.0,
+            default => min(max($requestedReceived, 0), $qty),
         };
     }
 
     private function receivedLineTotal(int $status, float $qty, float $received, float $lineTotal): float
     {
-        if (in_array($status, [self::STATUS_PENDING, self::STATUS_ORDERED], true)) {
+        if ($status === self::STATUS_PENDING) {
             return 0.0;
         }
 

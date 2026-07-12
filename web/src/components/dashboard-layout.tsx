@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Boxes,
+  Barcode,
   Building2,
   ChevronRight,
   CircleDollarSign,
@@ -43,6 +44,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
+  { href: '/products/print-barcode', label: 'Print Barcode', icon: Barcode, permission: 'products-index' },
   { href: '/product-stocks', label: 'Product Stock', icon: PackageSearch, permission: 'product-stocks-index' },
   { href: '/payments', label: 'Payments', icon: WalletCards, permission: ['accounts-index', 'sales-index', 'purchases-index'] },
   { href: '/expenses', label: 'Expenses', icon: ReceiptText, permission: 'expenses-index' },
@@ -78,6 +80,7 @@ const settingsItems: NavItem[] = [
 
 const settingsReportItems: NavItem[] = [
   { href: '/reports/datewise-products', label: 'Datewise Product Report', icon: FileText, permission: 'reports-profit' },
+  { href: '/reports/customer-statement', label: 'Customer Statement', icon: FileText, permission: 'reports-profit' },
 ];
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {

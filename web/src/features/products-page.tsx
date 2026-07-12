@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, GripVertical, Package, Trash2 } from 'lucide-react';
+import { Calendar, Eye, GripVertical, Package, Pencil, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
@@ -10,7 +10,7 @@ import { api, type ProductPayload } from '@/lib/api';
 import type { Brand, Category, PaginationMeta, Product, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage, toNullableNumber, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Checkbox, Field, Input, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
+import { ActionButton, Button, Checkbox, Field, Input, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 
 type ProductForm = {
@@ -87,7 +87,7 @@ type ProductOptions = {
 
 type ProductsPageMode = 'index' | 'create' | 'edit';
 
-const perPage = 15;
+const defaultPerPage = 15;
 
 const emptyForm: ProductForm = {
   type: 'standard',
@@ -140,6 +140,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   const [options, setOptions] = useState<ProductOptions>(fallbackOptions);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -174,7 +175,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (mode === 'index' && !hasPermission('products-index')) router.replace('/dashboard');
@@ -665,7 +666,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       <PageHeader title="Products" subtitle={`${products.length} shown from ${pagination?.total ?? products.length}`} canAdd={canAdd} onAdd={openCreate} />
       <SearchBox value={search} onChange={setSearch} placeholder="Search products, code, brand, category" />
       {products.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
@@ -690,12 +691,35 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                   <td className="px-4 py-3">{product.qty ?? product.quantity ?? 0}</td>
                   <td className="px-4 py-3">{product.price}</td>
                   <td className="px-4 py-3"><StatusBadge active={product.is_active} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <Link className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-black hover:bg-neutral-100" href={`/products/${product.id}`}>
-                      Details
-                    </Link>
-                    {canEdit ? <Button variant="ghost" onClick={() => openEdit(product)}>Edit</Button> : null}
-                    {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(product)}>Delete</Button> : null}
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <ActionButton
+                        icon={Eye}
+                        text="View product"
+                        color="text-blue-500 hover:text-blue-600"
+                        bgColor="bg-blue-50 hover:border-blue-100 hover:bg-blue-100"
+                        href={`/products/${product.id}`}
+                      />
+                      {canEdit ? (
+                        <ActionButton
+                          icon={Pencil}
+                          text="Edit product"
+                          color="text-amber-600 hover:text-amber-700"
+                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                          onClick={() => openEdit(product)}
+                        />
+                      ) : null}
+                      {canDelete ? (
+                        <ActionButton
+                          icon={Trash2}
+                          text="Delete product"
+                          color="text-red-500 hover:text-red-600"
+                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                          disabled={saving}
+                          onClick={() => void remove(product)}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -705,7 +729,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       ) : (
         <EmptyState label={loading ? 'Loading...' : 'No products found.'} />
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
     </div>
   );
 }

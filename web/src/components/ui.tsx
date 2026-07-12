@@ -1,10 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import * as SwitchPrimitive from '@radix-ui/react-switch';
 import { Check, ChevronDown, X } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { clsx } from '@/lib/utils';
 
 export function Button({
@@ -15,7 +17,7 @@ export function Button({
   return (
     <button
       className={clsx(
-        'inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'primary' && 'bg-black text-white hover:bg-neutral-800',
         variant === 'secondary' && 'border border-neutral-200 bg-white text-black hover:bg-neutral-50',
         variant === 'ghost' && 'text-black hover:bg-neutral-100',
@@ -24,6 +26,45 @@ export function Button({
       )}
       {...props}
     />
+  );
+}
+
+export function ActionButton({
+  icon: Icon,
+  text,
+  color,
+  bgColor,
+  href,
+  disabled,
+  onClick,
+}: {
+  icon: LucideIcon;
+  text: string;
+  color: string;
+  bgColor: string;
+  href?: string;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  const className = clsx(
+    'inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-transparent transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300',
+    color,
+    bgColor,
+    disabled && 'cursor-not-allowed opacity-50'
+  );
+
+  if (href) {
+    return (
+      <Link className={className} href={href} aria-label={text} title={text}>
+        <Icon className="h-4 w-4" />
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" className={className} aria-label={text} title={text} disabled={disabled} onClick={onClick}>
+      <Icon className="h-4 w-4" />
+    </button>
   );
 }
 
@@ -77,8 +118,8 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 data-[state=closed]:animate-modal-overlay-out data-[state=open]:animate-modal-overlay-in" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl data-[state=closed]:animate-modal-content-out data-[state=open]:animate-modal-content-in">
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>

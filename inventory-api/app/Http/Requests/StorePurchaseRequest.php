@@ -24,8 +24,8 @@ class StorePurchaseRequest extends FormRequest
             'purchase_date' => ['nullable', 'date'],
             'supplier_id' => ['required', 'integer', Rule::exists('suppliers', 'id')->where('is_active', true)],
             'warehouse_id' => ['nullable', 'integer', Rule::exists('warehouses', 'id')->where('is_active', true)],
-            'status' => ['required_without:purchase_status_id', 'integer', 'exists:purchase_statuses,id'],
-            'purchase_status_id' => ['required_without:status', 'integer', 'exists:purchase_statuses,id'],
+            'status' => ['required_without:purchase_status_id', 'integer', 'exists:purchase_statuses,id', Rule::notIn([4])],
+            'purchase_status_id' => ['required_without:status', 'integer', 'exists:purchase_statuses,id', Rule::notIn([4])],
             'payment_status' => ['required', 'integer'],
 
             'product_id' => ['required', 'array', 'min:1'],
@@ -131,6 +131,12 @@ class StorePurchaseRequest extends FormRequest
             foreach ($productIds as $index => $productId) {
                 $requiresBatch = in_array((int) $productId, $batchProductIds, true);
                 $requiresVariant = in_array((int) $productId, $variantProductIds, true);
+                $qty = (float) $this->input("qty.{$index}", 0);
+                $received = (float) $this->input("received.{$index}", 0);
+
+                if ((int) $this->input('status') === 2 && $received >= $qty) {
+                    $validator->errors()->add("received.{$index}", 'For partial purchases, received quantity must be less than ordered quantity.');
+                }
 
                 if ($requiresVariant) {
                     $variantId = $this->input("variant_id.{$index}");

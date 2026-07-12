@@ -12,6 +12,7 @@ class PurchaseStatusController extends Controller
     {
         return response()->json([
             'data' => PurchaseStatus::query()
+                ->where('value', '!=', '4')
                 ->orderBy('id')
                 ->get(['id', 'value', 'label']),
         ]);

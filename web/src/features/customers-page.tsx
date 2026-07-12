@@ -1,17 +1,17 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { FileText, Pencil, Trash2 } from 'lucide-react';
 import { api, type CustomerPayload } from '@/lib/api';
 import type { Customer, CustomerGroup, PaginationMeta } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Checkbox, Field, Input, Modal, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
+import { ActionButton, Button, Checkbox, Field, Input, Modal, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 
-const perPage = 15;
+const defaultPerPage = 15;
 
 type FormState = {
   customerGroupId: string;
@@ -56,6 +56,7 @@ export function CustomersPage() {
   const [groups, setGroups] = useState<CustomerGroup[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -85,7 +86,7 @@ export function CustomersPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page]);
+  }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
     if (!hasPermission('customers-index')) router.replace('/dashboard');
@@ -179,7 +180,7 @@ export function CustomersPage() {
       <PageHeader title="Customers" subtitle={`${customers.length} shown from ${pagination?.total ?? customers.length}`} canAdd={canAdd} onAdd={openCreate} />
       <SearchBox value={search} onChange={setSearch} placeholder="Search customers, contact, location, group" />
       {customers.length ? (
-        <TableWrap>
+        <TableWrap loading={loading}>
           <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
               <tr>
@@ -196,14 +197,37 @@ export function CustomersPage() {
                   <td className="px-4 py-3">{customer.city}</td>
                   <td className="px-4 py-3">{customer.user ? customer.user.name : '-'}</td>
                   <td className="px-4 py-3"><StatusBadge active={customer.is_active} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {canView ? (
-                      <Link className="inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium text-black transition hover:bg-neutral-100" href={`/customers/${customer.id}/statement`}>
-                        Statement
-                      </Link>
-                    ) : null}
-                    {canEdit ? <Button variant="ghost" onClick={() => openEdit(customer)}>Edit</Button> : null}
-                    {canDelete ? <Button variant="danger" disabled={saving} onClick={() => void remove(customer)}>Delete</Button> : null}
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {canView ? (
+                        <ActionButton
+                          icon={FileText}
+                          text="View statement"
+                          color="text-blue-600 hover:text-blue-700"
+                          bgColor="bg-blue-50 hover:border-blue-100 hover:bg-blue-100"
+                          href={`/customers/${customer.id}/statement`}
+                        />
+                      ) : null}
+                      {canEdit ? (
+                        <ActionButton
+                          icon={Pencil}
+                          text="Edit customer"
+                          color="text-amber-600 hover:text-amber-700"
+                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                          onClick={() => openEdit(customer)}
+                        />
+                      ) : null}
+                      {canDelete ? (
+                        <ActionButton
+                          icon={Trash2}
+                          text="Delete customer"
+                          color="text-red-500 hover:text-red-600"
+                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                          disabled={saving}
+                          onClick={() => void remove(customer)}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -213,7 +237,7 @@ export function CustomersPage() {
       ) : (
         <EmptyState label={loading ? 'Loading...' : 'No customers found.'} />
       )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} />
+      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
 
       <Modal title={`${editing ? 'Edit' : 'Add'} Customer`} open={open} onOpenChange={setOpen}>
         <form onSubmit={save} className="grid gap-4">

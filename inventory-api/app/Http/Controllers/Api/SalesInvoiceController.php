@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSaleRequest;
 use App\Http\Resources\SaleResource;
 use App\Models\Account;
+use App\Models\GeneralSetting;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductSale;
@@ -16,6 +17,7 @@ use App\Models\Unit;
 use App\Services\ApprovalService;
 use App\Services\PaymentService;
 use App\Services\RecordNotificationService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,14 +25,15 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 class SalesInvoiceController extends Controller
 {
     private const RELATIONS = [
-        'customer:id,name,email,phone_number',
+        'customer:id,name,email,phone_number,address,city,state,postal_code,country',
         'warehouse:id,name',
-        'biller:id,name,company_name',
+        'biller:id,name,company_name,email,phone_number,address,city,state,postal_code,country,image',
         'user:id,name,email',
         'approver:id,name,email',
         'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
@@ -43,8 +46,9 @@ class SalesInvoiceController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $perPage = min((int) $request->query('per_page', 15), 100);
+        $perPage = $request->query('per_page', 15);
         $search = trim((string) $request->query('search', ''));
+        $approvalStatus = $request->query('approval_status');
         $billerId = $request->user()?->requireCurrentBillerId();
         $canFilterApproval = Schema::hasColumn('sales', 'approval_status');
 
@@ -52,6 +56,7 @@ class SalesInvoiceController extends Controller
             ->with(['customer:id,name', 'warehouse:id,name', 'biller:id,name'])
             ->when($billerId, fn ($query) => $query->where('biller_id', $billerId))
             ->when($canFilterApproval && ($request->boolean('approved_only') || $request->boolean('outstanding_only')), fn ($query) => $query->where('approval_status', ApprovalService::APPROVED))
+            ->when($canFilterApproval && in_array($approvalStatus, [ApprovalService::PENDING, ApprovalService::APPROVED], true), fn ($query) => $query->where('approval_status', $approvalStatus))
             ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
             ->when($request->boolean('outstanding_only'), fn ($query) => $query->whereRaw('grand_total > COALESCE(paid_amount, 0)'))
             ->when($search !== '', function ($query) use ($search) {
@@ -218,6 +223,60 @@ class SalesInvoiceController extends Controller
             'message' => 'Sales invoice approved successfully.',
             'data' => new SaleResource($sale),
         ]);
+    }
+
+    public function updateLineCost(Sale $sale, ProductSale $productSale, Request $request): JsonResponse
+    {
+        $this->authorizeBranch($sale, $request);
+        abort_unless((int) $productSale->sale_id === (int) $sale->id, 404);
+
+        $data = $request->validate([
+            'unit_cost' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $unitCost = round((float) $data['unit_cost'], 2);
+        $previousUnitCost = round((float) $productSale->unit_cost, 2);
+        $productSale->update([
+            'unit_cost' => $unitCost,
+            'total_cost' => round($unitCost * (float) $productSale->qty, 2),
+        ]);
+
+        if ($previousUnitCost !== $unitCost) {
+            activity('sales_invoice')
+                ->performedOn($sale)
+                ->causedBy($request->user())
+                ->event('updated')
+                ->withProperties([
+                    'old' => ['cost_price' => $previousUnitCost],
+                    'attributes' => ['cost_price' => $unitCost],
+                ])
+                ->log('Sales invoice cost price updated');
+        }
+
+        return response()->json([
+            'message' => 'Sale line cost updated successfully.',
+            'data' => new SaleResource($sale->fresh()->load([
+                ...self::RELATIONS,
+                'activities' => fn ($query) => $query->with('causer')->latest()->limit(25),
+            ])),
+        ]);
+    }
+
+    public function pdf(Sale $sale, Request $request): Response
+    {
+        $this->authorizeBranch($sale, $request);
+
+        $sale->load(self::RELATIONS);
+        $settings = GeneralSetting::query()->latest('id')->first();
+        $filename = sprintf('sales-invoice-%s.pdf', $sale->reference_no ?: $sale->id);
+
+        return Pdf::loadView('invoices.sales', [
+            'sale' => $sale,
+            'settings' => $settings,
+            'printedAt' => now(),
+        ])
+            ->setPaper('a4')
+            ->download($filename);
     }
 
     private function calculateTotals(array $data): array

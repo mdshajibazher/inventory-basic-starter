@@ -66,7 +66,7 @@ export function CustomerStatementPage({ customerId }: { customerId: number }) {
   );
 }
 
-function StatementDocument({ report }: { report: CustomerLedgerReport }) {
+export function StatementDocument({ report }: { report: CustomerLedgerReport }) {
   return (
     <article className="statement-page bg-white text-black">
       <header className="text-center">
