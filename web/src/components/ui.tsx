@@ -68,13 +68,29 @@ export function ActionButton({
   );
 }
 
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, min, onWheel, step, type, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  const numberMin = typeof min === 'number' ? min : typeof min === 'string' && min !== '' ? Number(min) : null;
+  const normalizedMin = type === 'number' && numberMin !== null && numberMin > 0 && numberMin < 1 ? 0 : min;
+
+  function handleWheel(event: React.WheelEvent<HTMLInputElement>) {
+    onWheel?.(event);
+
+    if (type === 'number' && !event.defaultPrevented) {
+      event.currentTarget.blur();
+      event.preventDefault();
+    }
+  }
+
   return (
     <input
       {...props}
+      type={type}
+      min={normalizedMin}
+      step={type === 'number' ? 1 : step}
+      onWheel={handleWheel}
       className={clsx(
         'h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm outline-none transition placeholder:text-neutral-400 focus:border-black',
-        props.className
+        className
       )}
     />
   );
@@ -108,18 +124,20 @@ export function Modal({
   open,
   onOpenChange,
   children,
+  contentClassName,
 }: {
   title: string;
   description?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
+  contentClassName?: string;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 data-[state=closed]:animate-modal-overlay-out data-[state=open]:animate-modal-overlay-in" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl data-[state=closed]:animate-modal-content-out data-[state=open]:animate-modal-content-in">
+        <Dialog.Content className={clsx('fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl data-[state=closed]:animate-modal-content-out data-[state=open]:animate-modal-content-in', contentClassName)}>
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>

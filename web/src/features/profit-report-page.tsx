@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownToLine,
@@ -40,16 +41,26 @@ function monthRange() {
 
 const initialRange = monthRange();
 
-export function ProfitReportPage() {
+export function ProfitReportPage({
+  initialStartDate = initialRange.start,
+  initialEndDate = initialRange.end,
+  initialWarehouseId = 'all',
+  initialSearch = '',
+}: {
+  initialStartDate?: string;
+  initialEndDate?: string;
+  initialWarehouseId?: string;
+  initialSearch?: string;
+} = {}) {
   const router = useRouter();
   const { hasPermission } = useAuth();
   const [report, setReport] = useState<ProfitReport | null>(null);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [startDate, setStartDate] = useState(initialRange.start);
-  const [endDate, setEndDate] = useState(initialRange.end);
-  const [warehouseId, setWarehouseId] = useState('all');
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [startDate, setStartDate] = useState(initialStartDate);
+  const [endDate, setEndDate] = useState(initialEndDate);
+  const [warehouseId, setWarehouseId] = useState(initialWarehouseId);
+  const [search, setSearch] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch.trim());
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +126,15 @@ export function ProfitReportPage() {
   const totalItemsSold = products.reduce((total, product) => total + Number(product.qty_sold ?? 0), 0);
   const averageItemRevenue = totalItemsSold > 0 ? Number(summary?.net_revenue ?? 0) / totalItemsSold : 0;
   const profitPerProduct = products.length > 0 ? Number(summary?.net_profit ?? 0) / products.length : 0;
+  const detailHref = (metric: string) => {
+    const params = new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate,
+    });
+    if (warehouseId !== 'all') params.set('warehouse_id', warehouseId);
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    return `/reports/profit/details/${metric}?${params.toString()}`;
+  };
 
   const exportPdf = async () => {
     setExporting(true);
@@ -185,18 +205,18 @@ export function ProfitReportPage() {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard icon={Banknote} tone="emerald" label="Net revenue" value={money(summary?.net_revenue)} />
-        <SummaryCard icon={BarChart3} tone="blue" label="Gross profit" value={money(summary?.gross_profit)} subValue={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
-        <SummaryCard icon={ReceiptText} tone="violet" label="Expenses" value={money(summary?.expenses)} />
-        <SummaryCard icon={Wallet} tone="green" label="Net profit" value={money(summary?.net_profit)} />
-        <SummaryCard icon={BadgePercent} tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
-        <SummaryCard icon={ArrowDownToLine} tone="green" label="Cash in" value={money(summary?.cash_in)} />
-        <SummaryCard icon={ArrowUpFromLine} tone="rose" label="Cash out" value={money(summary?.cash_out)} />
-        <SummaryCard icon={Repeat2} tone="indigo" label="Cash movement" value={money(summary?.net_cash_movement)} />
-        <SummaryCard icon={ReceiptText} tone="rose" label="Tax" value={money(summary?.tax_collected)} subValue={`Returned ${money(summary?.tax_returned)}`} />
-        <SummaryCard icon={Repeat2} tone="orange" label="Returns" value={money(summary?.returns)} subValue={`Sales cost ${money(summary?.return_cost)}`} />
-        <SummaryCard icon={ShoppingCart} tone="blue" label="Purchase returns" value={money(summary?.purchase_return_cost)} subValue="COGS reduction" />
-        <SummaryCard icon={BadgePercent} tone="amber" label="Discounts" value={money(totalDiscounts)} subValue={`Shipping ${money(summary?.shipping)}`} />
+        <SummaryCard href={detailHref('net_revenue')} icon={Banknote} tone="emerald" label="Net revenue" value={money(summary?.net_revenue)} />
+        <SummaryCard href={detailHref('gross_profit')} icon={BarChart3} tone="blue" label="Gross profit" value={money(summary?.gross_profit)} subValue={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
+        <SummaryCard href={detailHref('expenses')} icon={ReceiptText} tone="violet" label="Expenses" value={money(summary?.expenses)} />
+        <SummaryCard href={detailHref('net_profit')} icon={Wallet} tone="green" label="Net profit" value={money(summary?.net_profit)} />
+        <SummaryCard href={detailHref('margin')} icon={BadgePercent} tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
+        <SummaryCard href={detailHref('cash_in')} icon={ArrowDownToLine} tone="green" label="Cash in" value={money(summary?.cash_in)} />
+        <SummaryCard href={detailHref('cash_out')} icon={ArrowUpFromLine} tone="rose" label="Cash out" value={money(summary?.cash_out)} />
+        <SummaryCard href={detailHref('net_cash_movement')} icon={Repeat2} tone="indigo" label="Cash movement" value={money(summary?.net_cash_movement)} />
+        <SummaryCard href={detailHref('tax')} icon={ReceiptText} tone="rose" label="Tax" value={money(summary?.tax_collected)} subValue={`Returned ${money(summary?.tax_returned)}`} />
+        <SummaryCard href={detailHref('returns')} icon={Repeat2} tone="orange" label="Returns" value={money(summary?.returns)} subValue={`Sales cost ${money(summary?.return_cost)}`} />
+        <SummaryCard href={detailHref('purchase_returns')} icon={ShoppingCart} tone="blue" label="Purchase returns" value={money(summary?.purchase_return_cost)} subValue="COGS reduction" />
+        <SummaryCard href={detailHref('discounts')} icon={BadgePercent} tone="amber" label="Discounts" value={money(totalDiscounts)} subValue={`Shipping ${money(summary?.shipping)}`} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.8fr_0.6fr]">
@@ -336,15 +356,17 @@ function SummaryCard({
   label,
   value,
   subValue,
+  href,
 }: {
   icon: LucideIcon;
   tone: Tone;
   label: string;
   value: string;
   subValue?: string;
+  href: string;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+    <Link href={href} className="flex items-center gap-4 rounded-lg border border-neutral-200 bg-white p-4 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">
       <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${toneClass(tone, 'soft')} ${toneClass(tone, 'text')}`}>
         <Icon className="h-6 w-6" />
       </div>
@@ -356,7 +378,7 @@ function SummaryCard({
           <span>{subValue ?? '100% vs previous range'}</span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -496,7 +518,7 @@ function linePath(values: number[], width: number, height: number) {
 }
 
 function money(value?: number) {
-  return `$${number(value ?? 0)}`;
+  return `৳${number(value ?? 0)}`;
 }
 
 function percent(value?: number) {

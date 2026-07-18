@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Warehouse;
+use App\Services\ApprovalService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -14,9 +15,77 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ProfitReportController extends Controller
 {
+    private const DETAIL_METRICS = [
+        'net_revenue' => 'Net Revenue',
+        'gross_profit' => 'Gross Profit',
+        'expenses' => 'Expenses',
+        'net_profit' => 'Net Profit',
+        'margin' => 'Margin',
+        'cash_in' => 'Cash In',
+        'cash_out' => 'Cash Out',
+        'net_cash_movement' => 'Cash Movement',
+        'tax' => 'Tax',
+        'returns' => 'Returns',
+        'purchase_returns' => 'Purchase Returns',
+        'discounts' => 'Discounts',
+    ];
+
     public function __invoke(Request $request): JsonResponse
     {
         return response()->json($this->reportData($request));
+    }
+
+    public function details(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'metric' => ['required', 'string', 'in:'.implode(',', array_keys(self::DETAIL_METRICS))],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
+            'search' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $start = isset($data['start_date'])
+            ? Carbon::parse($data['start_date'])->startOfDay()
+            : now()->startOfMonth()->startOfDay();
+        $end = isset($data['end_date'])
+            ? Carbon::parse($data['end_date'])->endOfDay()
+            : now()->endOfMonth()->endOfDay();
+        $warehouseId = $data['warehouse_id'] ?? null;
+        $search = trim((string) ($data['search'] ?? ''));
+        $billerId = $request->user()->requireCurrentBillerId();
+        $report = $this->reportData($request);
+        $metric = $data['metric'];
+        $summary = $report['summary'];
+        $products = collect($report['products']);
+        $rows = $this->detailRows($metric, $start, $end, $warehouseId, $billerId, $search, $report);
+        $total = $metric === 'margin'
+            ? (float) $summary['margin_percent']
+            : (float) match ($metric) {
+                'discounts' => $summary['sales_discounts'] + $summary['order_discounts'] + $summary['coupon_discounts'],
+                'purchase_returns' => $summary['purchase_return_cost'],
+                default => $summary[$metric] ?? 0,
+            };
+
+        return response()->json([
+            'metric' => [
+                'key' => $metric,
+                'label' => self::DETAIL_METRICS[$metric],
+                'value' => $this->round($total),
+                'value_type' => $metric === 'margin' ? 'percent' : 'money',
+            ],
+            'columns' => $metric === 'margin'
+                ? ['Product', 'Revenue', 'Profit', 'Margin']
+                : ['Date', 'Reference', 'Type', 'Description', 'Amount'],
+            'rows' => $rows->values(),
+            'summary' => [
+                'total' => $this->round($total),
+                'total_type' => $metric === 'margin' ? 'percent' : 'money',
+                'row_count' => $rows->count(),
+                'components' => $this->detailComponents($metric, $summary, $products),
+            ],
+            'filters' => $report['filters'],
+        ]);
     }
 
     public function pdf(Request $request): Response
@@ -55,6 +124,7 @@ class ProfitReportController extends Controller
         $salesInvoices = DB::table('sales')
             ->whereBetween('sale_date', [$start->toDateString(), $end->toDateString()])
             ->where('biller_id', $billerId)
+            ->where('approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->selectRaw('
                 COALESCE(SUM(order_discount), 0) as order_discount,
@@ -68,6 +138,7 @@ class ProfitReportController extends Controller
         $returnInvoices = DB::table('returns')
             ->whereBetween('return_date', [$start->toDateString(), $end->toDateString()])
             ->where('biller_id', $billerId)
+            ->where('approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('warehouse_id', $warehouseId))
             ->selectRaw('
                 COALESCE(SUM(total_tax), 0) as total_tax,
@@ -191,6 +262,7 @@ class ProfitReportController extends Controller
             ->join('products', 'products.id', '=', 'product_sales.product_id')
             ->whereBetween('sales.sale_date', [$start->toDateString(), $end->toDateString()])
             ->where('sales.biller_id', $billerId)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($inner) use ($search) {
@@ -217,6 +289,7 @@ class ProfitReportController extends Controller
             ->join('products', 'products.id', '=', 'product_returns.product_id')
             ->whereBetween('returns.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('returns.biller_id', $billerId)
+            ->where('returns.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('returns.warehouse_id', $warehouseId))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($inner) use ($search) {
@@ -242,6 +315,7 @@ class ProfitReportController extends Controller
             ->join('products', 'products.id', '=', 'purchase_product_return.product_id')
             ->whereBetween('return_purchases.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('return_purchases.biller_id', $billerId)
+            ->where('return_purchases.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('return_purchases.warehouse_id', $warehouseId))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($inner) use ($search) {
@@ -308,6 +382,23 @@ class ProfitReportController extends Controller
             ->leftJoin('return_purchases as payment_return_purchases', 'payment_return_purchases.id', '=', 'payments.purchase_return_id')
             ->whereBetween('payments.created_at', [$start, $end])
             ->where('payments.biller_id', $billerId)
+            ->where('payments.approval_status', ApprovalService::APPROVED)
+            ->where(function ($query) {
+                $query->whereNull('payments.sale_id')
+                    ->orWhere('payment_sales.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.purchase_id')
+                    ->orWhere('payment_purchases.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.sale_return_id')
+                    ->orWhere('payment_returns.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.purchase_return_id')
+                    ->orWhere('payment_return_purchases.approval_status', ApprovalService::APPROVED);
+            })
             ->when($warehouseId, function ($query) use ($warehouseId) {
                 $query->where(function ($inner) use ($warehouseId) {
                     $inner->where('payment_sales.warehouse_id', $warehouseId)
@@ -405,6 +496,7 @@ class ProfitReportController extends Controller
             ->join('warehouses', 'warehouses.id', '=', 'sales.warehouse_id')
             ->whereBetween('sales.sale_date', [$start->toDateString(), $end->toDateString()])
             ->where('sales.biller_id', $billerId)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
             ->groupBy('sales.warehouse_id', 'warehouses.name')
             ->selectRaw('
@@ -423,6 +515,7 @@ class ProfitReportController extends Controller
             ->join('warehouses', 'warehouses.id', '=', 'returns.warehouse_id')
             ->whereBetween('returns.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('returns.biller_id', $billerId)
+            ->where('returns.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('returns.warehouse_id', $warehouseId))
             ->groupBy('returns.warehouse_id', 'warehouses.name')
             ->selectRaw('
@@ -441,6 +534,7 @@ class ProfitReportController extends Controller
             ->join('warehouses', 'warehouses.id', '=', 'return_purchases.warehouse_id')
             ->whereBetween('return_purchases.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('return_purchases.biller_id', $billerId)
+            ->where('return_purchases.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('return_purchases.warehouse_id', $warehouseId))
             ->groupBy('return_purchases.warehouse_id', 'warehouses.name')
             ->selectRaw('
@@ -475,6 +569,7 @@ class ProfitReportController extends Controller
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->whereBetween('sales.sale_date', [$start->toDateString(), $end->toDateString()])
             ->where('sales.biller_id', $billerId)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
             ->groupBy('products.category_id', 'categories.name')
             ->selectRaw('
@@ -494,6 +589,7 @@ class ProfitReportController extends Controller
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->whereBetween('returns.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('returns.biller_id', $billerId)
+            ->where('returns.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('returns.warehouse_id', $warehouseId))
             ->groupBy('products.category_id', 'categories.name')
             ->selectRaw('
@@ -513,6 +609,7 @@ class ProfitReportController extends Controller
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->whereBetween('return_purchases.return_date', [$start->toDateString(), $end->toDateString()])
             ->where('return_purchases.biller_id', $billerId)
+            ->where('return_purchases.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('return_purchases.warehouse_id', $warehouseId))
             ->groupBy('products.category_id', 'categories.name')
             ->selectRaw('
@@ -529,8 +626,224 @@ class ProfitReportController extends Controller
             ->join('sales', 'sales.id', '=', 'product_sales.sale_id')
             ->whereBetween('sales.sale_date', [$start->toDateString(), $end->toDateString()])
             ->where('sales.biller_id', $billerId)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
             ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
             ->sum('product_sales.discount');
+    }
+
+    private function detailRows(string $metric, Carbon $start, Carbon $end, ?int $warehouseId, int $billerId, string $search, array $report): Collection
+    {
+        $summary = $report['summary'];
+
+        return match ($metric) {
+            'net_revenue' => collect([
+                ...$this->productDetailRows($report['products'], 'Net sales', 'net_sales'),
+                ...$this->componentRows([
+                    ['Sales returns', -1 * (float) $summary['returns']],
+                    ['Order discounts', -1 * (float) $summary['order_discounts']],
+                    ['Coupon discounts', -1 * (float) $summary['coupon_discounts']],
+                    ['Shipping', (float) $summary['shipping']],
+                ]),
+            ]),
+            'gross_profit' => collect($this->componentRows([
+                ['Net revenue', (float) $summary['net_revenue']],
+                ['Cost of goods sold', -1 * (float) $summary['cost_of_goods_sold']],
+                ['Return cost reversal', (float) $summary['return_cost']],
+                ['Purchase return COGS reduction', (float) $summary['purchase_return_cost']],
+            ])),
+            'expenses' => $this->expenseEntryRows($start, $end, $warehouseId, $billerId),
+            'net_profit' => collect([
+                ...$this->componentRows([['Gross profit', (float) $summary['gross_profit']]]),
+                ...$this->expenseEntryRows($start, $end, $warehouseId, $billerId)->map(fn ($row) => [...$row, 'amount' => -1 * (float) $row['amount']])->all(),
+            ]),
+            'margin' => collect($report['products'])->map(fn ($product) => [
+                'label' => $product['name'],
+                'reference' => $product['code'],
+                'type' => 'Product margin',
+                'description' => $product['name'],
+                'amount' => (float) $product['margin_percent'],
+                'amount_type' => 'percent',
+                'revenue' => (float) $product['net_sales'] - (float) $product['net_returns'],
+                'profit' => (float) $product['profit'],
+            ]),
+            'cash_in' => $this->paymentEntryRows($start, $end, $warehouseId, $billerId, 'in'),
+            'cash_out' => $this->paymentEntryRows($start, $end, $warehouseId, $billerId, 'out'),
+            'net_cash_movement' => $this->paymentEntryRows($start, $end, $warehouseId, $billerId, null),
+            'tax' => collect($this->componentRows([
+                ['Tax collected', (float) $summary['tax_collected']],
+                ['Tax returned', -1 * (float) $summary['tax_returned']],
+            ])),
+            'returns' => collect($this->productDetailRows($report['products'], 'Sales return', 'net_returns')),
+            'purchase_returns' => collect($this->productDetailRows($report['products'], 'Purchase return', 'purchase_return_cost')),
+            'discounts' => collect($this->componentRows([
+                ['Line discounts', (float) $summary['sales_discounts']],
+                ['Order discounts', (float) $summary['order_discounts']],
+                ['Coupon discounts', (float) $summary['coupon_discounts']],
+            ])),
+        };
+    }
+
+    private function detailComponents(string $metric, array $summary, Collection $products): array
+    {
+        return match ($metric) {
+            'net_revenue' => [
+                ['label' => 'Product net sales', 'amount' => $this->round((float) $products->sum('net_sales'))],
+                ['label' => 'Sales returns', 'amount' => -1 * (float) $summary['returns']],
+                ['label' => 'Order discounts', 'amount' => -1 * (float) $summary['order_discounts']],
+                ['label' => 'Coupon discounts', 'amount' => -1 * (float) $summary['coupon_discounts']],
+                ['label' => 'Shipping', 'amount' => (float) $summary['shipping']],
+            ],
+            'gross_profit' => [
+                ['label' => 'Net revenue', 'amount' => (float) $summary['net_revenue']],
+                ['label' => 'Net COGS', 'amount' => -1 * (float) $summary['net_cost_of_goods_sold']],
+            ],
+            'net_profit' => [
+                ['label' => 'Gross profit', 'amount' => (float) $summary['gross_profit']],
+                ['label' => 'Expenses', 'amount' => -1 * (float) $summary['expenses']],
+            ],
+            'cash_in' => [['label' => 'Cash in', 'amount' => (float) $summary['cash_in']]],
+            'cash_out' => [['label' => 'Cash out', 'amount' => (float) $summary['cash_out']]],
+            'net_cash_movement' => [
+                ['label' => 'Cash in', 'amount' => (float) $summary['cash_in']],
+                ['label' => 'Cash out', 'amount' => -1 * (float) $summary['cash_out']],
+            ],
+            'tax' => [
+                ['label' => 'Tax collected', 'amount' => (float) $summary['tax_collected']],
+                ['label' => 'Tax returned', 'amount' => -1 * (float) $summary['tax_returned']],
+            ],
+            'discounts' => [
+                ['label' => 'Line discounts', 'amount' => (float) $summary['sales_discounts']],
+                ['label' => 'Order discounts', 'amount' => (float) $summary['order_discounts']],
+                ['label' => 'Coupon discounts', 'amount' => (float) $summary['coupon_discounts']],
+            ],
+            default => [],
+        };
+    }
+
+    private function productDetailRows(iterable $products, string $type, string $amountKey): array
+    {
+        return collect($products)
+            ->filter(fn ($product) => (float) ($product[$amountKey] ?? 0) !== 0.0)
+            ->map(fn ($product) => [
+                'label' => $product['name'],
+                'reference' => $product['code'],
+                'type' => $type,
+                'description' => $product['name'],
+                'amount' => $this->round((float) ($product[$amountKey] ?? 0)),
+                'amount_type' => 'money',
+                'quantity' => $product['qty_sold'] ?? $product['qty_returned'] ?? $product['purchase_return_qty'] ?? null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function componentRows(array $components): array
+    {
+        return collect($components)
+            ->filter(fn ($component) => (float) $component[1] !== 0.0)
+            ->map(fn ($component) => [
+                'label' => $component[0],
+                'reference' => null,
+                'type' => 'Formula component',
+                'description' => $component[0],
+                'amount' => $this->round((float) $component[1]),
+                'amount_type' => 'money',
+            ])
+            ->values()
+            ->all();
+    }
+
+    private function expenseEntryRows(Carbon $start, Carbon $end, ?int $warehouseId, int $billerId): Collection
+    {
+        return DB::table('expenses')
+            ->leftJoin('expense_categories', 'expense_categories.id', '=', 'expenses.expense_category_id')
+            ->leftJoin('warehouses', 'warehouses.id', '=', 'expenses.warehouse_id')
+            ->whereBetween('expenses.created_at', [$start, $end])
+            ->where('expenses.biller_id', $billerId)
+            ->when($warehouseId, fn ($query) => $query->where('expenses.warehouse_id', $warehouseId))
+            ->latest('expenses.id')
+            ->get([
+                'expenses.reference_no',
+                'expenses.created_at',
+                'expenses.amount',
+                'expenses.note',
+                'expense_categories.name as category_name',
+                'warehouses.name as warehouse_name',
+            ])
+            ->map(fn ($row) => [
+                'date' => Carbon::parse($row->created_at)->toDateString(),
+                'label' => $row->category_name ?? 'Uncategorized',
+                'reference' => $row->reference_no,
+                'type' => 'Expense',
+                'description' => trim(($row->warehouse_name ? "{$row->warehouse_name} · " : '').($row->note ?? '')),
+                'amount' => $this->round((float) $row->amount),
+                'amount_type' => 'money',
+            ]);
+    }
+
+    private function paymentEntryRows(Carbon $start, Carbon $end, ?int $warehouseId, int $billerId, ?string $direction): Collection
+    {
+        $directionExpression = "
+            CASE
+                WHEN payments.direction IN ('in', 'out') THEN payments.direction
+                WHEN payments.purchase_id IS NOT NULL OR payments.sale_return_id IS NOT NULL THEN 'out'
+                ELSE 'in'
+            END
+        ";
+        $typeExpression = "
+            COALESCE(
+                payments.payment_type,
+                CASE
+                    WHEN payments.purchase_id IS NOT NULL THEN 'purchase_payment'
+                    WHEN payments.sale_return_id IS NOT NULL THEN 'sale_return_refund'
+                    WHEN payments.purchase_return_id IS NOT NULL THEN 'purchase_return_refund'
+                    ELSE 'sale_payment'
+                END
+            )
+        ";
+
+        return DB::table('payments')
+            ->leftJoin('sales as payment_sales', 'payment_sales.id', '=', 'payments.sale_id')
+            ->leftJoin('purchases as payment_purchases', 'payment_purchases.id', '=', 'payments.purchase_id')
+            ->leftJoin('returns as payment_returns', 'payment_returns.id', '=', 'payments.sale_return_id')
+            ->leftJoin('return_purchases as payment_return_purchases', 'payment_return_purchases.id', '=', 'payments.purchase_return_id')
+            ->whereBetween('payments.created_at', [$start, $end])
+            ->where('payments.biller_id', $billerId)
+            ->where('payments.approval_status', ApprovalService::APPROVED)
+            ->where(function ($query) {
+                $query->whereNull('payments.sale_id')->orWhere('payment_sales.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.purchase_id')->orWhere('payment_purchases.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.sale_return_id')->orWhere('payment_returns.approval_status', ApprovalService::APPROVED);
+            })
+            ->where(function ($query) {
+                $query->whereNull('payments.purchase_return_id')->orWhere('payment_return_purchases.approval_status', ApprovalService::APPROVED);
+            })
+            ->when($warehouseId, function ($query) use ($warehouseId) {
+                $query->where(function ($inner) use ($warehouseId) {
+                    $inner->where('payment_sales.warehouse_id', $warehouseId)
+                        ->orWhere('payment_purchases.warehouse_id', $warehouseId)
+                        ->orWhere('payment_returns.warehouse_id', $warehouseId)
+                        ->orWhere('payment_return_purchases.warehouse_id', $warehouseId);
+                });
+            })
+            ->selectRaw("payments.payment_reference, payments.created_at, payments.amount, payments.payment_note, {$typeExpression} as payment_type, {$directionExpression} as computed_direction")
+            ->latest('payments.id')
+            ->get()
+            ->filter(fn ($row) => $direction === null || $row->computed_direction === $direction)
+            ->map(fn ($row) => [
+                'date' => Carbon::parse($row->created_at)->toDateString(),
+                'label' => $this->paymentTypeLabel((string) $row->payment_type),
+                'reference' => $row->payment_reference,
+                'type' => $row->computed_direction === 'in' ? 'Cash in' : 'Cash out',
+                'description' => $row->payment_note,
+                'amount' => $this->round(($row->computed_direction === 'out' && $direction === null ? -1 : 1) * (float) $row->amount),
+                'amount_type' => 'money',
+            ])
+            ->values();
     }
 
     private function productRow(array $products, object $line): array

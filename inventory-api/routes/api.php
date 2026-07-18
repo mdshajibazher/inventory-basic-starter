@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\SmsLogController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TaxController;
+use App\Http\Controllers\Api\TransferController;
 use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\UnitGroupController;
 use App\Http\Controllers\Api\UserController;
@@ -38,6 +39,7 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/branding', [GeneralSettingController::class, 'branding']);
 
     Route::get('/users/options', [UserController::class, 'options'])->middleware('permission:users-index|general-settings-index|general-settings-edit');
     Route::put('/users/{user}/roles', [UserController::class, 'updateRoles'])->middleware('permission:users-index');
@@ -148,6 +150,12 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::match(['put', 'patch'], '/stock-adjustments/{movement}', [StockController::class, 'updateAdjustment'])->middleware('permission:product-stocks-adjust');
     Route::delete('/stock-adjustments/{movement}', [StockController::class, 'destroyAdjustment'])->middleware('permission:product-stocks-adjust');
 
+    Route::get('/transfers', [TransferController::class, 'index'])->middleware('permission:transfers-index|transfers-add|transfers-edit');
+    Route::post('/transfers', [TransferController::class, 'store'])->middleware('permission:transfers-add');
+    Route::get('/transfers/{transfer}', [TransferController::class, 'show'])->middleware('permission:transfers-index|transfers-add|transfers-edit|transfers-show');
+    Route::match(['put', 'patch'], '/transfers/{transfer}', [TransferController::class, 'update'])->middleware('permission:transfers-edit');
+    Route::delete('/transfers/{transfer}', [TransferController::class, 'destroy'])->middleware('permission:transfers-delete');
+
     Route::get('/sales-invoices', [SalesInvoiceController::class, 'index'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::post('/sales-invoices', [SalesInvoiceController::class, 'store'])->middleware('permission:sales-add');
     Route::get('/sales-invoices/{sale}/pdf', [SalesInvoiceController::class, 'pdf'])->middleware('permission:sales-index|sales-add|sales-edit');
@@ -163,6 +171,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/purchase-statuses', [PurchaseStatusController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::get('/purchase-invoices', [PurchaseInvoiceController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::post('/purchase-invoices', [PurchaseInvoiceController::class, 'store'])->middleware('permission:purchases-add');
+    Route::get('/purchase-invoices/{purchase}/pdf', [PurchaseInvoiceController::class, 'pdf'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::get('/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::match(['put', 'patch'], '/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'update'])->middleware('permission:purchases-edit');
     Route::post('/purchase-invoices/{purchase}/approve', [PurchaseInvoiceController::class, 'approve'])->middleware('permission:purchases-index|purchases-edit');
@@ -178,6 +187,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::post('/payments/{payment}/approve', [PaymentController::class, 'approve'])->middleware('permission:sales-index|purchases-index|accounts-index');
 
     Route::get('/reports/profit', ProfitReportController::class)->middleware('permission:reports-profit');
+    Route::get('/reports/profit/details', [ProfitReportController::class, 'details'])->middleware('permission:reports-profit');
     Route::get('/reports/profit/pdf', [ProfitReportController::class, 'pdf'])->middleware('permission:reports-profit');
     Route::get('/reports/datewise-products', DatewiseProductReportController::class)->middleware('permission:reports-profit');
     Route::get('/reports/datewise-products/pdf', [DatewiseProductReportController::class, 'pdf'])->middleware('permission:reports-profit');

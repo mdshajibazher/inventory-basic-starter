@@ -15,6 +15,7 @@ use App\Models\ProductVariant;
 use App\Models\Sale;
 use App\Models\Unit;
 use App\Services\ApprovalService;
+use App\Services\InvoiceLineActivityService;
 use App\Services\PaymentService;
 use App\Services\RecordNotificationService;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -123,6 +124,8 @@ class SalesInvoiceController extends Controller
                 $billerId = $request->user()->requireCurrentBillerId();
                 $totals = $this->calculateTotals($data);
                 $documentPath = $sale->document;
+                $lineActivities = app(InvoiceLineActivityService::class);
+                $oldSaleLines = $lineActivities->salesInvoiceSnapshot($sale->id);
 
                 if ($request->hasFile('document')) {
                     if ($documentPath) {
@@ -188,6 +191,14 @@ class SalesInvoiceController extends Controller
                     ]);
                 }
 
+                $lineActivities->logChanges(
+                    $sale,
+                    'sales_invoice',
+                    'Sales invoice product lines updated',
+                    $oldSaleLines,
+                    $lineActivities->salesInvoiceSnapshot($sale->id),
+                    $request->user()
+                );
                 $this->createPaymentIfNeeded($sale, $data, $request->user(), $payments);
 
                 return $sale->load(self::RELATIONS);
@@ -265,6 +276,7 @@ class SalesInvoiceController extends Controller
     public function pdf(Sale $sale, Request $request): Response
     {
         $this->authorizeBranch($sale, $request);
+        abort_unless($sale->approval_status === ApprovalService::APPROVED, 403, 'Sales invoice must be approved before printing.');
 
         $sale->load(self::RELATIONS);
         $settings = GeneralSetting::query()->latest('id')->first();

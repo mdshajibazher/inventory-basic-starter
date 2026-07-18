@@ -1,5 +1,5 @@
 import { tokenStorage } from './storage';
-import type { CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, SmsLog } from './types';
+import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, ProfitReportDetail, SmsLog, StockTransfer } from './types';
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -221,6 +221,34 @@ export type StockAdjustmentPayload = {
   qty: number;
   movement_date?: string | null;
   note?: string | null;
+};
+
+export type StockTransferLinePayload = {
+  product_id: number;
+  variant_id?: number | null;
+  product_batch_id?: number | null;
+  qty: number;
+  purchase_unit: number;
+  net_unit_cost?: number;
+  tax_rate?: number;
+  tax?: number;
+  subtotal?: number;
+  line_note?: string | null;
+};
+
+export type StockTransferPayload = {
+  reference_no: string;
+  transfer_date?: string | null;
+  from_warehouse_id: number;
+  to_warehouse_id: number;
+  status: 'pending' | 'completed' | 1 | 2;
+  expected_delivery_date?: string | null;
+  requested_by?: number | null;
+  note?: string | null;
+  vehicle_courier?: string | null;
+  driver_contact?: string | null;
+  document?: UploadImage | null;
+  lines: StockTransferLinePayload[];
 };
 
 export type CustomerPayload = {
@@ -641,6 +669,32 @@ function purchaseReturnFormData(payload: PurchaseReturnPayload) {
   return formData;
 }
 
+function stockTransferFormData(payload: StockTransferPayload) {
+  const formData = new FormData();
+  formData.append('reference_no', payload.reference_no);
+  appendNullableString(formData, 'transfer_date', payload.transfer_date);
+  formData.append('from_warehouse_id', String(payload.from_warehouse_id));
+  formData.append('to_warehouse_id', String(payload.to_warehouse_id));
+  formData.append('status', String(payload.status));
+  appendNullableString(formData, 'expected_delivery_date', payload.expected_delivery_date);
+  appendNullableNumber(formData, 'requested_by', payload.requested_by);
+  appendNullableString(formData, 'note', payload.note);
+  appendNullableString(formData, 'vehicle_courier', payload.vehicle_courier);
+  appendNullableString(formData, 'driver_contact', payload.driver_contact);
+  appendImage(formData, 'document', payload.document);
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
+  appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  appendNumberArray(formData, 'purchase_unit', payload.lines.map((line) => line.purchase_unit));
+  appendNumberArray(formData, 'net_unit_cost', payload.lines.map((line) => line.net_unit_cost ?? 0));
+  appendNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate ?? 0));
+  appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax ?? 0));
+  appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal ?? 0));
+  appendNullableStringArray(formData, 'line_note', payload.lines.map((line) => line.line_note));
+  return formData;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = options.auth === false ? null : tokenStorage.get();
   const multipart = isFormData(options.body);
@@ -717,6 +771,7 @@ export const api = {
     }),
   me: () => request<{ data: unknown }>('/me'),
   logout: () => request<{ message: string }>('/logout', { method: 'POST' }),
+  branding: () => request<{ data: Branding }>('/branding'),
   dashboard: () => request<{ data: unknown }>('/dashboard'),
   users: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/users${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
@@ -853,6 +908,8 @@ export const api = {
     request<PaginatedResponse<unknown>>(`/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`),
   profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
     request<ProfitReport>(`/reports/profit${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`),
+  profitReportDetail: (params: { metric: string; startDate?: string; endDate?: string; warehouseId?: number; search?: string }) =>
+    request<ProfitReportDetail>(`/reports/profit/details${queryString({ metric: params.metric, start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`),
   exportProfitReportPdf: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
     download(
       `/reports/profit/pdf${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`,
@@ -875,6 +932,21 @@ export const api = {
     request<{ data: unknown; message: string }>(`/stock-adjustments/${movementId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteStockAdjustment: (movementId: number) =>
     request<{ message: string }>(`/stock-adjustments/${movementId}`, { method: 'DELETE' }),
+  transfers: (params: { page?: number; perPage?: number; search?: string; status?: 'all' | 'pending' | 'completed'; fromWarehouseId?: number | null; toWarehouseId?: number | null } = {}) =>
+    request<PaginatedResponse<StockTransfer>>(`/transfers${queryString({
+      page: params.page,
+      per_page: params.perPage,
+      search: params.search,
+      status: params.status === 'all' ? undefined : params.status,
+      from_warehouse_id: params.fromWarehouseId,
+      to_warehouse_id: params.toWarehouseId,
+    })}`),
+  transfer: (id: number) => request<{ data: StockTransfer }>(`/transfers/${id}`),
+  createTransfer: (payload: StockTransferPayload) =>
+    request<{ data: StockTransfer; message: string }>('/transfers', { method: 'POST', body: stockTransferFormData(payload) }),
+  updateTransfer: (id: number, payload: StockTransferPayload) =>
+    request<{ data: StockTransfer; message: string }>(`/transfers/${id}`, { method: 'POST', body: putForm(stockTransferFormData(payload)) }),
+  deleteTransfer: (id: number) => request<{ message: string }>(`/transfers/${id}`, { method: 'DELETE' }),
   clearDashboardTransactions: () =>
     request<{ message: string; output?: string }>('/dashboard/clear-transactions', { method: 'POST' }),
   checkBatchAvailability: (productId: number, batchNo: string, warehouseId: number) =>
@@ -912,6 +984,8 @@ export const api = {
   purchaseInvoiceOptions: (params: { search?: string; supplierId?: number | null; perPage?: number; outstandingOnly?: boolean; approvedOnly?: boolean } = {}) =>
     request<PaginatedResponse<InvoiceOption>>(`/purchase-invoices${queryString({ page: 1, per_page: params.perPage ?? 30, search: params.search, supplier_id: params.supplierId, outstanding_only: params.outstandingOnly, approved_only: params.approvedOnly })}`),
   purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
+  exportPurchaseInvoicePdf: (id: number, referenceNo?: string) =>
+    download(`/purchase-invoices/${id}/pdf`, `purchase-invoice-${referenceNo || id}.pdf`),
   createPurchaseInvoice: (payload: PurchaseInvoicePayload) => request<{ data: unknown; message: string }>('/purchase-invoices', { method: 'POST', body: purchaseInvoiceFormData(payload) }),
   updatePurchaseInvoice: (id: number, payload: PurchaseInvoicePayload) =>
     request<{ data: unknown; message: string }>(`/purchase-invoices/${id}`, { method: 'POST', body: putForm(purchaseInvoiceFormData(payload)) }),
@@ -925,7 +999,7 @@ export const api = {
   updatePurchaseReturnInvoice: (id: number, payload: PurchaseReturnPayload) =>
     request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}`, { method: 'POST', body: putForm(purchaseReturnFormData(payload)) }),
   approvePurchaseReturnInvoice: (id: number) => request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}/approve`, { method: 'POST' }),
-  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; direction?: PaymentDirection | 'all' } = {}) =>
+  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; paymentTypes?: PaymentType[]; direction?: PaymentDirection | 'all' } = {}) =>
     request<PaginatedResponse<Payment>>(`/payments${queryString({
       page: params.page,
       per_page: params.perPage,
@@ -933,6 +1007,7 @@ export const api = {
       supplier_id: params.supplierId,
       account_id: params.accountId,
       payment_type: params.paymentType === 'all' ? undefined : params.paymentType,
+      payment_types: params.paymentTypes?.join(','),
       direction: params.direction === 'all' ? undefined : params.direction,
     })}`),
   createPayment: (payload: PaymentPayload) =>

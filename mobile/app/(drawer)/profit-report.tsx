@@ -134,6 +134,19 @@ export default function ProfitReportScreen() {
   const averageOrderValue = totalSold > 0 ? Number(summary?.net_revenue ?? 0) / totalSold : 0;
   const profitPerProduct = products.length ? Number(summary?.net_profit ?? 0) / products.length : 0;
 
+  function openDetail(metric: string) {
+    router.push({
+      pathname: '/(drawer)/profit-report-detail',
+      params: {
+        metric,
+        startDate,
+        endDate,
+        warehouseId,
+        search: debouncedSearch,
+      },
+    });
+  }
+
   return (
     <Screen edges={['right', 'bottom', 'left']} safeStyle={styles.safe} contentStyle={styles.screen}>
       <View style={styles.header}>
@@ -174,18 +187,18 @@ export default function ProfitReportScreen() {
       </View>
 
       <View style={styles.kpiGrid}>
-        <SummaryCard icon="sack-percent" tone="green" label="Net Revenue" value={money(summary?.net_revenue)} />
-        <SummaryCard icon="chart-bar" tone="blue" label="Gross Profit" value={money(summary?.gross_profit)} detail={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
-        <SummaryCard icon="receipt-text-outline" tone="purple" label="Expenses" value={money(summary?.expenses)} />
-        <SummaryCard icon="wallet-outline" tone="green" label="Net Profit" value={money(summary?.net_profit)} />
-        <SummaryCard icon="chart-pie" tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
-        <SummaryCard icon="arrow-down-bold" tone="green" label="Cash In" value={money(summary?.cash_in)} />
-        <SummaryCard icon="arrow-up-bold" tone="red" label="Cash Out" value={money(summary?.cash_out)} />
-        <SummaryCard icon="swap-horizontal" tone="blue" label="Cash Movement" value={money(summary?.net_cash_movement)} />
-        <SummaryCard icon="file-document-outline" tone="red" label="Tax" value={money(summary?.tax_collected)} detail={`Returned ${money(summary?.tax_returned)}`} />
-        <SummaryCard icon="undo-variant" tone="orange" label="Returns" value={money(summary?.returns)} detail={`Sales cost ${money(summary?.return_cost)}`} />
-        <SummaryCard icon="cart-outline" tone="blue" label="Purchase Returns" value={money(summary?.purchase_return_cost)} detail="COGS reduction" />
-        <SummaryCard icon="brightness-percent" tone="amber" label="Discounts" value={money(totalDiscount)} detail={`Shipping ${money(summary?.shipping)}`} />
+        <SummaryCard onPress={() => openDetail('net_revenue')} icon="sack-percent" tone="green" label="Net Revenue" value={money(summary?.net_revenue)} />
+        <SummaryCard onPress={() => openDetail('gross_profit')} icon="chart-bar" tone="blue" label="Gross Profit" value={money(summary?.gross_profit)} detail={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
+        <SummaryCard onPress={() => openDetail('expenses')} icon="receipt-text-outline" tone="purple" label="Expenses" value={money(summary?.expenses)} />
+        <SummaryCard onPress={() => openDetail('net_profit')} icon="wallet-outline" tone="green" label="Net Profit" value={money(summary?.net_profit)} />
+        <SummaryCard onPress={() => openDetail('margin')} icon="chart-pie" tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
+        <SummaryCard onPress={() => openDetail('cash_in')} icon="arrow-down-bold" tone="green" label="Cash In" value={money(summary?.cash_in)} />
+        <SummaryCard onPress={() => openDetail('cash_out')} icon="arrow-up-bold" tone="red" label="Cash Out" value={money(summary?.cash_out)} />
+        <SummaryCard onPress={() => openDetail('net_cash_movement')} icon="swap-horizontal" tone="blue" label="Cash Movement" value={money(summary?.net_cash_movement)} />
+        <SummaryCard onPress={() => openDetail('tax')} icon="file-document-outline" tone="red" label="Tax" value={money(summary?.tax_collected)} detail={`Returned ${money(summary?.tax_returned)}`} />
+        <SummaryCard onPress={() => openDetail('returns')} icon="undo-variant" tone="orange" label="Returns" value={money(summary?.returns)} detail={`Sales cost ${money(summary?.return_cost)}`} />
+        <SummaryCard onPress={() => openDetail('purchase_returns')} icon="cart-outline" tone="blue" label="Purchase Returns" value={money(summary?.purchase_return_cost)} detail="COGS reduction" />
+        <SummaryCard onPress={() => openDetail('discounts')} icon="brightness-percent" tone="amber" label="Discounts" value={money(totalDiscount)} detail={`Shipping ${money(summary?.shipping)}`} />
       </View>
 
       <View style={styles.chartRow}>
@@ -258,9 +271,9 @@ export default function ProfitReportScreen() {
   );
 }
 
-function SummaryCard({ icon, tone, label, value, detail }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; tone: Tone; label: string; value: string; detail?: string }) {
+function SummaryCard({ icon, tone, label, value, detail, onPress }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; tone: Tone; label: string; value: string; detail?: string; onPress: () => void }) {
   return (
-    <View style={styles.summaryCard}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.summaryCard}>
       <View style={[styles.iconTile, toneStyle(tone).soft]}>
         <MaterialCommunityIcons name={icon} size={28} color={toneStyle(tone).color} />
       </View>
@@ -269,7 +282,7 @@ function SummaryCard({ icon, tone, label, value, detail }: { icon: keyof typeof 
         <Text variant="titleLarge" style={styles.cardValue}>{value}</Text>
         {detail ? <Text variant="bodySmall" style={styles.muted}>{detail}</Text> : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 

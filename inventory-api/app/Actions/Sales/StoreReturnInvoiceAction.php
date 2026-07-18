@@ -12,6 +12,7 @@ use App\Models\ProductWarehouse;
 use App\Models\ReturnInvoice;
 use App\Models\Unit;
 use App\Models\User;
+use App\Services\InvoiceLineActivityService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -37,6 +38,9 @@ class StoreReturnInvoiceAction
 
             $totals = $this->calculateTotals($data);
             $documentPath = $document?->store('return/documents', 'public') ?? $returnInvoice?->document;
+            $lineActivities = app(InvoiceLineActivityService::class);
+            $isUpdate = $returnInvoice !== null;
+            $oldReturnLines = $returnInvoice ? $lineActivities->salesReturnSnapshot($returnInvoice->id) : collect();
 
             if ($returnInvoice) {
                 ProductReturn::query()->where('return_id', $returnInvoice->id)->delete();
@@ -98,6 +102,17 @@ class StoreReturnInvoiceAction
                     'total_cost' => $cost['total_cost'],
                 ]);
 
+            }
+
+            if ($isUpdate) {
+                $lineActivities->logChanges(
+                    $returnInvoice,
+                    'sales_return',
+                    'Sales return product lines updated',
+                    $oldReturnLines,
+                    $lineActivities->salesReturnSnapshot($returnInvoice->id),
+                    $user
+                );
             }
 
             return $returnInvoice->load($this->relations());

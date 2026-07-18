@@ -350,7 +350,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       setEditingId(null);
       resetForm();
       void loadInvoices();
-      router.push(labels.basePath);
+      router.replace(labels.basePath);
     } catch (error) {
       toast.error('Save failed', { description: errorMessage(error) });
     } finally {
@@ -389,6 +389,10 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
 
   async function exportInvoicePdf() {
     if (!selectedInvoice?.id) return;
+    if (selectedInvoice.approval_status !== 'approved') {
+      toast.error(`${labels.singularTitle} must be approved before printing`);
+      return;
+    }
 
     setExportingPdf(true);
     try {
@@ -504,7 +508,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
               {invoiceId ? (
                 <Link className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${labels.basePath}/${invoiceId}/edit`} aria-label={`Edit ${labels.singular}`} title="Edit"><Pencil className="h-4 w-4" /></Link>
               ) : null}
-              <Button type="button" variant="secondary" disabled={!selectedInvoice || exportingPdf} onClick={() => void exportInvoicePdf()}>
+              <Button type="button" variant="secondary" disabled={!selectedInvoice || selectedInvoice.approval_status !== 'approved' || exportingPdf} onClick={() => void exportInvoicePdf()}>
                 <Printer className="h-4 w-4" />
                 {exportingPdf ? 'Generating...' : 'Print'}
               </Button>

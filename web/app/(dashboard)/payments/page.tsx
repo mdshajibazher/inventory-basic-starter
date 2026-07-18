@@ -1,5 +1,5 @@
-import { PaymentsPage } from '@/features/payments-page';
+import { redirect } from 'next/navigation';
 
 export default function PaymentsRoute() {
-  return <PaymentsPage />;
+  redirect('/payments/customer');
 }

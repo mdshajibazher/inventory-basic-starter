@@ -10,6 +10,7 @@ use App\Models\PurchaseProductReturn;
 use App\Models\ReturnPurchase;
 use App\Models\Unit;
 use App\Models\User;
+use App\Services\InvoiceLineActivityService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -30,6 +31,9 @@ class StorePurchaseReturnAction
 
             $totals = $this->calculateTotals($data);
             $documentPath = $document?->store('purchase-return/documents', 'public') ?? $returnPurchase?->document;
+            $lineActivities = app(InvoiceLineActivityService::class);
+            $isUpdate = $returnPurchase !== null;
+            $oldReturnLines = $returnPurchase ? $lineActivities->purchaseReturnSnapshot($returnPurchase->id) : collect();
 
             if ($returnPurchase) {
                 PurchaseProductReturn::query()->where('return_id', $returnPurchase->id)->delete();
@@ -84,6 +88,17 @@ class StorePurchaseReturnAction
                     'tax' => (float) $data['tax'][$index],
                     'total' => $totals['lines'][$index],
                 ]);
+            }
+
+            if ($isUpdate) {
+                $lineActivities->logChanges(
+                    $returnPurchase,
+                    'purchase_return',
+                    'Purchase return product lines updated',
+                    $oldReturnLines,
+                    $lineActivities->purchaseReturnSnapshot($returnPurchase->id),
+                    $user
+                );
             }
 
             return $returnPurchase->load($this->relations());

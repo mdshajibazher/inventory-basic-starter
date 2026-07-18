@@ -311,7 +311,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       setEditingId(null);
       resetForm();
       void loadInvoices();
-      router.push(labels.indexRoute);
+      router.replace(labels.indexRoute);
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {

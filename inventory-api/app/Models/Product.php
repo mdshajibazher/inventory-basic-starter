@@ -141,6 +141,7 @@ class Product extends Model
         return $this->productPurchases()->exists()
             || $this->productSales()->exists()
             || $this->productReturns()->exists()
-            || DB::table('purchase_product_return')->where('product_id', $this->id)->exists();
+            || DB::table('purchase_product_return')->where('product_id', $this->id)->exists()
+            || DB::table('product_transfer')->where('product_id', $this->id)->exists();
     }
 }

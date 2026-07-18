@@ -374,6 +374,42 @@ export type ProfitReportCash = {
   amount: number;
 };
 
+export type ProfitReportDetailRow = {
+  date?: string | null;
+  label: string;
+  reference?: string | null;
+  type: string;
+  description?: string | null;
+  amount: number;
+  amount_type?: 'money' | 'percent' | string;
+  quantity?: number | string | null;
+  revenue?: number;
+  profit?: number;
+};
+
+export type ProfitReportDetail = {
+  metric: {
+    key: string;
+    label: string;
+    value: number;
+    value_type: 'money' | 'percent' | string;
+  };
+  columns: string[];
+  rows: ProfitReportDetailRow[];
+  summary: {
+    total: number;
+    total_type: 'money' | 'percent' | string;
+    row_count: number;
+    components: { label: string; amount: number }[];
+  };
+  filters: {
+    start_date: string;
+    end_date: string;
+    warehouse: Pick<Warehouse, 'id' | 'name'> | null;
+    search: string;
+  };
+};
+
 export type ProfitReport = {
   summary: ProfitReportSummary;
   products: ProfitReportProduct[];
@@ -519,6 +555,11 @@ export type Payment = {
   updated_at?: string;
 };
 
+export type Branding = {
+  site_title?: string | null;
+  site_logo?: string | null;
+};
+
 export type InvoiceOption = {
   id: number;
   reference_no: string;
@@ -595,6 +636,51 @@ export type StockMovement = {
   batch?: { id: number; batch_no: string; expired_date?: string | null } | null;
   variant?: { id: number; name: string } | null;
   unit?: Pick<Unit, 'id' | 'unit_code' | 'unit_name'> | null;
+};
+
+export type TransferLine = {
+  id: number;
+  transfer_id: number;
+  product_id: number;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  qty: number | string;
+  purchase_unit_id: number;
+  net_unit_cost?: number | string | null;
+  tax_rate?: number | string | null;
+  tax?: number | string | null;
+  total?: number | string | null;
+  note?: string | null;
+  product?: Pick<Product, 'id' | 'name' | 'code' | 'type' | 'is_batch' | 'is_variant'> | null;
+  unit?: Pick<Unit, 'id' | 'unit_code' | 'unit_name'> | null;
+  batch?: { id: number; batch_no: string; expired_date?: string | null } | null;
+  variant?: { id: number; name: string } | null;
+};
+
+export type Transfer = {
+  id: number;
+  reference_no: string;
+  transfer_date?: string | null;
+  status: number;
+  status_key: 'pending' | 'completed' | string;
+  status_label: string;
+  from_warehouse_id: number;
+  to_warehouse_id: number;
+  expected_delivery_date?: string | null;
+  requested_by?: number | null;
+  item?: number | string | null;
+  total_qty?: number | string | null;
+  total_tax?: number | string | null;
+  total_cost?: number | string | null;
+  grand_total?: number | string | null;
+  vehicle_courier?: string | null;
+  driver_contact?: string | null;
+  note?: string | null;
+  from_warehouse?: Pick<Warehouse, 'id' | 'name'> | null;
+  to_warehouse?: Pick<Warehouse, 'id' | 'name'> | null;
+  products?: TransferLine[];
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type ProductStockBreakdown = {

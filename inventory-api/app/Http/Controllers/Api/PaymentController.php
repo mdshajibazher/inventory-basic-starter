@@ -27,6 +27,7 @@ class PaymentController extends Controller
                 ->when($request->filled('supplier_id'), fn ($query) => $query->where('supplier_id', $request->integer('supplier_id')))
                 ->when($request->filled('account_id'), fn ($query) => $query->where('account_id', $request->integer('account_id')))
                 ->when($request->filled('payment_type'), fn ($query) => $query->where('payment_type', (string) $request->string('payment_type')))
+                ->when($request->filled('payment_types'), fn ($query) => $query->whereIn('payment_type', collect(explode(',', (string) $request->string('payment_types')))->map(fn ($type) => trim($type))->filter()->values()))
                 ->when($request->filled('direction'), fn ($query) => $query->where('direction', (string) $request->string('direction')))
                 ->latest()
                 ->paginate($perPage)

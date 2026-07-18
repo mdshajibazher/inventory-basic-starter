@@ -309,6 +309,60 @@ export type Warehouse = {
   is_active?: boolean | number | null;
 };
 
+export type StockTransferStatusKey = 'pending' | 'completed';
+
+export type StockTransferLine = {
+  id: number;
+  transfer_id: number;
+  product_id: number;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  qty: number | string;
+  purchase_unit_id: number;
+  net_unit_cost: number | string;
+  tax_rate: number | string;
+  tax: number | string;
+  total: number | string;
+  note?: string | null;
+  product?: Pick<Product, 'id' | 'name' | 'code' | 'cost' | 'is_batch' | 'is_variant' | 'warehouse_prices' | 'variants'> | null;
+  unit?: Pick<Unit, 'id' | 'unit_code' | 'unit_name'> | null;
+  batch?: { id: number; batch_no: string; expired_date?: string | null } | null;
+  variant?: { id: number; name: string } | null;
+};
+
+export type StockTransfer = {
+  id: number;
+  reference_no: string;
+  transfer_date?: string | null;
+  user_id?: number | null;
+  status: number | string;
+  status_key: StockTransferStatusKey;
+  status_label: string;
+  from_warehouse_id: number;
+  to_warehouse_id: number;
+  expected_delivery_date?: string | null;
+  requested_by?: number | null;
+  item: number;
+  total_qty: number | string;
+  total_tax: number | string;
+  total_cost: number | string;
+  shipping_cost?: number | string | null;
+  grand_total: number | string;
+  document?: string | null;
+  document_url?: string | null;
+  vehicle_courier?: string | null;
+  driver_contact?: string | null;
+  note?: string | null;
+  from_warehouse?: Pick<Warehouse, 'id' | 'name'> | null;
+  to_warehouse?: Pick<Warehouse, 'id' | 'name'> | null;
+  user?: Pick<User, 'id' | 'name' | 'email'> | null;
+  requested_user?: Pick<User, 'id' | 'name' | 'email'> | null;
+  products?: StockTransferLine[];
+  activity_logs?: ActivityLog[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type ProfitReportSummary = {
   gross_sales: number;
   sales_discounts: number;
@@ -372,6 +426,42 @@ export type ProfitReportCash = {
   label: string;
   direction: PaymentDirection;
   amount: number;
+};
+
+export type ProfitReportDetailRow = {
+  date?: string | null;
+  label: string;
+  reference?: string | null;
+  type: string;
+  description?: string | null;
+  amount: number;
+  amount_type?: 'money' | 'percent' | string;
+  quantity?: number | string | null;
+  revenue?: number;
+  profit?: number;
+};
+
+export type ProfitReportDetail = {
+  metric: {
+    key: string;
+    label: string;
+    value: number;
+    value_type: 'money' | 'percent' | string;
+  };
+  columns: string[];
+  rows: ProfitReportDetailRow[];
+  summary: {
+    total: number;
+    total_type: 'money' | 'percent' | string;
+    row_count: number;
+    components: { label: string; amount: number }[];
+  };
+  filters: {
+    start_date: string;
+    end_date: string;
+    warehouse: Pick<Warehouse, 'id' | 'name'> | null;
+    search: string;
+  };
 };
 
 export type ProfitReport = {
@@ -517,6 +607,11 @@ export type Payment = {
   activity_logs?: ActivityLog[];
   created_at?: string;
   updated_at?: string;
+};
+
+export type Branding = {
+  site_title?: string | null;
+  site_logo?: string | null;
 };
 
 export type InvoiceOption = {

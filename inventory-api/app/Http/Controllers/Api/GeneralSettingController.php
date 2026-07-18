@@ -10,6 +10,18 @@ use Illuminate\Support\Facades\Storage;
 
 class GeneralSettingController extends Controller
 {
+    public function branding(Request $request)
+    {
+        $setting = GeneralSetting::query()->latest('id')->first();
+
+        return response()->json([
+            'data' => [
+                'site_title' => $setting?->site_title ?: config('app.name'),
+                'site_logo' => $setting?->site_logo ? (new GeneralSettingResource($setting))->toArray($request)['site_logo'] : null,
+            ],
+        ]);
+    }
+
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);

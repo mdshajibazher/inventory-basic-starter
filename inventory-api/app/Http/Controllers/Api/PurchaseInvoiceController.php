@@ -7,14 +7,17 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StorePurchaseRequest;
 use App\Http\Resources\PurchaseResource;
 use App\Models\Account;
+use App\Models\GeneralSetting;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductPurchase;
 use App\Models\ProductVariant;
 use App\Models\Purchase;
 use App\Services\ApprovalService;
+use App\Services\InvoiceLineActivityService;
 use App\Services\PaymentService;
 use App\Services\RecordNotificationService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +25,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 class PurchaseInvoiceController extends Controller
@@ -120,6 +124,8 @@ class PurchaseInvoiceController extends Controller
                 $totals = $this->calculateTotals($data);
                 $paidAmount = min((float) ($data['paid_amount'] ?? 0), $totals['grand_total']);
                 $documentPath = $purchase->document;
+                $lineActivities = app(InvoiceLineActivityService::class);
+                $oldPurchaseLines = $lineActivities->purchaseInvoiceSnapshot($purchase->id);
 
                 if ($request->hasFile('document')) {
                     if ($documentPath) {
@@ -181,6 +187,14 @@ class PurchaseInvoiceController extends Controller
                     ]);
                 }
 
+                $lineActivities->logChanges(
+                    $purchase,
+                    'purchase_invoice',
+                    'Purchase invoice product lines updated',
+                    $oldPurchaseLines,
+                    $lineActivities->purchaseInvoiceSnapshot($purchase->id),
+                    $request->user()
+                );
                 $this->createPaymentIfNeeded($purchase, $data, $request->user(), $paidAmount, $payments);
 
                 return $purchase->load(self::RELATIONS);
@@ -216,6 +230,23 @@ class PurchaseInvoiceController extends Controller
             'message' => 'Purchase invoice approved successfully.',
             'data' => new PurchaseResource($purchase),
         ]);
+    }
+
+    public function pdf(Purchase $purchase, Request $request): Response
+    {
+        $this->authorizeBranch($purchase, $request);
+
+        $purchase->load(self::RELATIONS);
+        $settings = GeneralSetting::query()->latest('id')->first();
+        $filename = sprintf('purchase-invoice-%s.pdf', $purchase->reference_no ?: $purchase->id);
+
+        return Pdf::loadView('invoices.purchase', [
+            'purchase' => $purchase,
+            'settings' => $settings,
+            'printedAt' => now(),
+        ])
+            ->setPaper('a4')
+            ->download($filename);
     }
 
     private function calculateTotals(array $data): array

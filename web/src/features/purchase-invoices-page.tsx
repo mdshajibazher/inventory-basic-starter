@@ -5,7 +5,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ArrowLeft, Box, CircleCheck, Eye, FileText, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { ArrowLeft, Box, CircleCheck, Eye, FileText, Pencil, Plus, Printer, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { api, type PurchaseInvoicePayload, type PurchaseReturnPayload } from '@/lib/api';
 import type { PaginationMeta, Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/lib/types';
 import { clsx, errorMessage } from '@/lib/utils';
@@ -127,6 +127,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<number | null>(null);
 
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === form.supplierId);
@@ -347,6 +348,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
       setEditingId(null);
       resetForm();
       void loadInvoices();
+      router.replace(basePath);
     } catch (error) {
       toast.error('Save failed', { description: errorMessage(error) });
     } finally {
@@ -381,6 +383,19 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
 
   function requestApproval(id: number) {
     setApprovalTarget(id);
+  }
+
+  async function exportInvoicePdf() {
+    if (!selectedInvoice?.id || isReturn) return;
+
+    setExportingPdf(true);
+    try {
+      await api.exportPurchaseInvoicePdf(Number(selectedInvoice.id), String(selectedInvoice.reference_no ?? selectedInvoice.id));
+    } catch (error) {
+      toast.error('PDF export failed', { description: errorMessage(error) });
+    } finally {
+      setExportingPdf(false);
+    }
   }
 
   function fillFormFromInvoice(invoice: Record<string, any>) {
@@ -487,6 +502,12 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
               <Link className="inline-flex h-10 items-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium hover:bg-neutral-50" href={basePath}>Back</Link>
               {selectedInvoice?.can_approve ? <Button type="button" variant="secondary" disabled={saving} onClick={() => requestApproval(Number(selectedInvoice.id))}>Approve</Button> : null}
               {invoiceId ? <Link className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100" href={`${basePath}/${invoiceId}/edit`} aria-label={`Edit ${singularTitle}`} title="Edit"><Pencil className="h-4 w-4" /></Link> : null}
+              {!isReturn ? (
+                <Button type="button" variant="secondary" disabled={!selectedInvoice || exportingPdf} onClick={() => void exportInvoicePdf()}>
+                  <Printer className="h-4 w-4" />
+                  {exportingPdf ? 'Generating...' : 'Print'}
+                </Button>
+              ) : null}
             </div>
           </div>
           {selectedInvoice ? <PurchaseInvoiceDetails invoice={selectedInvoice} kind={kind} /> : <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-500">Loading invoice...</div>}

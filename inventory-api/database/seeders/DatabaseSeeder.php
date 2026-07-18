@@ -86,6 +86,11 @@ class DatabaseSeeder extends Seeder
             'purchases-delete',
             'product-stocks-index',
             'product-stocks-adjust',
+            'transfers-index',
+            'transfers-add',
+            'transfers-show',
+            'transfers-edit',
+            'transfers-delete',
             'reports-profit',
         ];
 

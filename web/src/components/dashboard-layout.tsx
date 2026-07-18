@@ -26,11 +26,14 @@ import {
   MessageSquareText,
   Settings,
   ChartNoAxesCombined,
+  ArrowLeftRight,
   X,
   WalletCards,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
+import { api } from '@/lib/api';
+import type { Branding } from '@/lib/types';
 import { Button } from './ui';
 import { clsx } from '@/lib/utils';
 
@@ -46,7 +49,7 @@ const navItems: NavItem[] = [
   { href: '/products', label: 'Products', icon: Boxes, permission: 'products-index' },
   { href: '/products/print-barcode', label: 'Print Barcode', icon: Barcode, permission: 'products-index' },
   { href: '/product-stocks', label: 'Product Stock', icon: PackageSearch, permission: 'product-stocks-index' },
-  { href: '/payments', label: 'Payments', icon: WalletCards, permission: ['accounts-index', 'sales-index', 'purchases-index'] },
+  { href: '/transfers', label: 'Stock Transfers', icon: ArrowLeftRight, permission: 'transfers-index' },
   { href: '/expenses', label: 'Expenses', icon: ReceiptText, permission: 'expenses-index' },
   { href: '/expense-categories', label: 'Expense Categories', icon: Tags, permission: 'expenses-index' },
   { href: '/reports/profit', label: 'Profit Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
@@ -54,6 +57,11 @@ const navItems: NavItem[] = [
   { href: '/return-invoices', label: 'Sales Return', icon: ReceiptText, permission: 'returns-add' },
   { href: '/purchase-invoices', label: 'Purchase Invoice', icon: ReceiptText, permission: 'purchases-add' },
   { href: '/purchase-return-invoices', label: 'Purchase Return', icon: ReceiptText, permission: 'purchases-add' },
+];
+
+const paymentItems: NavItem[] = [
+  { href: '/payments/supplier', label: 'Supplier Payments', icon: WalletCards, permission: ['accounts-index', 'purchases-index'] },
+  { href: '/payments/customer', label: 'Customer Payments', icon: WalletCards, permission: ['accounts-index', 'sales-index'] },
 ];
 
 const peopleItems: NavItem[] = [
@@ -88,10 +96,28 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, loading, hasPermission, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [branding, setBranding] = useState<Branding | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
   }, [loading, router, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let active = true;
+    api.branding()
+      .then((response) => {
+        if (active) setBranding(response.data);
+      })
+      .catch(() => {
+        if (active) setBranding(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const visibleNav = useMemo(
     () => navItems.filter((item) => !item.permission || hasPermission(item.permission)),
@@ -99,6 +125,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   );
   const visiblePeople = useMemo(
     () => peopleItems.filter((item) => !item.permission || hasPermission(item.permission)),
+    [hasPermission]
+  );
+  const visiblePayments = useMemo(
+    () => paymentItems.filter((item) => !item.permission || hasPermission(item.permission)),
     [hasPermission]
   );
   const visibleSettings = useMemo(
@@ -119,12 +149,22 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const sidebar = (
     <aside className="flex h-full flex-col border-r border-neutral-200 bg-white">
       <div className="flex h-16 items-center border-b border-neutral-200 px-5">
-        <Link href="/dashboard" className="text-base font-semibold tracking-tight">
-          Inventory
+        <Link href="/dashboard" className="flex min-w-0 items-center">
+          {branding?.site_logo ? (
+            <img src={branding.site_logo} alt={branding.site_title || 'Inventory'} className="max-h-10 max-w-[180px] object-contain" />
+          ) : (
+            <span className="text-base font-semibold tracking-tight">Inventory</span>
+          )}
         </Link>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
         {renderLinks(visibleNav, pathname, setMobileOpen)}
+        {visiblePayments.length ? (
+          <div className="pt-3">
+            <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Payments</div>
+            {renderLinks(visiblePayments, pathname, setMobileOpen)}
+          </div>
+        ) : null}
         {visiblePeople.length ? (
           <div className="pt-3">
             <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">People</div>

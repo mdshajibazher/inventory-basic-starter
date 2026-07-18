@@ -301,13 +301,38 @@ class ProductStockService
 
     private function currentWarehouseQuantity(int $productId, int $warehouseId, ?int $variantId, ?int $batchId): float
     {
-        return (float) (ProductWarehouse::query()
+        $quantity = ProductWarehouse::query()
             ->where('product_id', $productId)
             ->where('warehouse_id', $warehouseId)
             ->when($variantId, fn ($query) => $query->where('variant_id', $variantId), fn ($query) => $query->whereNull('variant_id'))
             ->when($batchId, fn ($query) => $query->where('product_batch_id', $batchId), fn ($query) => $query->whereNull('product_batch_id'))
             ->lockForUpdate()
-            ->value('qty') ?? 0);
+            ->value('qty');
+
+        if ($quantity !== null) {
+            return (float) $quantity;
+        }
+
+        if ($variantId || $batchId) {
+            return 0.0;
+        }
+
+        if (ProductWarehouse::query()->where('product_id', $productId)->exists()) {
+            return 0.0;
+        }
+
+        $product = Product::query()
+            ->whereKey($productId)
+            ->where(function ($query) {
+                $query->whereNull('is_variant')->orWhere('is_variant', false);
+            })
+            ->where(function ($query) {
+                $query->whereNull('is_batch')->orWhere('is_batch', false);
+            })
+            ->lockForUpdate()
+            ->first(['qty']);
+
+        return (float) ($product?->qty ?? 0);
     }
 
     private function assertAdjustableProduct(Product $product, array $data): void

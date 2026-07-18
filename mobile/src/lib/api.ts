@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { tokenStorage } from './storage';
-import type { DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, SmsLog } from '../types';
+import type { Branding, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, ProfitReportDetail, SmsLog, Transfer } from '../types';
 
 const DEFAULT_API_URL = 'http://10.0.2.2:8000/api';
 
@@ -184,6 +184,33 @@ export type StockAdjustmentPayload = {
   qty: number;
   movement_date?: string | null;
   note?: string | null;
+};
+
+export type TransferLinePayload = {
+  product_id: number;
+  variant_id?: number | null;
+  product_batch_id?: number | null;
+  qty: number;
+  purchase_unit: number;
+  net_unit_cost?: number;
+  tax_rate?: number;
+  tax?: number;
+  subtotal?: number;
+  line_note?: string | null;
+};
+
+export type TransferPayload = {
+  reference_no: string;
+  transfer_date?: string | null;
+  from_warehouse_id: number;
+  to_warehouse_id: number;
+  status: 'pending' | 'completed' | 1 | 2;
+  expected_delivery_date?: string | null;
+  requested_by?: number | null;
+  note?: string | null;
+  vehicle_courier?: string | null;
+  driver_contact?: string | null;
+  lines: TransferLinePayload[];
 };
 
 export type CustomerPayload = {
@@ -660,6 +687,31 @@ function purchaseReturnFormData(payload: PurchaseReturnPayload) {
   return formData;
 }
 
+function transferJsonPayload(payload: TransferPayload) {
+  return {
+    reference_no: payload.reference_no,
+    transfer_date: payload.transfer_date,
+    from_warehouse_id: payload.from_warehouse_id,
+    to_warehouse_id: payload.to_warehouse_id,
+    status: payload.status,
+    expected_delivery_date: payload.expected_delivery_date,
+    requested_by: payload.requested_by,
+    note: payload.note,
+    vehicle_courier: payload.vehicle_courier,
+    driver_contact: payload.driver_contact,
+    product_id: payload.lines.map((line) => line.product_id),
+    variant_id: payload.lines.map((line) => line.variant_id ?? null),
+    product_batch_id: payload.lines.map((line) => line.product_batch_id ?? null),
+    qty: payload.lines.map((line) => line.qty),
+    purchase_unit: payload.lines.map((line) => line.purchase_unit),
+    net_unit_cost: payload.lines.map((line) => line.net_unit_cost ?? 0),
+    tax_rate: payload.lines.map((line) => line.tax_rate ?? 0),
+    tax: payload.lines.map((line) => line.tax ?? 0),
+    subtotal: payload.lines.map((line) => line.subtotal ?? line.qty * (line.net_unit_cost ?? 0)),
+    line_note: payload.lines.map((line) => line.line_note ?? null),
+  };
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const token = options.auth === false ? null : await tokenStorage.get();
   const multipart = isFormData(options.body);
@@ -736,6 +788,8 @@ export const api = {
   me: () => request<{ data: unknown }>('/me'),
 
   logout: () => request<{ message: string }>('/logout', { method: 'POST' }),
+
+  branding: () => request<{ data: Branding }>('/branding'),
 
   dashboard: () => request<{ data: unknown }>('/dashboard'),
 
@@ -1158,9 +1212,33 @@ export const api = {
       `/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`
     ),
 
+  transfers: (params: { page?: number; perPage?: number; search?: string; status?: string } = {}) =>
+    request<PaginatedResponse<Transfer>>(
+      `/transfers${queryString({ page: params.page, per_page: params.perPage, search: params.search, status: params.status })}`
+    ),
+
+  transfer: (id: number) => request<{ data: Transfer }>(`/transfers/${id}`),
+
+  createTransfer: (payload: TransferPayload) =>
+    request<{ data: Transfer; message: string }>('/transfers', {
+      method: 'POST',
+      body: JSON.stringify(transferJsonPayload(payload)),
+    }),
+
+  updateTransfer: (id: number, payload: TransferPayload) =>
+    request<{ data: Transfer; message: string }>(`/transfers/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(transferJsonPayload(payload)),
+    }),
+
   profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
     request<ProfitReport>(
       `/reports/profit${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`
+    ),
+
+  profitReportDetail: (params: { metric: string; startDate?: string; endDate?: string; warehouseId?: number; search?: string }) =>
+    request<ProfitReportDetail>(
+      `/reports/profit/details${queryString({ metric: params.metric, start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`
     ),
 
   profitReportPdf: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
@@ -1303,6 +1381,7 @@ export const api = {
     ),
 
   purchaseInvoice: (id: number) => request<{ data: unknown }>(`/purchase-invoices/${id}`),
+  purchaseInvoicePdf: (id: number) => requestBinary(`/purchase-invoices/${id}/pdf`),
 
   createPurchaseInvoice: (payload: PurchaseInvoicePayload) =>
     request<{ data: unknown; message: string }>('/purchase-invoices', {

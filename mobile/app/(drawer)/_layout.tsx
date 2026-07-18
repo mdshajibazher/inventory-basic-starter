@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
@@ -8,21 +8,41 @@ import {
   DrawerContentScrollView,
   DrawerItem,
 } from '@react-navigation/drawer';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
 import { useAuth } from '@/src/context/AuthContext';
+import { api } from '@/src/lib/api';
+import type { Branding } from '@/src/types';
 
 type DrawerIconName = keyof typeof MaterialCommunityIcons.glyphMap;
 
 export default function DrawerLayout() {
   const { user, loading, hasPermission, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [branding, setBranding] = useState<Branding | null>(null);
 
   async function handleLogout() {
     setLoggingOut(true);
     await logout();
     setLoggingOut(false);
   }
+
+  useEffect(() => {
+    if (!user) return;
+
+    let active = true;
+    api.branding()
+      .then((response) => {
+        if (active) setBranding(response.data);
+      })
+      .catch(() => {
+        if (active) setBranding(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   if (!loading && !user) {
     return <Redirect href="/login" />;
@@ -45,6 +65,18 @@ export default function DrawerLayout() {
         },
         headerTintColor: '#000000',
         headerTitleAlign: 'center',
+        ...(branding?.site_logo
+          ? {
+              headerTitle: () => (
+                <Image
+                  source={{ uri: branding.site_logo ?? undefined }}
+                  accessibilityLabel={branding.site_title ?? 'Inventory'}
+                  resizeMode="contain"
+                  style={styles.headerLogo}
+                />
+              ),
+            }
+          : {}),
         headerShown: true,
         headerLeft: () => (
           <Pressable
@@ -226,6 +258,17 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="transfers"
+        options={{
+          title: 'Stock Movement',
+          drawerLabel: 'Stock Movement',
+          drawerIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="swap-horizontal" size={size} color={color} />
+          ),
+          drawerItemStyle: hasPermission(['transfers-index', 'transfers-add', 'transfers-edit']) ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
         name="profit-report"
         options={{
           title: 'Profit Report',
@@ -234,6 +277,13 @@ export default function DrawerLayout() {
             <MaterialCommunityIcons name="chart-line" size={size} color={color} />
           ),
           drawerItemStyle: hasPermission('reports-profit') ? undefined : styles.hiddenDrawerItem,
+        }}
+      />
+      <Drawer.Screen
+        name="profit-report-detail"
+        options={{
+          title: 'Profit Report Detail',
+          drawerItemStyle: styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -257,6 +307,13 @@ export default function DrawerLayout() {
           }}
         />
       ))}
+      <Drawer.Screen
+        name="transfers-create"
+        options={{
+          title: 'Stock Movement',
+          drawerItemStyle: styles.hiddenDrawerItem,
+        }}
+      />
       <Drawer.Screen
         name="sales-invoices"
         options={{
@@ -507,6 +564,7 @@ function AppDrawerContent({
       {item('dashboard', 'Dashboard', 'view-dashboard-outline')}
       {item('products', 'Products', 'package-variant-closed', hasPermission('products-index'))}
       {item('product-stocks', 'Product Stock', 'package-variant', hasPermission('product-stocks-index'))}
+      {item('transfers', 'Stock Movement', 'swap-horizontal', hasPermission(['transfers-index', 'transfers-add', 'transfers-edit']))}
 
       {salesItems.length ? (
         <View style={styles.drawerSection}>
@@ -616,6 +674,10 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     marginRight: 8,
+  },
+  headerLogo: {
+    height: 36,
+    width: 150,
   },
   hiddenDrawerItem: {
     display: 'none',

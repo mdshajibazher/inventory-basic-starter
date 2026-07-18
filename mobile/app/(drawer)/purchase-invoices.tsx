@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import { ActivityIndicator, Button, DataTable, Menu, Modal, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
@@ -109,6 +111,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const selectedSupplier = suppliers.find((supplier) => supplier.id === form.supplierId);
   const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === form.warehouseId);
@@ -296,6 +299,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
       setEditingId(null);
       resetForm();
       void loadInvoices();
+      router.replace(`/(drawer)/${routeBase}` as any);
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
@@ -336,6 +340,40 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
         { text: 'Approve', onPress: () => void approveInvoice(id) },
       ]
     );
+  }
+
+  async function exportInvoicePdf() {
+    if (!selectedInvoice?.id || isReturn) return;
+
+    setExportingPdf(true);
+    try {
+      const response = await api.purchaseInvoicePdf(Number(selectedInvoice.id));
+      const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+
+      if (!directory) {
+        throw new Error('No writable file directory is available on this device.');
+      }
+
+      const referenceNo = String(selectedInvoice.reference_no ?? selectedInvoice.id).replace(/[^a-z0-9-_]+/gi, '-');
+      const fileUri = `${directory}purchase-invoice-${referenceNo}.pdf`;
+      await FileSystem.writeAsStringAsync(fileUri, arrayBufferToBase64(response.data), {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Purchase Invoice',
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        Alert.alert('PDF exported', `Saved to ${fileUri}`);
+      }
+    } catch (error) {
+      Alert.alert('PDF export failed', error instanceof Error ? error.message : 'Unable to export purchase invoice PDF.');
+    } finally {
+      setExportingPdf(false);
+    }
   }
 
   function fillFormFromInvoice(invoice: Record<string, any>) {
@@ -419,6 +457,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
             <Text variant="titleMedium">{title} details</Text>
             <View style={styles.rowActions}>
               {selectedInvoice?.can_approve ? <Button mode="outlined" disabled={saving} onPress={() => requestApproval(Number(selectedInvoice.id))}>Approve</Button> : null}
+              {!isReturn ? <Button mode="outlined" icon="file-pdf-box" loading={exportingPdf} disabled={!selectedInvoice || exportingPdf} onPress={() => void exportInvoicePdf()}>Print</Button> : null}
               <Button mode="outlined" onPress={() => router.push(`/(drawer)/${routeBase}` as any)}>Back</Button>
             </View>
           </View>
@@ -720,6 +759,19 @@ function ApprovalBadge({ status }: { status: unknown }) {
       <Text style={[styles.listBadgeText, pending ? styles.listApprovalPendingText : styles.listApprovalApprovedText]}>{pending ? 'Pending' : 'Approved'}</Text>
     </View>
   );
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
 }
 
 function PurchaseStatusBadge({ status }: { status: unknown }) {
