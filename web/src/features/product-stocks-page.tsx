@@ -1,18 +1,19 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Edit, History, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { AlertTriangle, BarChart3, Box, CheckCircle2, Download, Edit, History, Layers, Package, RefreshCw, Search, Trash2, XCircle, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api, type StockAdjustmentPayload } from '@/lib/api';
-import type { PaginationMeta, ProductStock, StockMovement, Unit, Warehouse } from '@/lib/types';
+import type { Category, PaginationMeta, ProductStock, StockMovement, Unit, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
-import { EmptyState, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
+import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
+import { EmptyState, Pagination, TableWrap } from '@/components/resource-shell';
 
 const defaultPerPage = 15;
 const defaultHistoryPerPage = 10;
+type StockStatusFilter = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
 
 type AdjustmentForm = {
   warehouseId: string;
@@ -59,13 +60,18 @@ export function ProductStocksPage() {
   const [historyPerPage, setHistoryPerPage] = useState(defaultHistoryPerPage);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState('all');
+  const [selectedCategoryId, setSelectedCategoryId] = useState('all');
+  const [stockStatusFilter, setStockStatusFilter] = useState<StockStatusFilter>('all');
   const [units, setUnits] = useState<Unit[]>([]);
   const [saving, setSaving] = useState(false);
   const [editingMovement, setEditingMovement] = useState<StockMovement | null>(null);
   const [form, setForm] = useState<AdjustmentForm>(emptyAdjustment);
 
   const canAdjust = hasPermission('product-stocks-adjust');
+  const visibleItems = useMemo(() => items.filter((item) => stockStatusFilter === 'all' || stockStatus(item).key === stockStatusFilter), [items, stockStatusFilter]);
+  const stockSummary = useMemo(() => summarizeStock(items, pagination), [items, pagination]);
 
   const load = useCallback(async (nextPage = page) => {
     setLoading(true);
@@ -75,6 +81,7 @@ export function ProductStocksPage() {
         perPage,
         search: debouncedSearch,
         warehouseId: selectedWarehouseId === 'all' ? undefined : Number(selectedWarehouseId),
+        categoryId: selectedCategoryId === 'all' ? undefined : Number(selectedCategoryId),
       });
       setItems(response.data as ProductStock[]);
       setPagination(response.meta ?? null);
@@ -83,16 +90,18 @@ export function ProductStocksPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, perPage, selectedWarehouseId]);
+  }, [debouncedSearch, page, perPage, selectedCategoryId, selectedWarehouseId]);
 
   const loadOptions = useCallback(async () => {
     try {
-      const [warehouseResponse, unitResponse] = await Promise.all([
+      const [warehouseResponse, unitResponse, categoryResponse] = await Promise.all([
         api.warehouses({ perPage: 100, activeOnly: true }),
         api.units({ perPage: 100 }),
+        api.categories({ perPage: 100, activeOnly: true }),
       ]);
       setWarehouses(warehouseResponse.data as Warehouse[]);
       setUnits(unitResponse.data as Unit[]);
+      setCategories(categoryResponse.data as Category[]);
     } catch (error) {
       toast.error('Options failed', { description: errorMessage(error) });
     }
@@ -145,9 +154,23 @@ export function ProductStocksPage() {
     ...warehouses.map((warehouse) => ({ value: String(warehouse.id), label: warehouse.name })),
   ], [warehouses]);
 
+  const categoryFilterOptions = useMemo(() => [
+    { value: 'all', label: 'All Categories' },
+    ...categories.map((category) => ({ value: String(category.id), label: category.name })),
+  ], [categories]);
+
   function changeWarehouseFilter(value: string) {
     setSelectedWarehouseId(value);
     setPage(1);
+  }
+
+  function changeCategoryFilter(value: string) {
+    setSelectedCategoryId(value);
+    setPage(1);
+  }
+
+  function changeStockStatusFilter(value: string) {
+    setStockStatusFilter(value as StockStatusFilter);
   }
 
   function openHistory(product: ProductStock) {
@@ -223,74 +246,144 @@ export function ProductStocksPage() {
   }
 
   return (
-    <div>
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Product Stock</h1>
-          <p className="mt-1 text-sm text-neutral-500">{pagination?.total ?? items.length} stocked products</p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="w-full sm:w-56">
-            <Select value={selectedWarehouseId} onValueChange={changeWarehouseFilter} options={warehouseFilterOptions} />
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Product Stock</h1>
+        <p className="mt-1 text-sm font-medium text-slate-500">Warehouse-wise stock overview and quick actions</p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <StockMetricCard icon={Box} iconClassName="bg-blue-50 text-blue-600" label="Total Products" value={formatQty(stockSummary.totalProducts)} caption="Across all warehouses" />
+        <StockMetricCard icon={CheckCircle2} iconClassName="bg-emerald-50 text-emerald-600" label="In Stock" value={formatQty(stockSummary.inStock)} valueClassName="text-emerald-600" caption={`${stockSummary.inStockRate}% of products`} />
+        <StockMetricCard icon={AlertTriangle} iconClassName="bg-orange-50 text-orange-500" label="Low Stock" value={formatQty(stockSummary.lowStock)} valueClassName="text-orange-500" caption="Needs attention" />
+        <StockMetricCard icon={XCircle} iconClassName="bg-red-50 text-red-500" label="Out of Stock" value={formatQty(stockSummary.outOfStock)} valueClassName="text-red-500" caption="Reorder required" />
+        <StockMetricCard icon={Layers} iconClassName="bg-violet-50 text-violet-600" label="Variants Tracked" value={formatQty(stockSummary.variantsTracked)} valueClassName="text-violet-600" caption="Variant/Pack items" />
+      </div>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="grid gap-3 border-b border-slate-200 p-4 lg:grid-cols-[1.6fr_1fr_1fr_1fr_auto]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-3 h-4 w-4 text-slate-400" />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by product, SKU or code..." className="border-slate-300 pl-11 text-slate-700 focus:border-blue-500" />
           </div>
-          <Button type="button" variant="secondary" onClick={() => void load(page)} disabled={loading}>
+          <Select value={selectedWarehouseId} onValueChange={changeWarehouseFilter} options={warehouseFilterOptions} />
+          <Select value={selectedCategoryId} onValueChange={changeCategoryFilter} options={categoryFilterOptions} />
+          <Select value={stockStatusFilter} onValueChange={changeStockStatusFilter} options={[
+            { value: 'all', label: 'All Stock Status' },
+            { value: 'in_stock', label: 'In Stock' },
+            { value: 'low_stock', label: 'Low Stock' },
+            { value: 'out_of_stock', label: 'Out of Stock' },
+          ]} />
+          <Button type="button" variant="secondary" className="border-blue-200 px-5 text-blue-600 hover:bg-blue-50" onClick={() => void load(page)} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
         </div>
-      </div>
 
-      <SearchBox value={search} onChange={setSearch} placeholder="Search products, codes, warehouses" />
-
-      {items.length ? (
-        <>
-          <TableWrap loading={loading}>
-            <table className="min-w-full divide-y divide-neutral-200 text-sm">
-              <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
-                <tr>
-                  {['SL', 'Product Name', 'Current Stock', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100">
-                {items.map((item, index) => (
-                  <tr key={item.id}>
-                    <td className="px-4 py-3 text-neutral-500">{(pagination?.from ?? 1) + index}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{item.name}</div>
-                      <div className="text-xs text-neutral-500">{item.code}</div>
-                    </td>
-                    <td className="px-4 py-3 font-medium">{formatQty(item.current_stock)} {item.unit?.unit_code ?? ''}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        <Button type="button" variant="secondary" onClick={() => openHistory(item)}>
-                          <History className="h-4 w-4" />
-                          History
-                        </Button>
-                        {isVariantProduct(item) ? (
-                          <Button type="button" variant="secondary" onClick={() => openVariantStock(item)}>
-                            Variant Stock
-                          </Button>
-                        ) : (
-                          <Button type="button" variant="secondary" onClick={() => openStockBreakdown(item)}>
-                            Stock Breakdown
-                          </Button>
-                        )}
-                        {canAdjust ? (
-                          <Button type="button" variant="secondary" onClick={() => openAdjust(item)}>
-                            <SlidersHorizontal className="h-4 w-4" />
-                            Adjust
-                          </Button>
-                        ) : null}
-                      </div>
-                    </td>
+        {visibleItems.length ? (
+          <>
+            <TableWrap loading={loading}>
+              <table className="min-w-[1160px] divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                  <tr>
+                    {['SL', 'Product', 'SKU / Code', 'Category', 'Warehouse', 'Current Stock', 'Unit', 'Stock Status', 'Last Updated', 'Actions'].map((header) => <th key={header} className="px-4 py-3 font-semibold">{header}</th>)}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
-          <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
-        </>
-      ) : <EmptyState label={loading ? 'Loading stock...' : 'No stock products found'} />}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {visibleItems.map((item, index) => {
+                    const status = stockStatus(item);
+                    return (
+                      <tr key={item.id} className="bg-white hover:bg-slate-50/70">
+                        <td className="px-4 py-3 text-slate-600">{(pagination?.from ?? 1) + index}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex min-w-56 items-center gap-3">
+                            <ProductAvatar product={item} />
+                            <div>
+                              <div className="font-semibold text-slate-950">{item.name}</div>
+                              <div className="text-xs text-slate-500">{productDescriptor(item)}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-700">{item.code}</td>
+                        <td className="px-4 py-3 text-slate-700">{categoryLabel(item)}</td>
+                        <td className="px-4 py-3 text-slate-700">{warehouseLabel(item, selectedWarehouseId)}</td>
+                        <td className="px-4 py-3">
+                          <div className="w-36">
+                            <div className="font-semibold text-slate-950">{formatQty(item.current_stock)}</div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                              <div className={status.barClassName} style={{ width: `${stockPercent(item)}%` }} />
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">{stockPercent(item)}%</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-700">{item.unit?.unit_code ?? '-'}</td>
+                        <td className="min-w-32 px-4 py-3"><StockStatusBadge status={status} /></td>
+                        <td className="px-4 py-3 whitespace-nowrap text-slate-700">{lastUpdatedLabel()}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <ActionButton
+                              icon={History}
+                              text="History"
+                              color="text-blue-500 hover:text-blue-600"
+                              bgColor="bg-blue-50 hover:border-blue-100 hover:bg-blue-100"
+                              onClick={() => openHistory(item)}
+                            />
+                            {isVariantProduct(item) ? (
+                              <ActionButton
+                                icon={BarChart3}
+                                text="Variant Stock"
+                                color="text-violet-600 hover:text-violet-700"
+                                bgColor="bg-violet-50 hover:border-violet-100 hover:bg-violet-100"
+                                onClick={() => openVariantStock(item)}
+                              />
+                            ) : (
+                              <ActionButton
+                                icon={BarChart3}
+                                text="Breakdown"
+                                color="text-amber-600 hover:text-amber-700"
+                                bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
+                                onClick={() => openStockBreakdown(item)}
+                              />
+                            )}
+                            {canAdjust ? (
+                              <ActionButton
+                                icon={Edit}
+                                text="Adjust"
+                                color="text-red-500 hover:text-red-600"
+                                bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
+                                onClick={() => openAdjust(item)}
+                              />
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </TableWrap>
+            <div className="border-t border-slate-200 bg-white px-4 pb-4">
+              <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
+            </div>
+          </>
+        ) : <div className="p-4"><EmptyState label={loading ? 'Loading stock...' : 'No stock products found'} /></div>}
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_1fr_1fr_1.2fr] lg:items-center">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600"><Package className="h-6 w-6" /></div>
+            <div>
+              <div className="font-semibold text-slate-950">Stock Summary ({selectedWarehouseId === 'all' ? 'All Warehouses' : warehouseFilterOptions.find((option) => option.value === selectedWarehouseId)?.label})</div>
+              <div className="mt-1 text-xs text-slate-500">Real-time overview of your inventory</div>
+            </div>
+          </div>
+          <SummaryMetric label="Total Stock Qty" value={formatQty(stockSummary.totalQty)} caption="All units" />
+          <SummaryMetric label="Low Stock Items" value={formatQty(stockSummary.lowStock)} valueClassName="text-orange-500" caption="Need attention" />
+          <SummaryMetric label="Out of Stock Items" value={formatQty(stockSummary.outOfStock)} valueClassName="text-red-500" caption="Reorder required" />
+          <SummaryMetric label="Last Updated" value={lastUpdatedLabel()} caption="Auto refresh: On" accent />
+        </div>
+      </section>
 
       <Modal title={stockBreakdownProduct ? `${stockBreakdownProduct.name} Stock Breakdown` : 'Stock Breakdown'} open={stockBreakdownOpen} onOpenChange={setStockBreakdownOpen}>
         <div className="overflow-x-auto rounded-md border border-neutral-200">
@@ -430,6 +523,85 @@ export function ProductStocksPage() {
   );
 }
 
+function StockMetricCard({
+  icon: Icon,
+  iconClassName,
+  label,
+  value,
+  valueClassName = 'text-slate-950',
+  caption,
+}: {
+  icon: LucideIcon;
+  iconClassName: string;
+  label: string;
+  value: string;
+  valueClassName?: string;
+  caption: string;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${iconClassName}`}>
+          <Icon className="h-7 w-7" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-slate-500">{label}</div>
+          <div className={`mt-1 text-2xl font-bold leading-none ${valueClassName}`}>{value}</div>
+          <div className="mt-2 text-xs text-slate-500">{caption}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductAvatar({ product }: { product: ProductStock }) {
+  const initials = product.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
+
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-xs font-bold text-slate-600">
+      {initials || <Package className="h-5 w-5" />}
+    </div>
+  );
+}
+
+function StockStatusBadge({ status }: { status: ReturnType<typeof stockStatus> }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-semibold ${status.badgeClassName}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${status.dotClassName}`} />
+      {status.label}
+    </span>
+  );
+}
+
+function SummaryMetric({
+  label,
+  value,
+  caption,
+  valueClassName = 'text-slate-950',
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  caption: string;
+  valueClassName?: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="border-slate-200 lg:border-l lg:pl-8">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className={`mt-1 text-lg font-bold ${valueClassName}`}>{value}</div>
+      <div className="mt-1 text-xs text-slate-500">
+        {caption}{accent ? <span className="ml-1 inline-flex items-center gap-1 text-emerald-600">On <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /></span> : null}
+      </div>
+    </div>
+  );
+}
+
 function defaultForm(product: ProductStock, warehouses: Warehouse[], units: Unit[]): AdjustmentForm {
   const familyUnits = productUnitsForFamily(product, units);
 
@@ -522,6 +694,108 @@ function rootUnitId(unitId: number | null | undefined, units: Unit[]) {
 
 function isVariantProduct(product: ProductStock | null | undefined) {
   return product?.is_variant === true || String(product?.is_variant) === '1';
+}
+
+function isBatchProduct(product: ProductStock | null | undefined) {
+  return product?.is_batch === true || String(product?.is_batch) === '1';
+}
+
+function stockStatus(product: ProductStock) {
+  const quantity = Number(product.current_stock) || 0;
+  const lowLimit = lowStockLimit(product);
+
+  if (quantity <= 0) {
+    return {
+      key: 'out_of_stock' as const,
+      label: 'Out of Stock',
+      badgeClassName: 'border-red-200 bg-red-50 text-red-600',
+      dotClassName: 'bg-red-500',
+      barClassName: 'h-full rounded-full bg-red-500',
+    };
+  }
+
+  if (quantity <= lowLimit) {
+    return {
+      key: 'low_stock' as const,
+      label: 'Low Stock',
+      badgeClassName: 'border-orange-200 bg-orange-50 text-orange-600',
+      dotClassName: 'bg-orange-500',
+      barClassName: 'h-full rounded-full bg-orange-500',
+    };
+  }
+
+  return {
+    key: 'in_stock' as const,
+    label: 'In Stock',
+    badgeClassName: 'border-emerald-200 bg-emerald-50 text-emerald-600',
+    dotClassName: 'bg-emerald-500',
+    barClassName: 'h-full rounded-full bg-emerald-500',
+  };
+}
+
+function lowStockLimit(product: ProductStock) {
+  const candidate = (product as ProductStock & { alert_quantity?: number | string | null; low_stock_limit?: number | string | null }).alert_quantity
+    ?? (product as ProductStock & { low_stock_limit?: number | string | null }).low_stock_limit;
+  const limit = Number(candidate);
+
+  return Number.isFinite(limit) && limit > 0 ? limit : 50;
+}
+
+function stockPercent(product: ProductStock) {
+  const quantity = Math.max(0, Number(product.current_stock) || 0);
+  if (quantity === 0) return 0;
+
+  const reference = Math.max(lowStockLimit(product) * 2, quantity);
+  return Math.max(5, Math.min(100, Math.round((quantity / reference) * 100)));
+}
+
+function productDescriptor(product: ProductStock) {
+  if (isVariantProduct(product)) return 'Variant tracked';
+  if (isBatchProduct(product)) return 'Batch tracked';
+  return product.type === 'standard' ? 'Standard item' : product.type;
+}
+
+function categoryLabel(product: ProductStock) {
+  const withCategory = product as ProductStock & { category?: { name?: string | null } | null; category_name?: string | null };
+  return withCategory.category?.name ?? withCategory.category_name ?? 'General';
+}
+
+function warehouseLabel(product: ProductStock, selectedWarehouseId: string) {
+  if (selectedWarehouseId !== 'all') {
+    return product.stocks?.find((stock) => String(stock.warehouse_id) === selectedWarehouseId)?.warehouse_name ?? 'Selected warehouse';
+  }
+
+  const warehouses = [...new Set((product.stocks ?? []).map((stock) => stock.warehouse_name).filter(Boolean))];
+  if (warehouses.length === 0) return 'All Warehouses';
+  if (warehouses.length === 1) return warehouses[0];
+  return `${warehouses[0]} +${warehouses.length - 1}`;
+}
+
+function lastUpdatedLabel() {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date());
+}
+
+function summarizeStock(items: ProductStock[], pagination: PaginationMeta | null) {
+  const inStock = items.filter((item) => stockStatus(item).key === 'in_stock').length;
+  const lowStock = items.filter((item) => stockStatus(item).key === 'low_stock').length;
+  const outOfStock = items.filter((item) => stockStatus(item).key === 'out_of_stock').length;
+  const totalProducts = pagination?.total ?? items.length;
+
+  return {
+    totalProducts,
+    inStock,
+    lowStock,
+    outOfStock,
+    variantsTracked: items.filter(isVariantProduct).length,
+    totalQty: items.reduce((sum, item) => sum + (Number(item.current_stock) || 0), 0),
+    inStockRate: totalProducts > 0 ? Math.round((inStock / totalProducts) * 1000) / 10 : 0,
+  };
 }
 
 function variantStockRows(product: ProductStock | null) {

@@ -274,6 +274,7 @@ Artisan::command('inventory:clear-transactions {--force : Skip confirmation} {--
         'adjustments',
         'purchase_product_return',
         'product_returns',
+        'product_transfer',
         'product_sales',
         'product_purchases',
         'payments',
@@ -282,6 +283,7 @@ Artisan::command('inventory:clear-transactions {--force : Skip confirmation} {--
         'sales',
         'return_purchases',
         'purchases',
+        'transfers',
         'product_warehouse',
         'product_batches',
     ];
@@ -302,6 +304,8 @@ Artisan::command('inventory:clear-transactions {--force : Skip confirmation} {--
         'expense',
         'payment',
         'product_stock_movement',
+        'Transfer',
+        'stock_transfer',
     ];
 
     if (Schema::hasTable($activityLogTable)) {
@@ -365,7 +369,7 @@ Artisan::command('inventory:clear-transactions {--force : Skip confirmation} {--
     }
 
     $this->info('Transactional inventory data cleared.');
-    $this->comment('Cleared sales, sales returns, purchases, purchase returns, expenses, payments, stock snapshots, stock movements, batches, and adjustments.');
+    $this->comment('Cleared sales, sales returns, purchases, purchase returns, stock transfers, expenses, payments, stock snapshots, stock movements, batches, and adjustments.');
 
     return 0;
 })->purpose('Clear transactional inventory data while keeping master data');

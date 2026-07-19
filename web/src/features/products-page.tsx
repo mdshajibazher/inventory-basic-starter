@@ -1,8 +1,8 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Calendar, Eye, GripVertical, Package, Pencil, Trash2 } from 'lucide-react';
+import { Bell, Boxes, Building2, Calendar, ChevronRight, CircleDollarSign, Eye, GripVertical, ImageOff, Package, Pencil, Plus, Save, Star, Tags, Trash2, Upload, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
@@ -420,243 +420,270 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   const salePurchaseDisabled = !form.unitId;
 
   const productForm = (
-    <form onSubmit={save} className="grid min-w-0 gap-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Product name"><Input value={form.name} onChange={(event) => setValue('name', event.target.value)} /></Field>
-        <Field label="Code"><Input value={form.code} onChange={(event) => setValue('code', event.target.value)} /></Field>
-        <Field label="Type"><Select value={form.type} onValueChange={(value) => setValue('type', value)} options={options.types.map(option)} /></Field>
-        <Field label="Barcode symbology"><Select value={form.barcodeSymbology} onValueChange={(value) => setValue('barcodeSymbology', value)} options={options.barcode_symbologies.map(option)} /></Field>
-        <SearchableSelect
-          label="Brand"
-          valueLabel={selectedBrand?.title ?? 'No brand'}
-          placeholder="Search brands"
-          search={searchBrands}
-          keyFor={(brand) => brand.id}
-          labelFor={(brand) => brand.title}
-          onSelect={(brand) => {
-            setSelectedBrand(brand.id ? brand : null);
-            setValue('brandId', brand.id ? brand.id : null);
-          }}
-        />
-        <SearchableSelect
-          label="Category"
-          valueLabel={selectedCategory?.name ?? 'Select category'}
-          placeholder="Search categories"
-          search={searchCategories}
-          keyFor={(category) => category.id}
-          labelFor={(category) => category.name}
-          detailFor={(category) => category.parent_category_name ?? category.parent?.name}
-          onSelect={(category) => {
-            setSelectedCategory(category);
-            setValue('categoryId', category.id);
-          }}
-        />
-        <Field label="Product Base Unit" hint={unitIdLocked ? 'Base unit is locked because this product has purchase, sale, or return history.' : undefined}>
-          <Select
-            value={idValue(form.unitId)}
-            onValueChange={(value) => setBaseUnit(nullableId(value))}
-            options={unitOptions(options.units)}
-            disabled={unitIdLocked}
-          />
-        </Field>
-        <Field label="Sale unit">
-          <Select
-            value={idValue(form.saleUnitId)}
-            onValueChange={(value) => setValue('saleUnitId', nullableId(value))}
-            options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select sale unit')}
-            disabled={salePurchaseDisabled}
-          />
-        </Field>
-        <Field label="Purchase unit">
-          <Select
-            value={idValue(form.purchaseUnitId)}
-            onValueChange={(value) => setValue('purchaseUnitId', nullableId(value))}
-            options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select purchase unit')}
-            disabled={salePurchaseDisabled}
-          />
-        </Field>
-        <Field label="Tax"><Select value={idValue(form.taxId)} onValueChange={(value) => setValue('taxId', nullableId(value))} options={[{ value: 'none', label: 'No tax' }, ...options.taxes.map((tax) => ({ value: String(tax.id), label: `${tax.name} (${tax.rate}%)` }))]} /></Field>
-        <Field label="Tax method"><Select value={String(form.taxMethod)} onValueChange={(value) => setValue('taxMethod', Number(value))} options={options.tax_methods.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
-        <Field label="Purchase Cost"><Input type="number" step="0.01" value={form.cost} onChange={(event) => setValue('cost', event.target.value)} /></Field>
-        <Field label="Base Unit Price"><Input type="number" step="0.01" value={form.price} onChange={(event) => setValue('price', event.target.value)} /></Field>
-        <Field label="Alert quantity"><Input type="number" step="0.01" value={form.alertQuantity} onChange={(event) => setValue('alertQuantity', event.target.value)} /></Field>
-        <Field label="Image"><Input type="file" accept="image/*" onChange={(event) => setValue('imageFile', event.target.files?.[0] ?? null)} /></Field>
-      </div>
-      <Field label="Product details"><Textarea value={form.productDetails} onChange={(event) => setValue('productDetails', event.target.value)} /></Field>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {[
-          ['featured', 'Featured'],
-          ['isDiffPrice', 'Different warehouse price'],
-          ['removeImage', 'Remove image'],
-          ['isActive', 'Active'],
-        ].map(([key, label]) => (
-          <div key={key} className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
-            <span className="text-sm font-medium">{label}</span>
-            <Switch checked={Boolean(form[key as keyof ProductForm])} onCheckedChange={(checked) => setValue(key as keyof ProductForm, checked as never)} />
-          </div>
-        ))}
-        {!form.isVariant ? (
-          <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
-            <span className="text-sm font-medium">Batch</span>
-            <Switch checked={form.isBatch} onCheckedChange={setBatch} />
-          </div>
-        ) : null}
-        {!form.isBatch ? (
-          <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
-            <span className="text-sm font-medium">Variant</span>
-            <Switch checked={form.isVariant} onCheckedChange={setVariantEnabled} />
-          </div>
-        ) : null}
-      </div>
-      <div className="grid gap-4 rounded-md border border-neutral-200 bg-white p-4">
-        <label className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
-          <Checkbox checked={form.promotion} onCheckedChange={setPromotion} />
-          Add Promotional Price
-        </label>
-        {form.promotion ? (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Field label="Promotional Price">
-              <Input type="number" step="0.01" value={form.promotionPrice} onChange={(event) => setValue('promotionPrice', event.target.value)} />
-            </Field>
-            <Field label="Promotion Starts">
-              <div className="relative">
-                <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                <Input type="date" className="pl-10" value={form.startingDate} onChange={(event) => setValue('startingDate', event.target.value)} />
-              </div>
-            </Field>
-            <Field label="Promotion Ends">
-              <div className="relative">
-                <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
-                <Input type="date" className="pl-10" value={form.lastDate} onChange={(event) => setValue('lastDate', event.target.value)} />
-              </div>
-            </Field>
-          </div>
-        ) : null}
-      </div>
-      {form.isVariant ? (
-        <div className="grid min-w-0 gap-3">
-          <div className="grid gap-3 rounded-md border border-neutral-200 p-3">
-            <div className="text-sm font-medium text-neutral-900">Option groups</div>
-            {form.variantGroups.length ? (
-              <div className="grid gap-2">
-                {form.variantGroups.map((group, index) => (
-                  <div key={group.id} className="grid gap-2 sm:grid-cols-[minmax(120px,0.45fr)_minmax(180px,1fr)_auto]">
-                    <Input
-                      value={group.name}
-                      placeholder="Color"
-                      onChange={(event) => setVariantGroup(index, 'name', event.target.value)}
-                    />
-                    <Input
-                      value={group.values}
-                      placeholder="Red, Blue"
-                      onChange={(event) => setVariantGroup(index, 'values', event.target.value)}
-                    />
-                    <Button type="button" variant="danger" className="h-10 w-10 px-0" aria-label="Remove option group" onClick={() => removeVariantGroup(index)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-neutral-500">Add groups such as Color and Size, then generate sellable variants.</div>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={addVariantGroup}>Add group</Button>
-              <Button type="button" onClick={generateVariantCombinations}>Generate combinations</Button>
+    <form onSubmit={save} className="min-w-0 pb-20">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-w-0 gap-4">
+          <FormSection icon={Package} title="Basic Information">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Field label="Product Name *"><Input value={form.name} placeholder="Enter product name" onChange={(event) => setValue('name', event.target.value)} /></Field>
+              <Field label="Product Code *" hint="Unique code for this product"><Input value={form.code} onChange={(event) => setValue('code', event.target.value)} /></Field>
+              <Field label="Type"><Select value={form.type} onValueChange={(value) => setValue('type', value)} options={options.types.map(option)} /></Field>
+              <Field label="Barcode Symbology"><Select value={form.barcodeSymbology} onValueChange={(value) => setValue('barcodeSymbology', value)} options={options.barcode_symbologies.map(option)} /></Field>
+              <SearchableSelect
+                label="Brand"
+                valueLabel={selectedBrand?.title ?? 'Select brand (optional)'}
+                placeholder="Search brands"
+                search={searchBrands}
+                keyFor={(brand) => brand.id}
+                labelFor={(brand) => brand.title}
+                onSelect={(brand) => {
+                  setSelectedBrand(brand.id ? brand : null);
+                  setValue('brandId', brand.id ? brand.id : null);
+                }}
+              />
+              <SearchableSelect
+                label="Category *"
+                valueLabel={selectedCategory?.name ?? 'Select category'}
+                placeholder="Search categories"
+                search={searchCategories}
+                keyFor={(category) => category.id}
+                labelFor={(category) => category.name}
+                detailFor={(category) => category.parent_category_name ?? category.parent?.name}
+                onSelect={(category) => {
+                  setSelectedCategory(category);
+                  setValue('categoryId', category.id);
+                }}
+              />
             </div>
-          </div>
-          {form.variants.length ? (
-            <div className="w-full max-w-full overflow-x-auto rounded-md border border-neutral-200">
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead className="bg-neutral-50 text-xs font-medium text-neutral-500">
-                  <tr>
-                    <th className="w-10 px-3 py-2"><GripVertical className="h-4 w-4" /></th>
-                    <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Item Code</th>
-                    <th className="px-3 py-2">Additional Price</th>
-                    <th className="w-12 px-3 py-2"><Trash2 className="h-4 w-4" /></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {form.variants.map((variant, index) => (
-                    <tr key={`${variant.id ?? 'new'}-${index}`} className="border-t border-neutral-100">
-                      <td className="px-3 py-2 text-neutral-400"><GripVertical className="h-4 w-4" /></td>
-                      <td className="px-3 py-2">
-                        <Input value={variant.name} onChange={(event) => setVariantValue(index, 'name', event.target.value)} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <Input value={variant.itemCode} onChange={(event) => setVariantValue(index, 'itemCode', event.target.value)} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <Input type="number" step="0.01" value={variant.additionalPrice} onChange={(event) => setVariantValue(index, 'additionalPrice', event.target.value)} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <Button type="button" variant="danger" className="h-9 w-9 px-0" aria-label="Remove variant" onClick={() => removeVariant(index)}>
+          </FormSection>
+
+          <FormSection icon={CircleDollarSign} title="Unit & Pricing">
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Field label="Base Unit *" hint={unitIdLocked ? 'Base unit is locked because this product has purchase, sale, or return history.' : undefined}>
+                <Select
+                  value={idValue(form.unitId)}
+                  onValueChange={(value) => setBaseUnit(nullableId(value))}
+                  options={unitOptions(options.units)}
+                  disabled={unitIdLocked}
+                />
+              </Field>
+              <Field label="Sales Unit">
+                <Select
+                  value={idValue(form.saleUnitId)}
+                  onValueChange={(value) => setValue('saleUnitId', nullableId(value))}
+                  options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select sales unit')}
+                  disabled={salePurchaseDisabled}
+                />
+              </Field>
+              <Field label="Purchase Unit">
+                <Select
+                  value={idValue(form.purchaseUnitId)}
+                  onValueChange={(value) => setValue('purchaseUnitId', nullableId(value))}
+                  options={unitOptions(salePurchaseUnits, salePurchaseDisabled ? 'Select base unit first' : 'Select purchase unit')}
+                  disabled={salePurchaseDisabled}
+                />
+              </Field>
+              <Field label="Base Unit Price (৳)"><MoneyInput value={form.price} onChange={(value) => setValue('price', value)} /></Field>
+              <Field label="Purchase Cost (৳)"><MoneyInput value={form.cost} onChange={(value) => setValue('cost', value)} /></Field>
+              <Field label="Tax"><Select value={idValue(form.taxId)} onValueChange={(value) => setValue('taxId', nullableId(value))} options={[{ value: 'none', label: 'No tax' }, ...options.taxes.map((tax) => ({ value: String(tax.id), label: `${tax.name} (${tax.rate}%)` }))]} /></Field>
+              <Field label="Tax Method"><Select value={String(form.taxMethod)} onValueChange={(value) => setValue('taxMethod', Number(value))} options={options.tax_methods.map((item) => ({ value: String(item.id), label: item.name }))} /></Field>
+              <Field label="Alert Quantity"><Input type="number" step="0.01" value={form.alertQuantity} placeholder="Enter alert quantity" onChange={(event) => setValue('alertQuantity', event.target.value)} /></Field>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800">
+                <div className="flex items-start gap-3">
+                  <Bell className="mt-0.5 h-5 w-5 shrink-0" />
+                  <div>
+                    <div className="text-sm font-semibold">Alert Quantity</div>
+                    <div className="mt-1 text-xs text-emerald-700">Get notified when stock is below this quantity.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </FormSection>
+
+          {form.isVariant ? (
+            <FormSection icon={Tags} title="Variants (Option Groups)" subtitle="Add option groups like Color, Size etc. and their values">
+              <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                <div className="grid gap-3">
+                  {form.variantGroups.length ? (
+                    form.variantGroups.map((group, index) => (
+                      <div key={group.id} className="grid gap-2 sm:grid-cols-[minmax(120px,0.45fr)_minmax(180px,1fr)_auto]">
+                        <Field label="Option Group">
+                          <Input value={group.name} placeholder="Color" onChange={(event) => setVariantGroup(index, 'name', event.target.value)} />
+                        </Field>
+                        <Field label="Values (comma separated)">
+                          <Input value={group.values} placeholder="Red, Blue, Green" onChange={(event) => setVariantGroup(index, 'values', event.target.value)} />
+                        </Field>
+                        <Button type="button" variant="danger" className="mt-6 h-10 w-10 px-0" aria-label="Remove option group" title="Remove option group" onClick={() => removeVariantGroup(index)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {form.isDiffPrice ? (
-        <div className="grid min-w-0 gap-3">
-          <div className="text-sm font-medium text-neutral-900">Warehouse prices</div>
-          {form.warehousePrices.length ? (
-            <div className="overflow-hidden rounded-md border border-neutral-200">
-              <div className="hidden grid-cols-[minmax(0,1fr)_minmax(180px,1fr)] border-b border-neutral-200 bg-neutral-50 text-xs font-medium text-neutral-500 sm:grid">
-                <div className="px-3 py-2">Warehouse</div>
-                <div className="px-3 py-2">Base Unit Price</div>
-              </div>
-              <div className="divide-y divide-neutral-100">
-                {form.warehousePrices.map((warehousePrice, index) => (
-                  <div key={warehousePrice.warehouseId} className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,1fr)] sm:items-center sm:py-2">
-                    <div className="min-w-0 text-sm text-neutral-700">
-                      <span className="block text-xs font-medium text-neutral-500 sm:hidden">Warehouse</span>
-                      <span className="block truncate">{warehousePrice.warehouseName}</span>
-                    </div>
-                    <div>
-                      <span className="mb-1 block text-xs font-medium text-neutral-500 sm:hidden">Base Unit Price</span>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={warehousePrice.price}
-                        onChange={(event) => setWarehousePrice(index, event.target.value)}
-                      />
-                    </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-sm text-slate-500">Add groups such as Color and Size, then generate sellable variants.</div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="secondary" className="h-9 border-emerald-200 px-3 text-emerald-700 hover:bg-emerald-50" onClick={addVariantGroup}>
+                      <Plus className="h-4 w-4" />
+                      Add Option Group
+                    </Button>
+                    <Button type="button" variant="secondary" className="h-9 px-3" onClick={generateVariantCombinations}>Generate combinations</Button>
                   </div>
-                ))}
+                </div>
+                <VariantPreview groups={form.variantGroups} count={form.variants.length} />
               </div>
-            </div>
-          ) : (
-            <div className="rounded-md border border-neutral-200 px-3 py-4 text-sm text-neutral-500">No active warehouses found.</div>
-          )}
+              {form.variants.length ? (
+                <div className="mt-4 w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
+                  <table className="w-full min-w-[640px] text-left text-sm">
+                    <thead className="bg-slate-50 text-xs font-medium text-slate-500">
+                      <tr>
+                        <th className="w-10 px-3 py-2"><GripVertical className="h-4 w-4" /></th>
+                        <th className="px-3 py-2">Name</th>
+                        <th className="px-3 py-2">Item Code</th>
+                        <th className="px-3 py-2">Additional Price</th>
+                        <th className="w-12 px-3 py-2"><Trash2 className="h-4 w-4" /></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {form.variants.map((variant, index) => (
+                        <tr key={`${variant.id ?? 'new'}-${index}`} className="border-t border-slate-100">
+                          <td className="px-3 py-2 text-slate-400"><GripVertical className="h-4 w-4" /></td>
+                          <td className="px-3 py-2"><Input value={variant.name} onChange={(event) => setVariantValue(index, 'name', event.target.value)} /></td>
+                          <td className="px-3 py-2"><Input value={variant.itemCode} onChange={(event) => setVariantValue(index, 'itemCode', event.target.value)} /></td>
+                          <td className="px-3 py-2"><Input type="number" step="0.01" value={variant.additionalPrice} onChange={(event) => setVariantValue(index, 'additionalPrice', event.target.value)} /></td>
+                          <td className="px-3 py-2">
+                            <Button type="button" variant="danger" className="h-9 w-9 px-0" aria-label="Remove variant" title="Remove variant" onClick={() => removeVariant(index)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </FormSection>
+          ) : null}
+
+          {form.isDiffPrice ? (
+            <FormSection icon={Building2} title="Warehouse Prices" subtitle="Set base unit price for each warehouse (optional)" action={<span className="text-lg leading-none text-slate-500">...</span>}>
+              {form.warehousePrices.length ? (
+                <div className="overflow-hidden rounded-md border border-slate-200">
+                  <div className="hidden grid-cols-[minmax(0,1fr)_minmax(180px,1fr)] border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500 sm:grid">
+                    <div className="px-3 py-2">Warehouse</div>
+                    <div className="px-3 py-2">Base Unit Price (৳)</div>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {form.warehousePrices.map((warehousePrice, index) => (
+                      <div key={warehousePrice.warehouseId} className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,1fr)] sm:items-center sm:py-2">
+                        <div className="min-w-0 text-sm text-slate-700">
+                          <span className="block text-xs font-medium text-slate-500 sm:hidden">Warehouse</span>
+                          <span className="block truncate">{warehousePrice.warehouseName}</span>
+                        </div>
+                        <MoneyInput value={warehousePrice.price} onChange={(value) => setWarehousePrice(index, value)} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-200 px-3 py-4 text-sm text-slate-500">No active warehouses found.</div>
+              )}
+            </FormSection>
+          ) : null}
+
+          <FormSection icon={Calendar} title="Promotion" subtitle="Optional promotional pricing window">
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Checkbox checked={form.promotion} onCheckedChange={setPromotion} />
+              Add Promotional Price
+            </label>
+            {form.promotion ? (
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <Field label="Promotional Price"><MoneyInput value={form.promotionPrice} onChange={(value) => setValue('promotionPrice', value)} /></Field>
+                <Field label="Promotion Starts">
+                  <div className="relative">
+                    <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <Input type="date" className="pl-10" value={form.startingDate} onChange={(event) => setValue('startingDate', event.target.value)} />
+                  </div>
+                </Field>
+                <Field label="Promotion Ends">
+                  <div className="relative">
+                    <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <Input type="date" className="pl-10" value={form.lastDate} onChange={(event) => setValue('lastDate', event.target.value)} />
+                  </div>
+                </Field>
+              </div>
+            ) : null}
+          </FormSection>
+
+          <FormSection icon={Tags} title="Product Details">
+            <Field label="Description"><Textarea value={form.productDetails} placeholder="Write product notes, ingredients, warranty or handling instructions" onChange={(event) => setValue('productDetails', event.target.value)} /></Field>
+          </FormSection>
         </div>
-      ) : null}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="secondary" onClick={cancelForm}>Cancel</Button>
-        <Button type="submit" disabled={saving || loading}>{saving ? 'Saving...' : mode === 'edit' ? 'Update' : 'Save'}</Button>
+
+        <aside className="grid content-start gap-4">
+          <FormSection title="Image">
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center">
+              <Upload className="mx-auto h-6 w-6 text-slate-500" />
+              <div className="mt-3 text-sm font-medium text-slate-700">{form.imageFile ? form.imageFile.name : editing?.image_url || editing?.image ? 'Current product image' : 'Upload product image'}</div>
+              <div className="mt-1 text-xs text-slate-500">PNG, JPG up to 2MB</div>
+            </div>
+            <label className="mt-3 inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 hover:bg-slate-50">
+              <Upload className="h-4 w-4" />
+              Choose File
+              <input className="sr-only" type="file" accept="image/*" onChange={(event) => setValue('imageFile', event.target.files?.[0] ?? null)} />
+            </label>
+          </FormSection>
+
+          <FormSection icon={Boxes} title="Product Options">
+            <div className="grid gap-2">
+              <OptionToggle icon={Star} title="Featured Product" description="Show on featured list" checked={form.featured} onCheckedChange={(checked) => setValue('featured', checked)} />
+              <OptionToggle icon={Building2} title="Different Warehouse Price" description="Set price per warehouse" checked={form.isDiffPrice} onCheckedChange={(checked) => setValue('isDiffPrice', checked)} />
+              <OptionToggle icon={ImageOff} title="Remove Image" description="Hide from invoices" checked={form.removeImage} onCheckedChange={(checked) => setValue('removeImage', checked)} />
+              <OptionToggle icon={Package} title="Active" description="Product will be active" checked={form.isActive} onCheckedChange={(checked) => setValue('isActive', checked)} />
+              {!form.isVariant ? <OptionToggle icon={Boxes} title="Batch Tracking" description="Track product in batches" checked={form.isBatch} onCheckedChange={setBatch} /> : null}
+              {!form.isBatch ? <OptionToggle icon={Tags} title="Variant Product" description="This product has variants" checked={form.isVariant} onCheckedChange={setVariantEnabled} /> : null}
+            </div>
+          </FormSection>
+        </aside>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:left-64">
+        <div className="mx-auto flex max-w-[1600px] justify-end gap-3">
+          <Button type="button" variant="secondary" className="min-w-28 border-slate-200" onClick={cancelForm}>Cancel</Button>
+          <Button type="submit" className="min-w-36 bg-emerald-600 hover:bg-emerald-700" disabled={saving || loading}>
+            <Save className="h-4 w-4" />
+            {saving ? 'Saving...' : mode === 'edit' ? 'Update Product' : 'Save Product'}
+          </Button>
+        </div>
       </div>
     </form>
   );
 
   if (mode !== 'index') {
     return (
-      <div>
+      <div className="min-h-screen bg-slate-50/40">
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{mode === 'edit' ? 'Edit Product' : 'Add Product'}</h1>
-            <p className="mt-1 text-sm text-neutral-500">{mode === 'edit' ? 'Update product information and stock settings' : 'Create a product and configure price, stock, and variants'}</p>
+          <div className="min-w-0">
+            <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
+              <Link className="hover:text-slate-900" href="/products">Products</Link>
+              <ChevronRight className="h-4 w-4" />
+              <span>{mode === 'edit' ? 'Edit Product' : 'Add New Product'}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                <Package className="h-7 w-7" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{mode === 'edit' ? 'Edit Product' : 'Add New Product'}</h1>
+                <p className="mt-1 text-sm text-slate-500">{mode === 'edit' ? 'Update product information and stock settings' : 'Create a new product and configure pricing, stock, and variants'}</p>
+              </div>
+            </div>
           </div>
-          <Link className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-200 bg-white px-4 text-sm font-medium text-black hover:bg-neutral-50" href="/products">Back</Link>
+          <Link className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50" href="/products">
+            <span className="text-lg leading-none">&larr;</span>
+            Back
+          </Link>
         </div>
-        <div className="rounded-lg border border-neutral-200 bg-white p-5">
-          {loading && !editing && mode === 'edit' ? <EmptyState label="Loading product..." /> : productForm}
-        </div>
+        {loading && !editing && mode === 'edit' ? <EmptyState label="Loading product..." /> : productForm}
       </div>
     );
   }
@@ -730,6 +757,102 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
         <EmptyState label={loading ? 'Loading...' : 'No products found.'} />
       )}
       <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
+    </div>
+  );
+}
+
+function FormSection({
+  icon: Icon,
+  title,
+  subtitle,
+  action,
+  children,
+}: {
+  icon?: LucideIcon;
+  title: string;
+  subtitle?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          {Icon ? (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+              <Icon className="h-4 w-4" />
+            </div>
+          ) : null}
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-950">{title}</h2>
+            {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+          </div>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function MoneyInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="flex overflow-hidden rounded-md border border-neutral-200 bg-white focus-within:border-black">
+      <div className="flex h-10 w-11 shrink-0 items-center justify-center border-r border-neutral-200 bg-slate-50 text-sm font-medium text-slate-600">৳</div>
+      <Input
+        type="number"
+        step="0.01"
+        value={value}
+        className="border-0 focus:border-0"
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function OptionToggle({
+  icon: Icon,
+  title,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg px-1 py-2">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-600">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          <div className="mt-0.5 text-xs text-slate-500">{description}</div>
+        </div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+function VariantPreview({ groups, count }: { groups: VariantOptionGroupForm[]; count: number }) {
+  const combinations = variantCombinations(groups).slice(0, 9);
+  const colors = ['bg-red-50 text-red-700', 'bg-blue-50 text-blue-700', 'bg-emerald-50 text-emerald-700'];
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+      <div className="text-sm font-semibold text-emerald-700">Variant Preview</div>
+      <div className="mt-2 text-xs text-slate-500">This will create {count || variantCombinations(groups).length} variants</div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {combinations.length ? combinations.map((name, index) => (
+          <span key={name} className={`rounded-md px-2.5 py-1 text-xs font-medium ${colors[index % colors.length]}`}>{name}</span>
+        )) : <span className="text-xs text-slate-500">Add option values to preview variants.</span>}
+        {variantCombinations(groups).length > combinations.length ? <span className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-500">...</span> : null}
+      </div>
     </div>
   );
 }

@@ -746,6 +746,8 @@ export type ProductStock = {
   name: string;
   code: string;
   type: string;
+  category_id?: number | null;
+  category?: Category | null;
   current_stock: number;
   unit?: Unit | null;
   is_variant?: boolean | number | null;

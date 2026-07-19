@@ -18,9 +18,11 @@ class StockController extends Controller
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
         $warehouseId = $request->integer('warehouse_id') ?: null;
+        $categoryId = $request->integer('category_id') ?: null;
 
         $products = Product::query()
             ->with([
+                'category:id,name',
                 'unit:id,unit_code,unit_name,base_unit,operator,operation_value',
                 'variants.variant:id,name',
                 'warehouseStocks' => fn ($query) => $query
@@ -33,6 +35,7 @@ class StockController extends Controller
                         'warehouseStocks as selected_warehouse_stock' => fn ($stockQuery) => $stockQuery->where('warehouse_id', $warehouseId),
                     ], 'qty');
             })
+            ->when($categoryId, fn ($query) => $query->where('category_id', $categoryId))
             ->where('is_active', true)
             ->where('type', '!=', 'digital')
             ->when($request->filled('search'), function ($query) use ($request) {

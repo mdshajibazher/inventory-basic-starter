@@ -85,6 +85,7 @@ class TransferController extends Controller
             $transfer = DB::transaction(function () use ($request, $stockService) {
                 $data = $request->validated();
                 $totals = $this->calculateTotals($data);
+                $this->assertSourceStockAvailable($data, $stockService);
                 $documentPath = $request->file('document')?->store('transfer/documents', 'public');
 
                 $transfer = Transfer::create([
@@ -140,6 +141,7 @@ class TransferController extends Controller
                 $oldLineIds = $transfer->products()->pluck('id')->all();
 
                 $stockService->reverseSourceMovements(self::SOURCE_TYPE, $oldLineIds);
+                $this->assertSourceStockAvailable($data, $stockService);
                 ProductTransfer::query()->where('transfer_id', $transfer->id)->delete();
 
                 if ($request->hasFile('document')) {
@@ -237,6 +239,58 @@ class TransferController extends Controller
             if ((int) $transfer->status === Transfer::STATUS_COMPLETED) {
                 $this->moveStock($transfer, $line, $product, $unit, $stockService, $userId);
             }
+        }
+    }
+
+    private function assertSourceStockAvailable(array $data, ProductStockService $stockService): void
+    {
+        $requiredByStock = [];
+
+        foreach ($data['product_id'] as $index => $productId) {
+            $unit = Unit::query()->findOrFail($data['purchase_unit'][$index]);
+            $warehouseId = (int) $data['from_warehouse_id'];
+            $variantId = ! empty($data['variant_id'][$index]) ? (int) $data['variant_id'][$index] : null;
+            $batchId = ! empty($data['product_batch_id'][$index]) ? (int) $data['product_batch_id'][$index] : null;
+            $key = implode(':', [(int) $productId, $warehouseId, $variantId ?? 0, $batchId ?? 0]);
+
+            if (! isset($requiredByStock[$key])) {
+                $requiredByStock[$key] = [
+                    'product_id' => (int) $productId,
+                    'warehouse_id' => $warehouseId,
+                    'variant_id' => $variantId,
+                    'batch_id' => $batchId,
+                    'qty' => 0.0,
+                    'indexes' => [],
+                ];
+            }
+
+            $requiredByStock[$key]['qty'] += $stockService->convertToBase((float) $data['qty'][$index], $unit);
+            $requiredByStock[$key]['indexes'][] = $index;
+        }
+
+        $errors = [];
+
+        foreach ($requiredByStock as $stockRequirement) {
+            $available = $stockService->currentWarehouseQuantity(
+                $stockRequirement['product_id'],
+                $stockRequirement['warehouse_id'],
+                $stockRequirement['variant_id'],
+                $stockRequirement['batch_id'],
+            );
+
+            if ($stockRequirement['qty'] <= $available) {
+                continue;
+            }
+
+            foreach ($stockRequirement['indexes'] as $index) {
+                $errors["qty.{$index}"] = [
+                    'Source warehouse stock is insufficient for this transfer quantity.',
+                ];
+            }
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
         }
     }
 

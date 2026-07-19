@@ -15,6 +15,8 @@ class ProductStockResource extends JsonResource
             'name' => $this->name,
             'code' => $this->code,
             'type' => $this->type,
+            'category_id' => $this->category_id,
+            'category' => $this->whenLoaded('category'),
             'current_stock' => $this->displayQuantity((float) ($this->selected_warehouse_stock ?? $this->qty)),
             'unit' => $this->whenLoaded('unit'),
             'is_variant' => $this->is_variant,

@@ -904,8 +904,8 @@ export const api = {
   product: (id: number) => request<{ data: unknown }>(`/products/${id}`),
   productBarcode: (id: number, params: { variantId?: number | null } = {}) =>
     request<{ data: ProductBarcodeLabel }>(`/products/${id}/barcode${queryString({ variant_id: params.variantId })}`),
-  productStocks: (params: { page?: number; perPage?: number; search?: string; warehouseId?: number } = {}) =>
-    request<PaginatedResponse<unknown>>(`/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId })}`),
+  productStocks: (params: { page?: number; perPage?: number; search?: string; warehouseId?: number; categoryId?: number } = {}) =>
+    request<PaginatedResponse<unknown>>(`/product-stocks${queryString({ page: params.page, per_page: params.perPage, search: params.search, warehouse_id: params.warehouseId, category_id: params.categoryId })}`),
   profitReport: (params: { startDate?: string; endDate?: string; warehouseId?: number; search?: string } = {}) =>
     request<ProfitReport>(`/reports/profit${queryString({ start_date: params.startDate, end_date: params.endDate, warehouse_id: params.warehouseId, search: params.search })}`),
   profitReportDetail: (params: { metric: string; startDate?: string; endDate?: string; warehouseId?: number; search?: string }) =>

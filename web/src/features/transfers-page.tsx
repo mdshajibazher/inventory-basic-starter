@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ArrowLeft, ArrowLeftRight, CalendarDays, CheckCircle2, Eye, FileText, Package, Pencil, Plus, Search, SlidersHorizontal, Truck, Trash2 } from 'lucide-react';
 import { api, type StockTransferPayload } from '@/lib/api';
-import type { PaginationMeta, Product, StockTransfer, StockTransferLine, Unit, User, Warehouse } from '@/lib/types';
+import type { PaginationMeta, Product, StockTransfer, StockTransferLine, Unit, Warehouse } from '@/lib/types';
 import { clsx, errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActivityLogTimeline } from '@/components/activity-log';
@@ -33,9 +33,7 @@ type TransferForm = {
   transferDate: string;
   fromWarehouseId: string;
   toWarehouseId: string;
-  status: 'pending' | 'completed';
   expectedDeliveryDate: string;
-  requestedBy: string;
   note: string;
   vehicleCourier: string;
   driverContact: string;
@@ -61,9 +59,7 @@ const emptyForm = (): TransferForm => ({
   transferDate: todayDate(),
   fromWarehouseId: 'none',
   toWarehouseId: 'none',
-  status: 'pending',
   expectedDeliveryDate: '',
-  requestedBy: 'none',
   note: '',
   vehicleCourier: '',
   driverContact: '',
@@ -88,7 +84,6 @@ export function TransfersPage({ mode = 'index', transferId }: { mode?: PageMode;
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransfer | null>(null);
   const [completeTarget, setCompleteTarget] = useState<StockTransfer | null>(null);
   const [form, setForm] = useState<TransferForm>(emptyForm);
@@ -102,35 +97,30 @@ export function TransfersPage({ mode = 'index', transferId }: { mode?: PageMode;
   const listSummary = useMemo(() => calculateListSummary(transfers, pagination), [pagination, transfers]);
   const selectedFromWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.fromWarehouseId);
   const selectedToWarehouse = warehouses.find((warehouse) => String(warehouse.id) === form.toWarehouseId);
-  const requestedUser = users.find((item) => String(item.id) === form.requestedBy) ?? user;
 
   const loadOptions = useCallback(async () => {
     try {
-      const [warehouseResponse, productResponse, productOptionsResponse, userOptionsResponse] = await Promise.all([
+      const [warehouseResponse, productResponse, productOptionsResponse] = await Promise.all([
         api.warehouses({ perPage: 100, activeOnly: true }),
         api.products({ perPage: 100 }),
         api.productOptions(),
-        api.userOptions(),
       ]);
       const nextWarehouses = warehouseResponse.data as Warehouse[];
       const nextProducts = (productResponse.data as Product[]).filter((product) => product.type !== 'digital');
       const productOptions = productOptionsResponse.data as { units?: Unit[] };
-      const userOptions = userOptionsResponse.data as { users?: User[] };
 
       setWarehouses(nextWarehouses);
       setProducts(nextProducts);
       setUnits(productOptions.units ?? []);
-      setUsers(userOptions.users ?? []);
       setForm((current) => ({
         ...current,
         fromWarehouseId: current.fromWarehouseId === 'none' ? idValue(nextWarehouses[0]?.id) : current.fromWarehouseId,
         toWarehouseId: current.toWarehouseId === 'none' ? idValue(nextWarehouses[1]?.id ?? nextWarehouses[0]?.id) : current.toWarehouseId,
-        requestedBy: current.requestedBy === 'none' ? idValue(user?.id ?? userOptions.users?.[0]?.id) : current.requestedBy,
       }));
     } catch (error) {
       toast.error('Options failed', { description: errorMessage(error) });
     }
-  }, [user?.id]);
+  }, []);
 
   const loadTransfers = useCallback(async (nextPage = page) => {
     setLoading(true);
@@ -304,17 +294,8 @@ export function TransfersPage({ mode = 'index', transferId }: { mode?: PageMode;
                 <Field label="To Warehouse">
                   <Select value={form.toWarehouseId} onValueChange={(value) => setValue('toWarehouseId', value)} options={warehouseOptions(warehouses)} />
                 </Field>
-                <Field label="Transfer Status">
-                  <Select value={form.status} onValueChange={(value) => setValue('status', value as TransferForm['status'])} options={[
-                    { value: 'pending', label: 'Pending' },
-                    { value: 'completed', label: 'Completed' },
-                  ]} />
-                </Field>
                 <Field label="Expected Delivery">
                   <Input type="date" value={form.expectedDeliveryDate} onChange={(event) => setValue('expectedDeliveryDate', event.target.value)} />
-                </Field>
-                <Field label="Requested By">
-                  <Select value={form.requestedBy} onValueChange={(value) => setValue('requestedBy', value)} options={userOptions(users, user)} />
                 </Field>
                 <Field label="Transfer Note">
                   <Input value={form.note} onChange={(event) => setValue('note', event.target.value)} placeholder="Optional note" />
@@ -401,10 +382,10 @@ export function TransfersPage({ mode = 'index', transferId }: { mode?: PageMode;
             <SummaryRow label="Total Items" value={String(totals.items)} />
             <SummaryRow label="Quantity Summary" value={formQuantitySummary(lines, units)} />
             <SummaryRow label="Estimated Value" value={formatCurrency(totals.value)} />
-            <SummaryRow label="Status" value={form.status === 'completed' ? 'Completed' : 'Pending'} />
-            <SummaryRow label="Initiated By" value={requestedUser?.name ?? '-'} />
+            <SummaryRow label="Status" value="Pending" />
+            <SummaryRow label="Initiated By" value={user?.name ?? '-'} />
             <div className="mt-5 rounded-md border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
-              Stock is deducted from the source warehouse only when the transfer status is completed.
+              Stock transfer requests are saved as pending and can be completed from the transfer list.
             </div>
           </aside>
         </div>
@@ -759,13 +740,6 @@ function unitOptions(units: Unit[]) {
   return [{ value: 'none', label: 'Select unit' }, ...units.map((unit) => ({ value: String(unit.id), label: unit.unit_name }))];
 }
 
-function userOptions(users: User[], currentUser?: User | null) {
-  const byId = new Map<number, User>();
-  if (currentUser) byId.set(currentUser.id, currentUser);
-  users.forEach((user) => byId.set(user.id, user));
-  return [{ value: 'none', label: 'Select user' }, ...[...byId.values()].map((user) => ({ value: String(user.id), label: user.name }))];
-}
-
 function variantOptions(product?: Product) {
   if (!isVariantProduct(product)) return [{ value: 'none', label: 'No variant' }];
   return [{ value: 'none', label: 'Select variant' }, ...(product?.variants ?? []).map((variant) => ({ value: String(variant.variant_id), label: variant.name }))];
@@ -845,9 +819,9 @@ function buildPayload(form: TransferForm, lines: TransferLineForm[], products: P
     transfer_date: form.transferDate || null,
     from_warehouse_id: fromWarehouseId,
     to_warehouse_id: toWarehouseId,
-    status: form.status,
+    status: 'pending',
     expected_delivery_date: form.expectedDeliveryDate || null,
-    requested_by: numericId(form.requestedBy),
+    requested_by: null,
     note: form.note || null,
     vehicle_courier: form.vehicleCourier || null,
     driver_contact: form.driverContact || null,
@@ -901,9 +875,7 @@ function formFromTransfer(transfer: StockTransfer): TransferForm {
     transferDate: transfer.transfer_date ?? todayDate(),
     fromWarehouseId: idValue(transfer.from_warehouse_id),
     toWarehouseId: idValue(transfer.to_warehouse_id),
-    status: transfer.status_key,
     expectedDeliveryDate: transfer.expected_delivery_date ?? '',
-    requestedBy: idValue(transfer.requested_by),
     note: transfer.note ?? '',
     vehicleCourier: transfer.vehicle_courier ?? '',
     driverContact: transfer.driver_contact ?? '',

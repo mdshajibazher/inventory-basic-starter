@@ -3,11 +3,11 @@ import type { ReactNode } from 'react';
 import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
-import { Button, Dialog, FAB, Menu, Portal, Searchbar, SegmentedButtons, Text, TextInput } from 'react-native-paper';
+import { Button, Dialog, FAB, Menu, Portal, Searchbar, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type TransferPayload } from '@/src/lib/api';
-import type { PaginationMeta, Product, Transfer, Unit, User, Warehouse } from '@/src/types';
+import type { PaginationMeta, Product, Transfer, Unit, Warehouse } from '@/src/types';
 
 const perPage = 15;
 
@@ -19,9 +19,7 @@ type TransferForm = {
   transferDate: string;
   fromWarehouseId: string;
   toWarehouseId: string;
-  status: 'pending' | 'completed';
   expectedDeliveryDate: string;
-  requestedBy: string;
   note: string;
   vehicleCourier: string;
   driverContact: string;
@@ -66,9 +64,7 @@ function defaultForm(): TransferForm {
     transferDate: today(),
     fromWarehouseId: 'none',
     toWarehouseId: 'none',
-    status: 'pending',
     expectedDeliveryDate: '',
-    requestedBy: 'none',
     note: '',
     vehicleCourier: '',
     driverContact: '',
@@ -76,7 +72,7 @@ function defaultForm(): TransferForm {
 }
 
 export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' }) {
-  const { hasPermission } = useAuth();
+  const { user, hasPermission } = useAuth();
   const [items, setItems] = useState<Transfer[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -87,7 +83,6 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
   const [step, setStep] = useState<FormStep>(1);
   const [form, setForm] = useState<TransferForm>(defaultForm);
   const [lines, setLines] = useState<DraftLine[]>([emptyLine()]);
@@ -123,26 +118,22 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
   }, [debouncedSearch, mode, page, status]);
 
   const loadOptions = useCallback(async () => {
-      const [warehouseResponse, productResponse, productOptionsResponse, userOptionsResponse] = await Promise.all([
+      const [warehouseResponse, productResponse, productOptionsResponse] = await Promise.all([
         api.warehouses({ page: 1, perPage: 100, activeOnly: true }),
         api.products({ page: 1, perPage: 100 }),
         api.productOptions(),
-        api.userOptions(),
       ]);
       const nextWarehouses = warehouseResponse.data as Warehouse[];
       const nextProducts = (productResponse.data as Product[]).filter((product) => product.type !== 'digital');
       const productOptions = productOptionsResponse.data as { units?: Unit[] };
-      const userOptions = userOptionsResponse.data as { users?: User[] };
       setWarehouses(nextWarehouses);
       setProducts(nextProducts);
       setUnits(productOptions.units ?? []);
-      setUsers(userOptions.users ?? []);
 
       setForm((current) => ({
         ...current,
         fromWarehouseId: current.fromWarehouseId === 'none' && nextWarehouses[0] ? String(nextWarehouses[0].id) : current.fromWarehouseId,
         toWarehouseId: current.toWarehouseId === 'none' && nextWarehouses[1] ? String(nextWarehouses[1].id) : current.toWarehouseId,
-        requestedBy: current.requestedBy === 'none' ? idValue(userOptions.users?.[0]?.id) : current.requestedBy,
       }));
   }, []);
 
@@ -300,9 +291,9 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
       transfer_date: form.transferDate.trim(),
       from_warehouse_id: Number(form.fromWarehouseId),
       to_warehouse_id: Number(form.toWarehouseId),
-      status: form.status,
+      status: 'pending',
       expected_delivery_date: form.expectedDeliveryDate || null,
-      requested_by: numericId(form.requestedBy),
+      requested_by: null,
       note: form.note.trim() || null,
       vehicle_courier: form.vehicleCourier.trim() || null,
       driver_contact: form.driverContact.trim() || null,
@@ -351,7 +342,6 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
 
   if (mode === 'create') {
     const totals = calculateTotals(lines);
-    const requestedUser = users.find((item) => String(item.id) === form.requestedBy);
 
     return (
       <Screen contentStyle={styles.formScreen}>
@@ -408,17 +398,6 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
               />
             </Field>
 
-            <Field label="Status">
-              <SegmentedButtons
-                value={form.status}
-                onValueChange={(value) => setForm((current) => ({ ...current, status: value as TransferForm['status'] }))}
-                buttons={[
-                  { value: 'pending', label: 'Pending' },
-                  { value: 'completed', label: 'Complete' },
-                ]}
-              />
-            </Field>
-
             <Field label="Expected Delivery">
               <Pressable onPress={() => setExpectedDeliveryPickerVisible(true)}>
                 <TextInput
@@ -432,16 +411,6 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
                   style={styles.input}
                 />
               </Pressable>
-            </Field>
-
-            <Field label="Requested By">
-              <SelectMenu
-                icon="account-outline"
-                value={form.requestedBy}
-                label={users.find((item) => String(item.id) === form.requestedBy)?.name ?? 'Select user'}
-                options={users.map((item) => ({ value: String(item.id), label: item.name }))}
-                onSelect={(requestedBy) => setForm((current) => ({ ...current, requestedBy }))}
-              />
             </Field>
 
             <Field label="Note (Optional)">
@@ -572,11 +541,11 @@ export function TransfersScreen({ mode = 'list' }: { mode?: 'list' | 'create' })
             <SummaryRow label="Total Items" value={String(totals.items)} />
             <SummaryRow label="Quantity Summary" value={formQuantitySummary(lines, units)} />
             <SummaryRow label="Estimated Value" value={formatMoney(totals.value)} />
-            <SummaryRow label="Status" value={form.status === 'completed' ? 'Completed' : 'Pending'} />
-            <SummaryRow label="Initiated By" value={requestedUser?.name ?? '-'} />
+            <SummaryRow label="Status" value="Pending" />
+            <SummaryRow label="Initiated By" value={user?.name ?? '-'} />
 
             <View style={styles.stockNotice}>
-              <Text style={styles.stockNoticeText}>Stock is deducted from the source warehouse only when the transfer status is completed.</Text>
+              <Text style={styles.stockNoticeText}>Stock transfer requests are saved as pending and can be completed from the transfer list.</Text>
             </View>
 
             <View style={styles.reviewItems}>

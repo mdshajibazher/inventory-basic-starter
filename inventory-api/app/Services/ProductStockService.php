@@ -299,7 +299,7 @@ class ProductStockService
         return [$before, $after];
     }
 
-    private function currentWarehouseQuantity(int $productId, int $warehouseId, ?int $variantId, ?int $batchId): float
+    public function currentWarehouseQuantity(int $productId, int $warehouseId, ?int $variantId, ?int $batchId): float
     {
         $quantity = ProductWarehouse::query()
             ->where('product_id', $productId)
