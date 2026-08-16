@@ -75,6 +75,7 @@ class StoreSaleRequest extends FormRequest
             'paid_by_id' => ['nullable', 'integer'],
             'paying_amount' => ['nullable', 'numeric', 'min:0'],
             'paid_amount' => ['nullable', 'numeric', 'min:0'],
+            'payment_discount_amount' => ['nullable', 'numeric', 'min:0'],
             'account_id' => ['nullable', 'integer', 'exists:accounts,id'],
             'gift_card_id' => ['nullable', 'integer', 'exists:gift_cards,id'],
             'cheque_no' => ['nullable', 'string', 'max:255'],

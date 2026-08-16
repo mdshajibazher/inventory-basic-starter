@@ -314,6 +314,7 @@ export type ProfitReportSummary = {
   sales_discounts: number;
   order_discounts: number;
   coupon_discounts: number;
+  payment_discounts: number;
   shipping: number;
   returns: number;
   cost_of_goods_sold: number;
@@ -528,6 +529,8 @@ export type Payment = {
   payment_type: PaymentType;
   direction: PaymentDirection;
   amount: number | string;
+  discount_amount?: number | string | null;
+  settled_amount?: number | string | null;
   change?: number | string | null;
   paying_method: string;
   payment_note?: string | null;

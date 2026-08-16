@@ -38,6 +38,7 @@ class StorePaymentRequest extends FormRequest
             ])],
             'direction' => ['nullable', 'string', Rule::in([Payment::DIRECTION_IN, Payment::DIRECTION_OUT])],
             'amount' => ['required', 'numeric', 'gt:0'],
+            'discount_amount' => ['nullable', 'numeric', 'min:0'],
             'change' => ['nullable', 'numeric', 'min:0'],
             'paying_method' => ['required', 'string', 'max:255'],
             'payment_note' => ['nullable', 'string'],

@@ -121,6 +121,8 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 export function Modal({
   title,
   description,
+  headerIcon: HeaderIcon,
+  showDescription = false,
   open,
   onOpenChange,
   children,
@@ -128,6 +130,8 @@ export function Modal({
 }: {
   title: string;
   description?: string;
+  headerIcon?: LucideIcon;
+  showDescription?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
@@ -138,10 +142,17 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 data-[state=closed]:animate-modal-overlay-out data-[state=open]:animate-modal-overlay-in" />
         <Dialog.Content className={clsx('fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-neutral-200 bg-white p-5 shadow-xl data-[state=closed]:animate-modal-content-out data-[state=open]:animate-modal-content-in', contentClassName)}>
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-              <Dialog.Description className="sr-only">{description ?? title}</Dialog.Description>
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              {HeaderIcon ? (
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                  <HeaderIcon className="h-6 w-6" />
+                </div>
+              ) : null}
+              <div className="min-w-0">
+                <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
+                <Dialog.Description className={showDescription ? 'mt-0.5 text-sm text-slate-500' : 'sr-only'}>{description ?? title}</Dialog.Description>
+              </div>
             </div>
             <Dialog.Close asChild>
               <Button variant="ghost" className="h-8 w-8 px-0" aria-label="Close">

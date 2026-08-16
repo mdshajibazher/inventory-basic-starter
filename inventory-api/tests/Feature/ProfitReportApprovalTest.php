@@ -135,6 +135,7 @@ class ProfitReportApprovalTest extends TestCase
             $table->string('payment_type')->nullable();
             $table->string('direction')->nullable();
             $table->double('amount');
+            $table->double('discount_amount')->default(0);
             $table->string('approval_status')->default(ApprovalService::PENDING);
             $table->timestamps();
         });
@@ -209,7 +210,7 @@ class ProfitReportApprovalTest extends TestCase
         $approvedPurchaseReturnId = $this->purchaseReturn(1, ApprovalService::APPROVED);
         $pendingPurchaseReturnId = $this->purchaseReturn(2, ApprovalService::PENDING);
 
-        $this->payment(['sale_id' => $approvedSaleId, 'amount' => 70, 'direction' => 'in', 'type' => 'sale_payment', 'status' => ApprovalService::APPROVED]);
+        $this->payment(['sale_id' => $approvedSaleId, 'amount' => 70, 'discount' => 10, 'direction' => 'in', 'type' => 'sale_payment', 'status' => ApprovalService::APPROVED]);
         $this->payment(['sale_id' => $approvedSaleId, 'amount' => 700, 'direction' => 'in', 'type' => 'sale_payment', 'status' => ApprovalService::PENDING]);
         $this->payment(['purchase_id' => $approvedPurchaseId, 'amount' => 30, 'direction' => 'out', 'type' => 'purchase_payment', 'status' => ApprovalService::APPROVED]);
         $this->payment(['purchase_id' => $pendingPurchaseId, 'amount' => 300, 'direction' => 'out', 'type' => 'purchase_payment', 'status' => ApprovalService::APPROVED]);
@@ -225,7 +226,8 @@ class ProfitReportApprovalTest extends TestCase
         $response
             ->assertOk()
             ->assertJsonPath('summary.gross_sales', 100)
-            ->assertJsonPath('summary.net_revenue', 75)
+            ->assertJsonPath('summary.payment_discounts', 10)
+            ->assertJsonPath('summary.net_revenue', 65)
             ->assertJsonPath('summary.cost_of_goods_sold', 40)
             ->assertJsonPath('summary.returns', 20)
             ->assertJsonPath('summary.return_cost', 8)
@@ -325,6 +327,7 @@ class ProfitReportApprovalTest extends TestCase
             'payment_type' => $data['type'],
             'direction' => $data['direction'],
             'amount' => $data['amount'],
+            'discount_amount' => $data['discount'] ?? 0,
             'approval_status' => $data['status'],
             'created_at' => '2026-01-13 10:00:00',
             'updated_at' => '2026-01-13 10:00:00',

@@ -13,6 +13,7 @@ use App\Models\Tax;
 use App\Models\Unit;
 use App\Models\Variant;
 use App\Models\Warehouse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -26,12 +27,12 @@ class ProductController extends Controller
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
+        $warehouseId = $request->filled('warehouse_id') ? (int) $request->integer('warehouse_id') : null;
+        $status = in_array($request->string('status')->toString(), ['all', 'active', 'inactive', 'low_stock', 'out_of_stock'], true)
+            ? $request->string('status')->toString()
+            : null;
 
-        logger([
-            'request' => $request->all(),
-        ]);
-
-        return ProductResource::collection(Product::query()
+        $query = Product::query()
             ->with([
                 'brand:id,title',
                 'category:id,name',
@@ -44,7 +45,6 @@ class ProductController extends Controller
                 'warehouseStocks.warehouse:id,name',
                 'warehouseStocks.batch:id,batch_no,expired_date',
             ])
-            ->where('is_active', true)
             ->when($request->filled('search'), function ($query) use ($request) {
                 $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
                 $likeOperator = $query->getConnection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
@@ -63,13 +63,78 @@ class ProductController extends Controller
                     });
                 }
             })
-            ->when($request->boolean('low_stock'), function ($query) {
-                $query->whereNotNull('alert_quantity')
-                    ->whereColumn('qty', '<=', 'alert_quantity');
-            })
-            ->latest()
-            ->paginate($perPage)
-            ->withQueryString());
+            ->when($request->filled('category_id'), fn ($query) => $query->where('category_id', $request->integer('category_id')))
+            ->when($request->filled('brand_id'), fn ($query) => $query->where('brand_id', $request->integer('brand_id')))
+            ->when($warehouseId, fn ($query) => $query->whereExists(function ($stockQuery) use ($warehouseId) {
+                $stockQuery->selectRaw('1')
+                    ->from('product_warehouse')
+                    ->whereColumn('product_warehouse.product_id', 'products.id')
+                    ->where('product_warehouse.warehouse_id', $warehouseId);
+            }));
+
+        if ($status === null || $status === 'active') {
+            $query->where('is_active', true);
+        } elseif ($status === 'inactive') {
+            $query->where('is_active', false);
+        } elseif ($status === 'low_stock') {
+            $this->applyStockStatus($query, 'low_stock', $warehouseId);
+        } elseif ($status === 'out_of_stock') {
+            $this->applyStockStatus($query, 'out_of_stock', $warehouseId);
+        }
+
+        $summary = [
+            'total' => (clone $query)->count(),
+            'active' => (clone $query)->where('is_active', true)->count(),
+            'low_stock' => $this->stockStatusCount(clone $query, 'low_stock', $warehouseId),
+            'out_of_stock' => $this->stockStatusCount(clone $query, 'out_of_stock', $warehouseId),
+            'categories' => (clone $query)->whereNotNull('category_id')->distinct()->count('category_id'),
+        ];
+
+        if ($warehouseId) {
+            $query->addSelect([
+                'effective_qty' => DB::table('product_warehouse')
+                    ->selectRaw('COALESCE(SUM(qty), 0)')
+                    ->whereColumn('product_warehouse.product_id', 'products.id')
+                    ->where('product_warehouse.warehouse_id', $warehouseId),
+            ]);
+        }
+
+        return ProductResource::collection($query->latest()->paginate($perPage)->withQueryString())
+            ->additional(['summary' => $summary]);
+    }
+
+    private function stockStatusCount(Builder $query, string $status, ?int $warehouseId): int
+    {
+        $this->applyStockStatus($query, $status, $warehouseId);
+
+        return $query->count();
+    }
+
+    private function applyStockStatus(Builder $query, string $status, ?int $warehouseId): void
+    {
+        [$quantitySql, $bindings] = $this->stockQuantityExpression($warehouseId);
+
+        if ($status === 'out_of_stock') {
+            $query->whereRaw("{$quantitySql} <= 0", $bindings);
+
+            return;
+        }
+
+        $query->whereNotNull('alert_quantity')
+            ->whereRaw("{$quantitySql} > 0", $bindings)
+            ->whereRaw("{$quantitySql} <= products.alert_quantity", $bindings);
+    }
+
+    private function stockQuantityExpression(?int $warehouseId): array
+    {
+        if (! $warehouseId) {
+            return ['products.qty', []];
+        }
+
+        return [
+            'COALESCE((SELECT SUM(product_warehouse.qty) FROM product_warehouse WHERE product_warehouse.product_id = products.id AND product_warehouse.warehouse_id = ?), 0)',
+            [$warehouseId],
+        ];
     }
 
     public function options()

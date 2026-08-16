@@ -35,6 +35,8 @@ class LegacyAdminToUserSeeder extends Seeder
 
     public function run(): void
     {
+        User::query()->truncate();
+
         $dumpPath = database_path('../'.self::DUMP_PATH);
 
         if (! is_file($dumpPath)) {
@@ -74,7 +76,22 @@ class LegacyAdminToUserSeeder extends Seeder
             $imported++;
         }
 
-        $this->command?->info("Legacy admins imported into users. Imported: {$imported}.");
+        User::query()->updateOrCreate(
+            ['email' => 'admin@example.com'],
+            [
+                'name' => 'Inventory Admin',
+                'phone' => '01700817934',
+                'is_active' => 1,
+                'password' => $password,
+                'role_id' => $role->id,
+                'biller_id' => $biller->id,
+                'warehouse_id' => null,
+                'company_name' => null,
+                'is_deleted' => 0,
+            ]
+        );
+
+        $this->command?->info("Legacy admins imported into users. Imported: {$imported}. Static admin added.");
     }
 
     /**

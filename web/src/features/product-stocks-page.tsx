@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BarChart3, Box, CheckCircle2, Download, Edit, History, Layers, Package, RefreshCw, Search, Trash2, XCircle, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BarChart3, Box, CheckCircle2, CirclePlus, Download, Edit, History, Layers, Package, PackageCheck, Plus, RefreshCw, Save, Search, ShoppingCart, Trash2, UploadCloud, Warehouse as WarehouseIcon, XCircle, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api, type StockAdjustmentPayload } from '@/lib/api';
@@ -24,6 +24,16 @@ type AdjustmentForm = {
   qty: string;
   movementDate: string;
   note: string;
+};
+
+type BatchAdjustmentLine = {
+  key: string;
+  productId: string;
+  batchId: string;
+  variantId: string;
+  unitId: string;
+  direction: 'increase' | 'decrease';
+  qty: string;
 };
 
 const emptyAdjustment: AdjustmentForm = {
@@ -68,6 +78,17 @@ export function ProductStocksPage() {
   const [saving, setSaving] = useState(false);
   const [editingMovement, setEditingMovement] = useState<StockMovement | null>(null);
   const [form, setForm] = useState<AdjustmentForm>(emptyAdjustment);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchWarehouseId, setBatchWarehouseId] = useState('none');
+  const [batchDocument, setBatchDocument] = useState<File | null>(null);
+  const [batchNote, setBatchNote] = useState('');
+  const [batchProductId, setBatchProductId] = useState('none');
+  const [batchProductSearch, setBatchProductSearch] = useState('');
+  const [batchLines, setBatchLines] = useState<BatchAdjustmentLine[]>([]);
+  const [adjustmentProducts, setAdjustmentProducts] = useState<ProductStock[]>([]);
+  const [batchProductOptions, setBatchProductOptions] = useState<ProductStock[]>([]);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchDocumentDragging, setBatchDocumentDragging] = useState(false);
 
   const canAdjust = hasPermission('product-stocks-adjust');
   const visibleItems = useMemo(() => items.filter((item) => stockStatusFilter === 'all' || stockStatus(item).key === stockStatusFilter), [items, stockStatusFilter]);
@@ -94,14 +115,17 @@ export function ProductStocksPage() {
 
   const loadOptions = useCallback(async () => {
     try {
-      const [warehouseResponse, unitResponse, categoryResponse] = await Promise.all([
+      const [warehouseResponse, unitResponse, categoryResponse, productResponse] = await Promise.all([
         api.warehouses({ perPage: 100, activeOnly: true }),
         api.units({ perPage: 100 }),
         api.categories({ perPage: 100, activeOnly: true }),
+        api.productStocks({ perPage: 100 }),
       ]);
       setWarehouses(warehouseResponse.data as Warehouse[]);
       setUnits(unitResponse.data as Unit[]);
       setCategories(categoryResponse.data as Category[]);
+      setAdjustmentProducts(productResponse.data as ProductStock[]);
+      setBatchProductOptions(productResponse.data as ProductStock[]);
     } catch (error) {
       toast.error('Options failed', { description: errorMessage(error) });
     }
@@ -139,6 +163,21 @@ export function ProductStocksPage() {
     }, 350);
     return () => window.clearTimeout(timeout);
   }, [search]);
+
+  useEffect(() => {
+    if (!batchOpen) return;
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await api.productStocks({ perPage: 100, search: batchProductSearch.trim() || undefined });
+        const results = response.data as ProductStock[];
+        setBatchProductOptions(results);
+        setAdjustmentProducts((current) => mergeProducts(current, results));
+      } catch (error) {
+        toast.error('Product search failed', { description: errorMessage(error) });
+      }
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [batchOpen, batchProductSearch]);
 
   const productBatches = useMemo(() => {
     const stocks = selectedProduct?.stocks ?? [];
@@ -203,6 +242,88 @@ export function ProductStocksPage() {
     setForm(emptyAdjustment);
   }
 
+  function openBatchAdjustment() {
+    setBatchWarehouseId(warehouses[0] ? String(warehouses[0].id) : 'none');
+    setBatchOpen(true);
+  }
+
+  function closeBatchAdjustment() {
+    setBatchOpen(false);
+    setBatchWarehouseId('none');
+    setBatchDocument(null);
+    setBatchNote('');
+    setBatchProductId('none');
+    setBatchProductSearch('');
+    setBatchLines([]);
+    setBatchDocumentDragging(false);
+  }
+
+  function addBatchLine() {
+    const product = adjustmentProducts.find((item) => String(item.id) === batchProductId);
+    if (!product) return;
+    setBatchLines((current) => [...current, {
+      key: `${Date.now()}-${Math.random()}`,
+      productId: String(product.id),
+      batchId: 'none',
+      variantId: 'none',
+      unitId: String(product.unit?.id ?? 'none'),
+      direction: 'increase',
+      qty: '',
+    }]);
+    setBatchProductId('none');
+  }
+
+  function updateBatchLine(key: string, field: keyof Omit<BatchAdjustmentLine, 'key' | 'productId'>, value: string) {
+    setBatchLines((current) => current.map((line) => line.key === key ? { ...line, [field]: value } : line));
+  }
+
+  async function saveBatchAdjustment(event: FormEvent) {
+    event.preventDefault();
+    if (batchWarehouseId === 'none' || !batchLines.length) {
+      toast.error('Missing fields', { description: 'Warehouse and at least one product line are required.' });
+      return;
+    }
+    const invalidLine = batchLines.find((line) => {
+      const product = adjustmentProducts.find((item) => String(item.id) === line.productId);
+      return line.unitId === 'none' || !Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0
+        || Boolean(product?.is_variant && line.variantId === 'none')
+        || Boolean(product?.is_batch && line.batchId === 'none');
+    });
+    if (invalidLine) {
+      toast.error('Incomplete product line', { description: 'Complete quantity, unit, variant, and batch fields where required.' });
+      return;
+    }
+    const buckets = batchLines.map((line) => `${line.productId}:${line.variantId}:${line.batchId}`);
+    if (new Set(buckets).size !== buckets.length) {
+      toast.error('Duplicate product line', { description: 'Each product, variant, and batch combination can only be added once.' });
+      return;
+    }
+
+    setBatchSaving(true);
+    try {
+      await api.createBatchStockAdjustment({
+        warehouse_id: Number(batchWarehouseId),
+        document: batchDocument,
+        note: batchNote.trim() || null,
+        lines: batchLines.map((line) => ({
+          product_id: Number(line.productId),
+          product_batch_id: line.batchId === 'none' ? null : Number(line.batchId),
+          variant_id: line.variantId === 'none' ? null : Number(line.variantId),
+          unit_id: Number(line.unitId),
+          direction: line.direction,
+          qty: Number(line.qty),
+        })),
+      });
+      toast.success('Stock adjustment created');
+      closeBatchAdjustment();
+      await load(page);
+    } catch (error) {
+      toast.error('Save failed', { description: errorMessage(error) });
+    } finally {
+      setBatchSaving(false);
+    }
+  }
+
   async function saveAdjustment(event: FormEvent) {
     event.preventDefault();
     if (!selectedProduct) return;
@@ -247,9 +368,12 @@ export function ProductStocksPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Product Stock</h1>
-        <p className="mt-1 text-sm font-medium text-slate-500">Warehouse-wise stock overview and quick actions</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Product Stock</h1>
+          <p className="mt-1 text-sm font-medium text-slate-500">Warehouse-wise stock overview and quick actions</p>
+        </div>
+        {canAdjust ? <Button type="button" onClick={openBatchAdjustment}><Plus className="h-4 w-4" />Stock Adjustment</Button> : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -519,6 +643,117 @@ export function ProductStocksPage() {
           </div>
         </form>
       </Modal>
+
+      <Modal
+        title="Stock Adjustment"
+        description="Increase or decrease product stock for the selected warehouse."
+        headerIcon={PackageCheck}
+        showDescription
+        open={batchOpen}
+        onOpenChange={(open) => open ? setBatchOpen(true) : closeBatchAdjustment()}
+        contentClassName="max-w-6xl overflow-y-auto rounded-xl border-slate-200 px-0 pb-0 pt-5 shadow-2xl [&>div:first-child]:px-6"
+      >
+        <form onSubmit={saveBatchAdjustment} className="-mt-5">
+          <div className="grid gap-4 border-t border-slate-100 px-6 py-5 lg:grid-cols-2">
+            <Field label="Warehouse">
+              <div className="relative">
+                <WarehouseIcon className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <div className="[&_button]:pl-10"><Select value={batchWarehouseId} onValueChange={setBatchWarehouseId} options={optionList(warehouses.map((warehouse) => ({ value: String(warehouse.id), label: warehouse.name })))} /></div>
+              </div>
+            </Field>
+            <Field label="Attach Document (optional)" hint={batchDocument ? `Selected: ${batchDocument.name}` : undefined}>
+              <label
+                className={`flex min-h-20 cursor-pointer items-center justify-center gap-4 rounded-lg border border-dashed px-4 py-3 text-center transition ${batchDocumentDragging ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-slate-50/40 hover:border-emerald-400 hover:bg-emerald-50/40'}`}
+                onDragEnter={(event) => { event.preventDefault(); setBatchDocumentDragging(true); }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setBatchDocumentDragging(false)}
+                onDrop={(event) => { event.preventDefault(); setBatchDocumentDragging(false); setBatchDocument(event.dataTransfer.files?.[0] ?? null); }}
+              >
+                <input className="sr-only" type="file" accept=".jpg,.jpeg,.png,.pdf" onChange={(event) => setBatchDocument(event.target.files?.[0] ?? null)} />
+                <UploadCloud className="h-8 w-8 shrink-0 text-slate-400" />
+                <span className="text-sm text-slate-600">
+                  <span>Drag & drop file here or </span>
+                  <span className="ml-1 inline-flex rounded-md border border-emerald-200 bg-white px-3 py-1.5 font-semibold text-emerald-700 shadow-sm">Choose File</span>
+                  <span className="mt-1 block text-xs text-slate-400">PDF, JPG, PNG up to 5MB</span>
+                </span>
+              </label>
+            </Field>
+            <Field label="Search Products">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <Input className="pl-10" value={batchProductSearch} onChange={(event) => setBatchProductSearch(event.target.value)} placeholder="Search by product name, code or barcode" />
+              </div>
+            </Field>
+            <div className="flex items-end gap-3">
+              <div className="min-w-0 flex-1"><Field label="Product Dropdown"><Select value={batchProductId} onValueChange={setBatchProductId} options={optionList(batchProductOptions.map((product) => ({ value: String(product.id), label: `${product.name} (${product.code})` })))} /></Field></div>
+              <Button type="button" variant="secondary" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={addBatchLine} disabled={batchProductId === 'none'}><Plus className="h-4 w-4" />Add Product</Button>
+            </div>
+          </div>
+
+          <div className="mx-6 overflow-hidden rounded-lg border border-slate-200">
+            <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900">Adjustment Items</div>
+            {batchLines.length ? (
+              <div className="overflow-x-auto">
+                <div className="min-w-[940px]">
+                  <div className="grid grid-cols-[2fr_1fr_1.25fr_.85fr_1.1fr_52px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500">
+                    <div>Product &amp; Code</div><div>Current Stock</div><div>Adjustment Type</div><div>Quantity</div><div>Unit</div><div className="text-center">Actions</div>
+                  </div>
+                  {batchLines.map((line) => {
+                    const product = adjustmentProducts.find((item) => String(item.id) === line.productId);
+                    const batches = batchOptionsForProduct(product);
+                    const currentStock = batchLineCurrentStock(product, line, batchWarehouseId);
+                    return (
+                      <div key={line.key} className="grid grid-cols-[2fr_1fr_1.25fr_.85fr_1.1fr_52px] items-start gap-3 border-b border-slate-100 px-4 py-4 last:border-b-0">
+                        <div className="flex min-w-0 gap-3">
+                          {product ? <ProductAvatar product={product} /> : null}
+                          <div className="min-w-0 pt-0.5">
+                            <div className="truncate text-sm font-semibold text-slate-950">{product?.name ?? 'Product'}</div>
+                            <div className="mt-0.5 text-xs text-slate-500">SKU: {product?.code ?? '-'}</div>
+                            {product?.is_variant ? <div className="mt-2"><Select value={line.variantId} onValueChange={(value) => updateBatchLine(line.key, 'variantId', value)} options={optionList((product.variants ?? []).map((variant) => ({ value: String(variant.variant_id), label: `${variant.name} (${variant.item_code})` })))} /></div> : null}
+                            {product?.is_batch ? <div className="mt-2"><Select value={line.batchId} onValueChange={(value) => updateBatchLine(line.key, 'batchId', value)} options={optionList(batches)} /></div> : null}
+                          </div>
+                        </div>
+                        <div>
+                          <span className={`inline-flex rounded-md border px-3 py-1.5 text-xs font-semibold ${currentStock > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-600'}`}>{formatQty(currentStock)} {product?.unit?.unit_code ?? ''}</span>
+                          <div className={`mt-1 text-xs ${currentStock > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{currentStock > 0 ? 'In Stock' : 'Out of Stock'}</div>
+                        </div>
+                        <Select value={line.direction} onValueChange={(value) => updateBatchLine(line.key, 'direction', value)} options={[{ value: 'increase', label: '⊕  Increase' }, { value: 'decrease', label: '⊖  Decrease' }]} />
+                        <Input aria-label={`Quantity for ${product?.name ?? 'product'}`} type="number" min="0.01" step="0.01" value={line.qty} onChange={(event) => updateBatchLine(line.key, 'qty', event.target.value)} placeholder="0" />
+                        <Select value={line.unitId} onValueChange={(value) => updateBatchLine(line.key, 'unitId', value)} options={stockUnitOptions(product ?? null, units)} />
+                        <Button type="button" variant="danger" className="h-10 w-10 border border-red-100 px-0" aria-label="Remove product line" onClick={() => setBatchLines((current) => current.filter((item) => item.key !== line.key))}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-28 flex-col items-center justify-center px-4 py-6 text-center">
+                <CirclePlus className="mb-2 h-7 w-7 text-slate-300" />
+                <p className="text-sm font-medium text-slate-600">No products added yet</p>
+                <p className="mt-1 text-xs text-slate-400">Choose a product above to add it to this adjustment.</p>
+              </div>
+            )}
+            <div className="grid gap-4 border-t border-slate-200 bg-emerald-50/40 px-4 py-3 sm:grid-cols-2">
+              <div className="flex items-center gap-3 sm:border-r sm:border-slate-200">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Box className="h-4 w-4" /></span>
+                <div><div className="text-xs text-slate-500">Total Items</div><div className="text-sm font-bold text-slate-950">{batchLines.length}</div></div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><ShoppingCart className="h-4 w-4" /></span>
+                <div><div className="text-xs text-slate-500">Total Quantity</div><div className="text-sm font-bold text-slate-950">{formatQty(batchLines.reduce((sum, line) => sum + (Number(line.qty) || 0), 0))}</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-4">
+            <Field label="Note (optional)" hint="This note will be recorded in the adjustment history."><Textarea className="min-h-16" value={batchNote} onChange={(event) => setBatchNote(event.target.value)} placeholder="Add reason or note for this stock adjustment" /></Field>
+          </div>
+          <div className="flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50/60 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <Button type="button" variant="secondary" className="w-full sm:w-auto sm:min-w-28" onClick={closeBatchAdjustment}>Cancel</Button>
+            <Button type="submit" className="w-full bg-emerald-800 hover:bg-emerald-900 sm:w-auto sm:min-w-44" disabled={batchSaving}><Save className="h-4 w-4" />{batchSaving ? 'Saving...' : 'Save Adjustment'}</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
@@ -664,6 +899,35 @@ function stockUnitOptions(product: ProductStock | null, units: Unit[]) {
     value: String(unit.id),
     label: `${unit.unit_name} (${unit.unit_code})`,
   })));
+}
+
+function batchOptionsForProduct(product: ProductStock | null | undefined) {
+  const byId = new Map<number, string>();
+  product?.stocks?.forEach((stock) => {
+    if (stock.product_batch_id && stock.batch_no) byId.set(stock.product_batch_id, stock.batch_no);
+  });
+  return [...byId.entries()].map(([id, label]) => ({ value: String(id), label }));
+}
+
+function batchLineCurrentStock(product: ProductStock | null | undefined, line: BatchAdjustmentLine, warehouseId: string) {
+  if (!product) return 0;
+
+  const matchingRows = (product.stocks ?? []).filter((stock) => {
+    if (warehouseId !== 'none' && String(stock.warehouse_id) !== warehouseId) return false;
+    if (line.variantId !== 'none' && String(stock.variant_id) !== line.variantId) return false;
+    if (line.batchId !== 'none' && String(stock.product_batch_id) !== line.batchId) return false;
+    return true;
+  });
+
+  return matchingRows.length
+    ? matchingRows.reduce((sum, stock) => sum + (Number(stock.qty) || 0), 0)
+    : Number(product.current_stock) || 0;
+}
+
+function mergeProducts(current: ProductStock[], incoming: ProductStock[]) {
+  const byId = new Map(current.map((product) => [product.id, product]));
+  incoming.forEach((product) => byId.set(product.id, product));
+  return [...byId.values()];
 }
 
 function productUnitsForFamily(product: ProductStock | null | undefined, units: Unit[]) {

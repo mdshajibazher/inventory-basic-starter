@@ -22,6 +22,7 @@ type PaymentForm = {
   paymentType: PaymentType;
   invoice: InvoiceOption | null;
   amount: string;
+  discountAmount: string;
   cashReceived: string;
   change: string;
   payingMethod: string;
@@ -52,6 +53,7 @@ function initialFormFor(mode: PaymentPageMode): PaymentForm {
     paymentType: supplierMode ? 'purchase_payment' : 'sale_payment',
     invoice: null,
     amount: '',
+    discountAmount: '0',
     cashReceived: '',
     change: '0',
     payingMethod: 'Cash',
@@ -85,6 +87,12 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
   const supplierMode = mode === 'supplier-payments';
   const pageTitle = supplierMode ? 'Supplier Payments' : 'Customer Payments';
   const pagePaymentTypes = supplierMode ? supplierPaymentTypes : customerPaymentTypes;
+  const maxDiscount = form.paymentType === 'customer_advance'
+    ? Math.max(roundMoney(Number(form.amount || 0)), 0)
+    : form.paymentType === 'sale_payment' && form.invoice
+      ? Math.max(roundMoney(invoiceDue(form.invoice) - Number(form.amount || 0)), 0)
+      : 0;
+  const discountError = paymentDiscountError(form.paymentType, form.invoice, form.amount, form.discountAmount, maxDiscount);
 
   const loadPayments = useCallback(async (nextPage = 1) => {
     setLoading(true);
@@ -167,10 +175,16 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
     event.preventDefault();
 
     const amount = Number(form.amount);
+    const discountAmount = form.paymentType === 'sale_payment' || form.paymentType === 'customer_advance' ? Number(form.discountAmount || 0) : 0;
     const change = cashSalePayment ? Number(form.change || 0) : 0;
 
     if (!form.account || !amount || amount <= 0) {
       toast.error('Missing payment fields', { description: 'Account and an amount greater than 0 are required.' });
+      return;
+    }
+
+    if (discountError) {
+      toast.error('Invalid discount', { description: discountError });
       return;
     }
 
@@ -191,6 +205,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
       payment_type: form.paymentType,
       direction,
       amount,
+      discount_amount: discountAmount,
       change,
       paying_method: form.payingMethod,
       payment_reference: nullableText(form.paymentReference),
@@ -237,6 +252,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
       paymentType: type,
       invoice: null,
       cashReceived: '',
+      discountAmount: '0',
       change: '0',
     }));
   }
@@ -247,6 +263,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
       ...current,
       invoice,
       amount: isInvoicePayment(current.paymentType) && due > 0 ? String(due) : current.amount,
+      discountAmount: '0',
       cashReceived: '',
       change: '0',
     }));
@@ -428,6 +445,14 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
                 <Field label={`${amountLabel(form.paymentType)} *`}>
                   <IconInput icon={<span className="text-sm font-semibold">৳</span>}><Input type="number" min="0.01" step="0.01" value={form.amount} onChange={(event) => updateAmount(event.target.value)} required /></IconInput>
                 </Field>
+                {form.paymentType === 'sale_payment' || form.paymentType === 'customer_advance' ? (
+                  <Field label={form.paymentType === 'customer_advance' ? 'Discount / Charge' : 'Discount Amount'}>
+                    <IconInput icon={<span className="text-sm font-semibold">৳</span>}><Input type="number" min="0" step="0.01" max={maxDiscount} value={form.discountAmount} onChange={(event) => setForm((current) => ({ ...current, discountAmount: event.target.value }))} aria-invalid={Boolean(discountError)} className={discountError ? 'border-red-500 focus-visible:ring-red-500' : undefined} /></IconInput>
+                    <p className={discountError ? 'mt-1 text-xs text-red-600' : 'mt-1 text-xs text-neutral-500'}>
+                      {discountError ?? `Maximum available discount: ${bdt(maxDiscount)}`}
+                    </p>
+                  </Field>
+                ) : null}
                 {cashSalePayment ? (
                   <>
                     <Field label="Cash Received *">
@@ -451,7 +476,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
           </div>
           <div className="flex flex-col-reverse gap-2 border-t border-neutral-100 pt-4 sm:flex-row sm:justify-end">
             <Button type="button" variant="secondary" onClick={() => setModalOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={saving} className="bg-green-700 hover:bg-green-800">
+            <Button type="submit" disabled={saving || Boolean(discountError)} className="bg-green-700 hover:bg-green-800">
               <Save className="h-4 w-4" />{saving ? 'Saving...' : saveLabel(form.paymentType)}
             </Button>
           </div>
@@ -505,6 +530,8 @@ function PaymentSummary({ form }: { form: PaymentForm }) {
   if (form.paymentType === 'customer_advance' || form.paymentType === 'supplier_advance') {
     const currentAdvance = Number(form.customer?.deposit ?? 0);
     const newAdvance = Number(form.amount || 0);
+    const adjustment = Number(form.discountAmount || 0);
+    const netAdvance = Math.max(roundMoney(newAdvance - adjustment), 0);
     return (
       <SummaryPanel title="Advance Summary" notice="This advance will remain available for future invoice adjustment.">
         <SummaryRow label={partyLabel} value={partyName ?? '-'} />
@@ -515,11 +542,12 @@ function PaymentSummary({ form }: { form: PaymentForm }) {
           </>
         ) : null}
         <SummaryRow label="New Advance" value={bdt(newAdvance)} strong success />
-        <SummaryRow label="Adjustment / Charge" value={bdt(0)} />
+        <SummaryRow label="Discount / Charge" value={bdt(adjustment)} />
+        <SummaryRow label="Net Advance Credit" value={bdt(netAdvance)} strong success />
         {form.paymentType === 'customer_advance' ? (
           <>
             <SummaryDivider />
-            <SummaryRow label="Updated Advance Balance" value={bdt(currentAdvance + newAdvance)} strong success />
+            <SummaryRow label="Updated Advance Balance" value={bdt(currentAdvance + netAdvance)} strong success />
           </>
         ) : null}
       </SummaryPanel>
@@ -551,7 +579,9 @@ function PaymentSummary({ form }: { form: PaymentForm }) {
   const paid = Number(form.invoice?.paid_amount ?? 0);
   const due = invoiceDue(form.invoice);
   const paymentAmount = Number(form.amount || 0);
-  const remainingDue = Math.max(roundMoney(due - paymentAmount), 0);
+  const discountAmount = form.paymentType === 'sale_payment' ? Number(form.discountAmount || 0) : 0;
+  const settledAmount = roundMoney(paymentAmount + discountAmount);
+  const remainingDue = Math.max(roundMoney(due - settledAmount), 0);
   const documentName = form.paymentType === 'purchase_payment' ? 'Purchase Invoice' : 'Sales Invoice';
   return (
     <SummaryPanel title="Payment Summary" notice="This payment will be recorded against the selected invoice.">
@@ -563,6 +593,8 @@ function PaymentSummary({ form }: { form: PaymentForm }) {
       <SummaryRow label="Current Due" value={bdt(due)} danger />
       <SummaryDivider />
       <SummaryRow label="Payment Amount" value={bdt(paymentAmount)} strong success />
+      {form.paymentType === 'sale_payment' ? <SummaryRow label="Discount" value={bdt(discountAmount)} /> : null}
+      {form.paymentType === 'sale_payment' ? <SummaryRow label="Total Settled" value={bdt(settledAmount)} strong success /> : null}
       {form.payingMethod === 'Cash' ? (
         <>
           <SummaryRow label="Cash Received" value={bdt(Number(form.cashReceived || 0))} />
@@ -730,6 +762,8 @@ function PaymentTable({ payments, loading, saving, onApprove }: { payments: Paym
             <th className="whitespace-nowrap px-5 py-4">Payment Method</th>
             <th className="whitespace-nowrap px-5 py-4">Account</th>
             <th className="whitespace-nowrap px-5 py-4 text-right">Amount</th>
+            <th className="whitespace-nowrap px-5 py-4 text-right">Discount</th>
+            <th className="whitespace-nowrap px-5 py-4 text-right">Settled</th>
             <th className="whitespace-nowrap px-5 py-4">Status</th>
             <th className="whitespace-nowrap px-5 py-4 text-right">Actions</th>
           </tr>
@@ -751,6 +785,8 @@ function PaymentTable({ payments, loading, saving, onApprove }: { payments: Paym
               <td className={payment.direction === 'in' ? 'whitespace-nowrap px-5 py-4 text-right font-semibold text-emerald-600' : 'whitespace-nowrap px-5 py-4 text-right font-semibold text-red-600'}>
                 {bdt(payment.amount)}
               </td>
+              <td className="whitespace-nowrap px-5 py-4 text-right text-amber-700">{bdt(payment.discount_amount ?? 0)}</td>
+              <td className="whitespace-nowrap px-5 py-4 text-right font-semibold">{bdt(payment.settled_amount ?? (payment.payment_type === 'customer_advance' ? Number(payment.amount) - Number(payment.discount_amount ?? 0) : Number(payment.amount) + Number(payment.discount_amount ?? 0)))}</td>
               <td className="whitespace-nowrap px-5 py-4"><ApprovalBadge status={payment.approval_status} /></td>
               <td className="whitespace-nowrap px-5 py-4 text-right">
                 <Link className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100" href={`/payments/${payment.id}`} aria-label="View payment" title="View payment"><Eye className="h-4 w-4" /></Link>
@@ -810,15 +846,17 @@ type PaymentTotalsValue = {
   paid: number;
   refund: number;
   net: number;
+  discount: number;
 };
 
 function PaymentTotals({ totals, mode }: { totals: PaymentTotalsValue; mode: PaymentPageMode }) {
   const supplierMode = mode === 'supplier-payments';
   return (
-    <div className="grid gap-0 rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+    <div className={clsx('grid gap-0 rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-2', supplierMode ? 'lg:grid-cols-4' : 'lg:grid-cols-5')}>
       <FooterTotal label={supplierMode ? 'Purchase Payments' : 'Sales Payments'} value={supplierMode ? totals.paid : totals.received} color={supplierMode ? 'text-red-600' : 'text-emerald-600'} />
       <FooterTotal label={supplierMode ? 'Supplier Advances' : 'Customer Advances'} value={totals.advance} color={supplierMode ? 'text-red-600' : 'text-emerald-600'} />
       <FooterTotal label={supplierMode ? 'Purchase Return Refunds' : 'Sales Return Refunds'} value={totals.refund} color={supplierMode ? 'text-emerald-600' : 'text-red-600'} />
+      {!supplierMode ? <FooterTotal label="Payment Discounts" value={totals.discount} color="text-amber-600" /> : null}
       <FooterTotal label={supplierMode ? 'Net Supplier Cash Flow' : 'Net Cash Flow'} value={totals.net} color={totals.net >= 0 ? 'text-emerald-600' : 'text-red-600'} />
     </div>
   );
@@ -995,17 +1033,31 @@ function formatDate(value: string | null | undefined): string {
 function paymentTotals(payments: Payment[]): PaymentTotalsValue {
   return payments.reduce<PaymentTotalsValue>((totals, payment) => {
     const amount = Number(payment.amount ?? 0);
+    totals.discount += Number(payment.discount_amount ?? 0);
     if (payment.payment_type === 'sale_payment') totals.received += amount;
     if (payment.payment_type === 'customer_advance' || payment.payment_type === 'supplier_advance') totals.advance += amount;
     if (payment.payment_type === 'purchase_payment') totals.paid += amount;
     if (payment.payment_type === 'sale_return_refund' || payment.payment_type === 'purchase_return_refund') totals.refund += amount;
     totals.net += payment.direction === 'in' ? amount : -amount;
     return totals;
-  }, { received: 0, advance: 0, paid: 0, refund: 0, net: 0 });
+  }, { received: 0, advance: 0, paid: 0, refund: 0, net: 0, discount: 0 });
 }
 
 function invoiceDetail(invoice: InvoiceOption): string {
-  return `Total ${money(invoice.grand_total ?? 0)}, paid ${money(invoice.paid_amount ?? 0)}, due ${money(invoiceDue(invoice))}`;
+  return `Total ${money(invoice.grand_total ?? 0)}, settled ${money(invoice.paid_amount ?? 0)}, due ${money(invoiceDue(invoice))}`;
+}
+
+function paymentDiscountError(type: PaymentType, invoice: InvoiceOption | null, rawAmount: string, rawDiscount: string, maxDiscount: number): string | null {
+  if (type !== 'sale_payment' && type !== 'customer_advance') return null;
+  const amount = Number(rawAmount || 0);
+  const discount = Number(rawDiscount || 0);
+  if (!Number.isFinite(discount)) return 'Enter a valid discount amount.';
+  if (discount < 0) return 'Discount amount cannot be negative.';
+  if (type === 'customer_advance' && roundMoney(discount) > maxDiscount) return `Discount / charge cannot exceed ${bdt(maxDiscount)}.`;
+  if (type === 'sale_payment' && discount > 0 && !invoice) return 'Select a sales invoice before applying a discount.';
+  if (invoice && Number.isFinite(amount) && roundMoney(amount) > invoiceDue(invoice)) return 'Payment amount already exceeds the current invoice due.';
+  if (roundMoney(discount) > maxDiscount) return `Discount cannot exceed ${bdt(maxDiscount)}.`;
+  return null;
 }
 
 function invoiceDue(invoice: InvoiceOption | null): number {

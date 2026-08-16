@@ -77,6 +77,7 @@ const initialForm = (kind: InvoiceKind = 'sales') => ({
   shippingCost: '0',
   paymentMode: 'unpaid' as PaymentMode,
   paidAmount: '0',
+  paymentDiscountAmount: '0',
   paymentNote: '',
   saleNote: '',
   staffNote: '',
@@ -108,6 +109,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       : user.current_biller.name
     : 'No branch selected';
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
+  const invoicePayment = invoicePaymentValidation(form.paymentMode, form.paidAmount, form.paymentDiscountAmount, totals.grandTotal);
 
   const searchCustomers = useCallback(async (query: string) => {
     const response = await api.customers({ perPage: 30, search: query.trim() });
@@ -365,7 +367,8 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
       paymentMode: paymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
-      paidAmount: String(invoice.paid_amount ?? '0'),
+      paidAmount: String(invoice.payments?.[0]?.amount ?? invoice.paid_amount ?? '0'),
+      paymentDiscountAmount: String(invoice.payments?.[0]?.discount_amount ?? '0'),
       paymentNote: invoice.payments?.[0]?.payment_note ?? '',
       saleNote: invoice.return_note ?? invoice.sale_note ?? '',
       staffNote: invoice.staff_note ?? '',
@@ -586,7 +589,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           valueLabel={paymentLabel(form.paymentMode)}
           options={[
             { id: 'unpaid' as PaymentMode, name: 'Unpaid' },
-            { id: 'partial' as PaymentMode, name: 'Partial cash' },
+            { id: 'partial' as PaymentMode, name: 'Partial / advance' },
             { id: 'paid' as PaymentMode, name: 'Paid cash' },
           ]}
           keyFor={(option) => option.id}
@@ -594,7 +597,14 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           onSelect={(option) => setValue('paymentMode', option.id)}
         />
         {form.paymentMode === 'partial' ? (
-          <TextInput mode="outlined" label="Paid amount" keyboardType="numeric" value={form.paidAmount} onChangeText={(value) => setValue('paidAmount', value)} />
+          <TextInput mode="outlined" label="Advance amount" keyboardType="numeric" value={form.paidAmount} onChangeText={(value) => setValue('paidAmount', value)} />
+        ) : null}
+        {form.paymentMode === 'paid' ? <TextInput mode="outlined" label="Cash amount" value={money(invoicePayment.cashAmount)} editable={false} /> : null}
+        {form.paymentMode !== 'unpaid' ? (
+          <View>
+            <TextInput mode="outlined" label="Payment discount" keyboardType="numeric" value={form.paymentDiscountAmount} onChangeText={(value) => setValue('paymentDiscountAmount', value)} error={Boolean(invoicePayment.error)} />
+            <Text variant="bodySmall" style={invoicePayment.error ? styles.errorText : styles.muted}>{invoicePayment.error ?? `Maximum discount: ${money(invoicePayment.maxDiscount)} · Settled: ${money(invoicePayment.settledAmount)}`}</Text>
+          </View>
         ) : null}
         <TextInput mode="outlined" label="Payment note" value={form.paymentNote} onChangeText={(value) => setValue('paymentNote', value)} />
       </View> : null}
@@ -631,7 +641,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
       </ScrollView>
 
       <View style={styles.actions}>
-        <Button mode="contained" loading={saving} disabled={saving || loading} onPress={saveInvoice}>{editingId ? 'Update invoice' : 'Create invoice'}</Button>
+        <Button mode="contained" loading={saving} disabled={saving || loading || Boolean(invoicePayment.error)} onPress={saveInvoice}>{editingId ? 'Update invoice' : 'Create invoice'}</Button>
       </View>
       </> : null}
     </Screen>
@@ -767,6 +777,8 @@ function InvoiceDetails({ invoice, kind, canEditCost, onInvoiceUpdated }: { invo
           <View style={styles.mobileInvoiceDivider} />
           <MobileInfoRow label="Method" value={paymentMethodLabel(payment?.paying_method)} />
           <MobileInfoRow label="Paid Amount" value={kind === 'sales' ? takaMoney(paidAmount) : '-'} />
+          <MobileInfoRow label="Payment Discount" value={kind === 'sales' ? takaMoney(payment?.discount_amount ?? 0) : '-'} />
+          <MobileInfoRow label="Cash Received" value={kind === 'sales' ? takaMoney(payment?.amount ?? paidAmount) : '-'} />
           <MobileInfoRow label="Change Amount" value={kind === 'sales' ? takaMoney(changeAmount) : '-'} />
           <MobileInfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
         </View>
@@ -1064,7 +1076,12 @@ function buildPayload(
     return null;
   }
 
-  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
+  const paymentValidation = invoicePaymentValidation(form.paymentMode, form.paidAmount, form.paymentDiscountAmount, totals.grandTotal);
+  if (kind === 'sales' && paymentValidation.error) {
+    Alert.alert('Invalid payment discount', paymentValidation.error);
+    return null;
+  }
+  const paidAmount = paymentValidation.cashAmount;
 
   const basePayload = {
     reference_no: form.referenceNo.trim(),
@@ -1113,6 +1130,7 @@ function buildPayload(
     paid_by_id: form.paymentMode === 'unpaid' ? null : 1,
     paying_amount: paidAmount,
     paid_amount: paidAmount,
+    payment_discount_amount: paymentValidation.discountAmount,
     payment_note: nullableText(form.paymentNote),
   };
 }
@@ -1147,10 +1165,21 @@ function paymentStatus(mode: PaymentMode) {
   return 2;
 }
 
-function paymentPaidAmount(mode: PaymentMode, paidAmount: string, grandTotal: number) {
-  if (mode === 'paid') return grandTotal;
-  if (mode === 'partial') return Math.min(numberValue(paidAmount), grandTotal);
-  return 0;
+function invoicePaymentValidation(mode: PaymentMode, rawPaidAmount: string, rawDiscount: string, grandTotal: number) {
+  if (mode === 'unpaid') return { cashAmount: 0, discountAmount: 0, settledAmount: 0, maxDiscount: 0, error: null as string | null };
+  const enteredDiscount = Number(rawDiscount || 0);
+  if (!Number.isFinite(enteredDiscount)) return { cashAmount: 0, discountAmount: 0, settledAmount: 0, maxDiscount: 0, error: 'Enter a valid discount amount.' };
+  const discountAmount = round2(enteredDiscount);
+  const cashAmount = mode === 'paid'
+    ? Math.max(round2(grandTotal - discountAmount), 0)
+    : Math.min(numberValue(rawPaidAmount), grandTotal);
+  const maxDiscount = Math.max(round2(grandTotal - cashAmount), 0);
+  const settledAmount = round2(cashAmount + discountAmount);
+  let error: string | null = null;
+  if (discountAmount < 0) error = 'Discount amount cannot be negative.';
+  else if (cashAmount <= 0) error = 'Cash payment must be greater than zero.';
+  else if (discountAmount > maxDiscount || settledAmount > grandTotal) error = `Discount cannot exceed ${money(maxDiscount)}.`;
+  return { cashAmount, discountAmount, settledAmount, maxDiscount, error };
 }
 
 function paymentModeFromStatus(status: number, paidAmount: number): PaymentMode {
@@ -1161,7 +1190,7 @@ function paymentModeFromStatus(status: number, paidAmount: number): PaymentMode 
 
 function paymentLabel(mode: PaymentMode) {
   if (mode === 'paid') return 'Paid cash';
-  if (mode === 'partial') return 'Partial cash';
+  if (mode === 'partial') return 'Partial / advance';
   return 'Unpaid';
 }
 
@@ -2091,6 +2120,10 @@ const styles = StyleSheet.create({
   approved: {
     color: '#047857',
     fontWeight: '700',
+  },
+  errorText: {
+    color: '#b91c1c',
+    marginTop: 4,
   },
   summaryTable: {
     minWidth: 360,

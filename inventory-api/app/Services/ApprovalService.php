@@ -247,6 +247,12 @@ class ApprovalService
                 ]);
             }
 
+            if ($payment->sale_id) {
+                Sale::query()->lockForUpdate()->findOrFail($payment->sale_id);
+            }
+
+            app(PaymentService::class)->validatePaymentForApproval($payment);
+
             $this->markApproved($payment, $user);
             app(PaymentService::class)->recalculateLinkedInvoice($payment);
 

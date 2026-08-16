@@ -2,13 +2,13 @@
 
 namespace Database\Seeders;
 
-use App\Models\Category;
+use App\Models\Brand;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use SplFileObject;
 
-class LegacyCategorySeeder extends Seeder
+class LegacyBrandSeeder extends Seeder
 {
     private const DUMP_PATH = 'legacy-db-dump/mysql-visionmart.sql';
 
@@ -20,57 +20,55 @@ class LegacyCategorySeeder extends Seeder
             throw new RuntimeException("Legacy dump not found at [{$dumpPath}].");
         }
 
-        $categories = $this->extractCategories($dumpPath);
+        $brands = $this->extractBrands($dumpPath);
 
         Schema::disableForeignKeyConstraints();
 
         try {
-            Category::query()->truncate();
+            Brand::query()->truncate();
         } finally {
             Schema::enableForeignKeyConstraints();
         }
 
-        Category::query()->insert($categories);
+        Brand::query()->insert($brands);
 
-        $this->command?->info('Legacy categories imported: '.count($categories).'.');
+        $this->command?->info('Legacy brands imported: '.count($brands).'.');
     }
 
     /**
      * @return array<int, array{
      *     id: int,
-     *     name: string,
+     *     title: string,
      *     image: string|null,
-     *     parent_id: null,
      *     is_active: bool,
      *     created_at: string|null,
      *     updated_at: string|null
      * }>
      */
-    private function extractCategories(string $dumpPath): array
+    private function extractBrands(string $dumpPath): array
     {
         $file = new SplFileObject($dumpPath);
 
         while (! $file->eof()) {
             $line = trim((string) $file->fgets());
 
-            if (! str_starts_with($line, 'INSERT INTO `categories` VALUES ')) {
+            if (! str_starts_with($line, 'INSERT INTO `brands` VALUES ')) {
                 continue;
             }
 
-            $values = rtrim(substr($line, strlen('INSERT INTO `categories` VALUES ')), ';');
+            $values = rtrim(substr($line, strlen('INSERT INTO `brands` VALUES ')), ';');
             $tuples = preg_split('/\),\(/', trim($values, '()')) ?: [];
-            $categories = [];
+            $brands = [];
 
             foreach ($tuples as $tuple) {
                 $columns = str_getcsv($tuple, ',', "'", '\\');
-                $name = trim((string) ($columns[1] ?? ''));
+                $title = trim((string) ($columns[1] ?? ''));
 
-                if ($name !== '') {
-                    $categories[] = [
+                if ($title !== '') {
+                    $brands[] = [
                         'id' => (int) $columns[0],
-                        'name' => $name,
+                        'title' => $title,
                         'image' => $this->nullableValue($columns[2] ?? null),
-                        'parent_id' => null,
                         'is_active' => true,
                         'created_at' => $this->nullableValue($columns[4] ?? null),
                         'updated_at' => $this->nullableValue($columns[5] ?? null),
@@ -78,10 +76,10 @@ class LegacyCategorySeeder extends Seeder
                 }
             }
 
-            return $categories;
+            return $brands;
         }
 
-        throw new RuntimeException('No INSERT statement found for legacy categories.');
+        throw new RuntimeException('No INSERT statement found for legacy brands.');
     }
 
     private function nullableValue(?string $value): ?string

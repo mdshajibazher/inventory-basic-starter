@@ -63,6 +63,8 @@ export default function PaymentsDetailScreen() {
               <Summary label="Method" value={payment.paying_method} />
               <Summary label="Approval" value={payment.approval_status === 'pending' ? 'Pending approval' : 'Approved'} />
               <Summary label="Amount" value={`${payment.direction === 'in' ? '+' : '-'}${money(payment.amount)}`} strong />
+              <Summary label="Discount" value={money(payment.discount_amount ?? 0)} />
+              <Summary label="Total Settled" value={money(payment.settled_amount ?? (payment.payment_type === 'customer_advance' ? Number(payment.amount) - Number(payment.discount_amount ?? 0) : Number(payment.amount) + Number(payment.discount_amount ?? 0)))} strong />
               {payment.payment_note ? <Text variant="bodyMedium" style={styles.note}>{payment.payment_note}</Text> : null}
             </Card.Content>
           </Card>

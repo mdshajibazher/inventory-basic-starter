@@ -43,6 +43,7 @@ type FormState = {
   shippingCost: string;
   paymentMode: PaymentMode;
   paidAmount: string;
+  paymentDiscountAmount: string;
   paymentNote: string;
   saleNote: string;
   staffNote: string;
@@ -81,6 +82,7 @@ const emptyForm = (kind: InvoiceKind = 'sales'): FormState => ({
   shippingCost: '0',
   paymentMode: 'unpaid',
   paidAmount: '0',
+  paymentDiscountAmount: '0',
   paymentNote: '',
   saleNote: '',
   staffNote: '',
@@ -123,6 +125,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       : user.current_biller.name
     : 'No branch selected';
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
+  const invoicePayment = invoicePaymentValidation(form.paymentMode, form.paidAmount, form.paymentDiscountAmount, totals.grandTotal);
 
   const searchCustomers = useCallback(async (query: string) => {
     const response = await api.customers({ perPage: 30, search: query.trim() });
@@ -415,7 +418,8 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       orderDiscount: String(invoice.order_discount ?? '0'),
       shippingCost: String(invoice.shipping_cost ?? '0'),
       paymentMode: paymentModeFromStatus(Number(invoice.payment_status), Number(invoice.paid_amount)),
-      paidAmount: String(invoice.paid_amount ?? '0'),
+      paidAmount: String(invoice.payments?.[0]?.amount ?? invoice.paid_amount ?? '0'),
+      paymentDiscountAmount: String(invoice.payments?.[0]?.discount_amount ?? '0'),
       paymentNote: invoice.payments?.[0]?.payment_note ?? '',
       saleNote: invoice.sale_note ?? '',
       staffNote: invoice.staff_note ?? '',
@@ -549,7 +553,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button type="submit" className="bg-blue-600 px-5 shadow-sm hover:bg-blue-700" disabled={saving || loading}>
+          <Button type="submit" className="bg-blue-600 px-5 shadow-sm hover:bg-blue-700" disabled={saving || loading || Boolean(invoicePayment.error)}>
             <FileText className="h-4 w-4" />
             {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
           </Button>
@@ -709,10 +713,17 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
           {kind === 'sales' ? <Field label="Shipping Cost"><Input type="number" step="0.01" min="0" value={form.shippingCost} onChange={(event) => setValue('shippingCost', event.target.value)} /></Field> : null}
           {kind === 'sales' ? <Field label="Payment Status"><Select value={form.paymentMode} onValueChange={(value) => setValue('paymentMode', value as PaymentMode)} options={[
             { value: 'unpaid', label: 'Unpaid' },
-            { value: 'partial', label: 'Partial cash' },
+            { value: 'partial', label: 'Partial / advance' },
             { value: 'paid', label: 'Paid cash' },
           ]} /></Field> : null}
-          {kind === 'sales' && form.paymentMode === 'partial' ? <Field label="Paid Amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
+          {kind === 'sales' && form.paymentMode === 'partial' ? <Field label="Advance Amount"><Input type="number" step="0.01" min="0" value={form.paidAmount} onChange={(event) => setValue('paidAmount', event.target.value)} /></Field> : null}
+          {kind === 'sales' && form.paymentMode === 'paid' ? <Field label="Cash Amount"><Input value={money(invoicePayment.cashAmount)} readOnly className="bg-slate-100" /></Field> : null}
+          {kind === 'sales' && form.paymentMode !== 'unpaid' ? (
+            <Field label="Payment Discount">
+              <Input type="number" step="0.01" min="0" max={invoicePayment.maxDiscount} value={form.paymentDiscountAmount} onChange={(event) => setValue('paymentDiscountAmount', event.target.value)} aria-invalid={Boolean(invoicePayment.error)} className={invoicePayment.error ? 'border-red-500 focus-visible:ring-red-500' : undefined} />
+              <p className={invoicePayment.error ? 'mt-1 text-xs text-red-600' : 'mt-1 text-xs text-slate-500'}>{invoicePayment.error ?? `Maximum discount: ${money(invoicePayment.maxDiscount)} · Settled: ${money(invoicePayment.settledAmount)}`}</p>
+            </Field>
+          ) : null}
           {kind === 'sales' ? <Field label="Payment Note"><Input placeholder="Payment note (optional)" value={form.paymentNote} onChange={(event) => setValue('paymentNote', event.target.value)} /></Field> : null}
         </div>
       </section>
@@ -739,7 +750,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
       </section>
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="submit" className="bg-blue-600 px-6 shadow-sm hover:bg-blue-700" disabled={saving || loading}>
+        <Button type="submit" className="bg-blue-600 px-6 shadow-sm hover:bg-blue-700" disabled={saving || loading || Boolean(invoicePayment.error)}>
           <FileText className="h-4 w-4" />
           {saving ? 'Saving...' : editingId ? 'Update Invoice' : 'Create Invoice'}
         </Button>
@@ -884,6 +895,8 @@ function InvoiceDetails({ invoice, kind, canEditCost, onInvoiceUpdated }: { invo
             <InfoPanel title="Payment Information">
               <InfoRow label="Payment Method" value={paymentMethodLabel(payment?.paying_method)} />
               <InfoRow label="Paid Amount" value={kind === 'sales' ? money(paidAmount) : '-'} />
+              <InfoRow label="Payment Discount" value={kind === 'sales' ? money(payment?.discount_amount ?? 0) : '-'} />
+              <InfoRow label="Cash Received" value={kind === 'sales' ? money(payment?.amount ?? paidAmount) : '-'} />
               <InfoRow label="Change Amount" value={kind === 'sales' ? money(changeAmount) : '-'} highlight={changeAmount > 0} />
               <InfoRow label="Payment Note" value={String(payment?.payment_note ?? '-')} />
             </InfoPanel>
@@ -1164,7 +1177,12 @@ function buildPayload(
     return null;
   }
 
-  const paidAmount = paymentPaidAmount(form.paymentMode, form.paidAmount, totals.grandTotal);
+  const paymentValidation = invoicePaymentValidation(form.paymentMode, form.paidAmount, form.paymentDiscountAmount, totals.grandTotal);
+  if (kind === 'sales' && paymentValidation.error) {
+    toast.error('Invalid payment discount', { description: paymentValidation.error });
+    return null;
+  }
+  const paidAmount = paymentValidation.cashAmount;
 
   const basePayload = {
     reference_no: form.referenceNo.trim(),
@@ -1213,6 +1231,7 @@ function buildPayload(
     paid_by_id: form.paymentMode === 'unpaid' ? null : 1,
     paying_amount: paidAmount,
     paid_amount: paidAmount,
+    payment_discount_amount: paymentValidation.discountAmount,
     payment_note: nullableText(form.paymentNote),
   };
 }
@@ -1246,10 +1265,21 @@ function paymentStatus(mode: PaymentMode) {
   return 2;
 }
 
-function paymentPaidAmount(mode: PaymentMode, paidAmount: string, grandTotal: number) {
-  if (mode === 'paid') return grandTotal;
-  if (mode === 'partial') return Math.min(numberValue(paidAmount), grandTotal);
-  return 0;
+function invoicePaymentValidation(mode: PaymentMode, rawPaidAmount: string, rawDiscount: string, grandTotal: number) {
+  if (mode === 'unpaid') return { cashAmount: 0, discountAmount: 0, settledAmount: 0, maxDiscount: 0, error: null as string | null };
+  const enteredDiscount = Number(rawDiscount || 0);
+  if (!Number.isFinite(enteredDiscount)) return { cashAmount: 0, discountAmount: 0, settledAmount: 0, maxDiscount: 0, error: 'Enter a valid discount amount.' };
+  const discountAmount = round2(enteredDiscount);
+  const cashAmount = mode === 'paid'
+    ? Math.max(round2(grandTotal - discountAmount), 0)
+    : Math.min(numberValue(rawPaidAmount), grandTotal);
+  const maxDiscount = Math.max(round2(grandTotal - cashAmount), 0);
+  const settledAmount = round2(cashAmount + discountAmount);
+  let error: string | null = null;
+  if (discountAmount < 0) error = 'Discount amount cannot be negative.';
+  else if (cashAmount <= 0) error = 'Cash payment must be greater than zero.';
+  else if (discountAmount > maxDiscount || settledAmount > grandTotal) error = `Discount cannot exceed ${money(maxDiscount)}.`;
+  return { cashAmount, discountAmount, settledAmount, maxDiscount, error };
 }
 
 function paymentModeFromStatus(status: number, paidAmount: number): PaymentMode {

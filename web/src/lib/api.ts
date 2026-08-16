@@ -1,5 +1,5 @@
 import { tokenStorage } from './storage';
-import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, ProfitReportDetail, SmsLog, StockTransfer } from './types';
+import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, Product, ProductSummary, ProfitReport, ProfitReportDetail, SmsLog, StockTransfer } from './types';
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -207,6 +207,7 @@ export type PaymentPayload = {
   payment_type: PaymentType;
   direction?: PaymentDirection;
   amount: number;
+  discount_amount?: number;
   change?: number;
   paying_method: string;
   payment_note?: string | null;
@@ -221,6 +222,22 @@ export type StockAdjustmentPayload = {
   qty: number;
   movement_date?: string | null;
   note?: string | null;
+};
+
+export type BatchStockAdjustmentLinePayload = {
+  product_id: number;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  unit_id: number;
+  direction: 'increase' | 'decrease';
+  qty: number;
+};
+
+export type BatchStockAdjustmentPayload = {
+  warehouse_id: number;
+  document?: UploadImage | null;
+  note?: string | null;
+  lines: BatchStockAdjustmentLinePayload[];
 };
 
 export type StockTransferLinePayload = {
@@ -301,13 +318,14 @@ export type SalesInvoicePayload = {
   paid_by_id?: number | null;
   paying_amount?: number;
   paid_amount?: number;
+  payment_discount_amount?: number;
   payment_note?: string | null;
   sale_note?: string | null;
   staff_note?: string | null;
   document?: UploadImage | null;
 };
 
-export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
+export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_discount_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
   return_date?: string | null;
   return_note?: string | null;
 };
@@ -580,6 +598,7 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   appendNullableNumber(formData, 'paid_by_id', payload.paid_by_id);
   appendNullableNumber(formData, 'paying_amount', payload.paying_amount ?? payload.paid_amount ?? 0);
   appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
+  appendNullableNumber(formData, 'payment_discount_amount', payload.payment_discount_amount ?? 0);
   appendNullableString(formData, 'payment_note', payload.payment_note);
   appendNullableString(formData, 'sale_note', payload.sale_note);
   appendNullableString(formData, 'staff_note', payload.staff_note);
@@ -692,6 +711,20 @@ function stockTransferFormData(payload: StockTransferPayload) {
   appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax ?? 0));
   appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal ?? 0));
   appendNullableStringArray(formData, 'line_note', payload.lines.map((line) => line.line_note));
+  return formData;
+}
+
+function batchStockAdjustmentFormData(payload: BatchStockAdjustmentPayload) {
+  const formData = new FormData();
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  appendNullableString(formData, 'note', payload.note);
+  appendImage(formData, 'document', payload.document);
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
+  appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
+  appendNumberArray(formData, 'unit_id', payload.lines.map((line) => line.unit_id));
+  payload.lines.forEach((line) => formData.append('direction[]', line.direction));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
   return formData;
 }
 
@@ -899,8 +932,8 @@ export const api = {
   customerLedger: (id: number, params: { from?: string; to?: string } = {}) =>
     request<{ data: CustomerLedgerReport }>(`/customers/${id}/ledger${queryString({ from: params.from, to: params.to })}`),
   productOptions: () => request<{ data: unknown }>('/products/options'),
-  products: (params: { page?: number; perPage?: number; search?: string } = {}) =>
-    request<PaginatedResponse<unknown>>(`/products${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
+  products: (params: { page?: number; perPage?: number; search?: string; categoryId?: number; brandId?: number; status?: string; warehouseId?: number } = {}) =>
+    request<PaginatedResponse<Product> & { summary: ProductSummary }>(`/products${queryString({ page: params.page, per_page: params.perPage, search: params.search, category_id: params.categoryId, brand_id: params.brandId, status: params.status, warehouse_id: params.warehouseId })}`),
   product: (id: number) => request<{ data: unknown }>(`/products/${id}`),
   productBarcode: (id: number, params: { variantId?: number | null } = {}) =>
     request<{ data: ProductBarcodeLabel }>(`/products/${id}/barcode${queryString({ variant_id: params.variantId })}`),
@@ -928,6 +961,8 @@ export const api = {
     download(`/products/${productId}/stock-history${queryString({ export: 'csv', search })}`, `stock-history-${productId}.csv`),
   createStockAdjustment: (productId: number, payload: StockAdjustmentPayload) =>
     request<{ data: unknown; message: string }>(`/products/${productId}/stock-adjustments`, { method: 'POST', body: JSON.stringify(payload) }),
+  createBatchStockAdjustment: (payload: BatchStockAdjustmentPayload) =>
+    request<{ data: unknown; message: string }>('/stock-adjustments', { method: 'POST', body: batchStockAdjustmentFormData(payload) }),
   updateStockAdjustment: (movementId: number, payload: StockAdjustmentPayload) =>
     request<{ data: unknown; message: string }>(`/stock-adjustments/${movementId}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteStockAdjustment: (movementId: number) =>

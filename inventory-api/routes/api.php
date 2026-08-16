@@ -146,6 +146,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
 
     Route::get('/product-stocks', [StockController::class, 'index'])->middleware('permission:product-stocks-index');
     Route::get('/products/{product}/stock-history', [StockController::class, 'history'])->middleware('permission:product-stocks-index');
+    Route::post('/stock-adjustments', [StockController::class, 'storeBatchAdjustment'])->middleware('permission:product-stocks-adjust');
     Route::post('/products/{product}/stock-adjustments', [StockController::class, 'storeAdjustment'])->middleware('permission:product-stocks-adjust');
     Route::match(['put', 'patch'], '/stock-adjustments/{movement}', [StockController::class, 'updateAdjustment'])->middleware('permission:product-stocks-adjust');
     Route::delete('/stock-adjustments/{movement}', [StockController::class, 'destroyAdjustment'])->middleware('permission:product-stocks-adjust');

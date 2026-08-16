@@ -129,7 +129,7 @@ export default function ProfitReportScreen() {
   const categories = report?.categories ?? [];
   const expenses = report?.expenses ?? [];
   const cash = report?.cash ?? [];
-  const totalDiscount = (summary?.sales_discounts ?? 0) + (summary?.order_discounts ?? 0) + (summary?.coupon_discounts ?? 0);
+  const totalDiscount = (summary?.sales_discounts ?? 0) + (summary?.order_discounts ?? 0) + (summary?.coupon_discounts ?? 0) + (summary?.payment_discounts ?? 0);
   const totalSold = products.reduce((sum, product) => sum + Number(product.qty_sold ?? 0), 0);
   const averageOrderValue = totalSold > 0 ? Number(summary?.net_revenue ?? 0) / totalSold : 0;
   const profitPerProduct = products.length ? Number(summary?.net_profit ?? 0) / products.length : 0;

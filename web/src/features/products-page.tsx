@@ -2,16 +2,16 @@
 
 import { FormEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Boxes, Building2, Calendar, ChevronRight, CircleDollarSign, Eye, GripVertical, ImageOff, Package, Pencil, Plus, Save, Star, Tags, Trash2, Upload, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, Bell, Boxes, Building2, Calendar, CheckCircle2, ChevronLeft, ChevronRight, ChevronsUpDown, CircleDollarSign, Copy, Download, Eye, Filter, GripVertical, ImageOff, Package, Pencil, Plus, RotateCcw, Save, Search, Star, Tags, Trash2, Upload, XCircle, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { api, type ProductPayload } from '@/lib/api';
-import type { Brand, Category, PaginationMeta, Product, Tax, Unit, Warehouse } from '@/lib/types';
+import type { Brand, Category, PaginationMeta, Product, ProductSummary, Tax, Unit, Warehouse } from '@/lib/types';
 import { errorMessage, toNullableNumber, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { ActionButton, Button, Checkbox, Field, Input, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
-import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
+import { ActionButton, Button, Checkbox, Field, Input, Select, Switch, Textarea } from '@/components/ui';
+import { EmptyState } from '@/components/resource-shell';
 
 type ProductForm = {
   type: string;
@@ -88,6 +88,7 @@ type ProductOptions = {
 type ProductsPageMode = 'index' | 'create' | 'edit';
 
 const defaultPerPage = 15;
+const emptyProductSummary: ProductSummary = { total: 0, active: 0, low_stock: 0, out_of_stock: 0, categories: 0 };
 
 const emptyForm: ProductForm = {
   type: 'standard',
@@ -139,6 +140,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   const [products, setProducts] = useState<Product[]>([]);
   const [options, setOptions] = useState<ProductOptions>(fallbackOptions);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [summary, setSummary] = useState<ProductSummary>(emptyProductSummary);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
   const [search, setSearch] = useState('');
@@ -149,10 +151,19 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [filterBrands, setFilterBrands] = useState<Brand[]>([]);
+  const [filterCategories, setFilterCategories] = useState<Category[]>([]);
+  const [filterWarehouses, setFilterWarehouses] = useState<Warehouse[]>([]);
+  const [brandFilter, setBrandFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [warehouseFilter, setWarehouseFilter] = useState('all');
 
   const canAdd = hasPermission('products-add');
   const canEdit = hasPermission('products-edit');
   const canDelete = hasPermission('products-delete');
+
+  const visibleProducts = products;
 
   const searchBrands = useCallback(async (query: string) => {
     const response = await api.brands({ page: 1, perPage: 20, search: query, activeOnly: true });
@@ -167,15 +178,24 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   const load = useCallback(async (nextPage = page) => {
     setLoading(true);
     try {
-      const productResponse = await api.products({ page: nextPage, perPage, search: debouncedSearch });
-      setProducts(productResponse.data as Product[]);
+      const productResponse = await api.products({
+        page: nextPage,
+        perPage,
+        search: debouncedSearch,
+        categoryId: categoryFilter === 'all' ? undefined : Number(categoryFilter),
+        brandId: brandFilter === 'all' ? undefined : Number(brandFilter),
+        status: statusFilter,
+        warehouseId: warehouseFilter === 'all' ? undefined : Number(warehouseFilter),
+      });
+      setProducts(productResponse.data);
       setPagination(productResponse.meta ?? null);
+      setSummary(productResponse.summary ?? emptyProductSummary);
     } catch (error) {
       toast.error('Load failed', { description: errorMessage(error) });
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, page, perPage]);
+  }, [brandFilter, categoryFilter, debouncedSearch, page, perPage, statusFilter, warehouseFilter]);
 
   useEffect(() => {
     if (mode === 'index' && !hasPermission('products-index')) router.replace('/dashboard');
@@ -187,6 +207,22 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
     if (mode !== 'index') return;
     void load(page);
   }, [load, mode, page]);
+
+  useEffect(() => {
+    if (mode !== 'index') return;
+    let cancelled = false;
+    void Promise.all([
+      api.brands({ page: 1, perPage: 100, activeOnly: true }),
+      api.categories({ page: 1, perPage: 100, activeOnly: true }),
+      api.warehouses({ page: 1, perPage: 100, activeOnly: true }),
+    ]).then(([brandResponse, categoryResponse, warehouseResponse]) => {
+      if (cancelled) return;
+      setFilterBrands(brandResponse.data as Brand[]);
+      setFilterCategories(categoryResponse.data as Category[]);
+      setFilterWarehouses(warehouseResponse.data as Warehouse[]);
+    }).catch((error) => toast.error('Filters failed', { description: errorMessage(error) }));
+    return () => { cancelled = true; };
+  }, [mode]);
 
   useEffect(() => {
     if (mode === 'index') return;
@@ -370,6 +406,35 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
 
   function openEdit(product: Product) {
     router.push(`/products/${product.id}/edit`);
+  }
+
+  function resetProductFilters() {
+    setBrandFilter('all');
+    setCategoryFilter('all');
+    setStatusFilter('all');
+    setWarehouseFilter('all');
+    setSearch('');
+  }
+
+  function exportProducts() {
+    const rows = visibleProducts.map((product) => [
+      product.name,
+      product.code,
+      product.brand?.title ?? '',
+      product.category?.name ?? '',
+      String(product.qty ?? product.quantity ?? 0),
+      String(product.price ?? 0),
+      productInventoryStatus(product).label,
+    ]);
+    const csv = [['Product', 'SKU / Code', 'Brand', 'Category', 'Stock Qty', 'Unit Price', 'Status'], ...rows]
+      .map((row) => row.map(csvCell).join(','))
+      .join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'products.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   function cancelForm() {
@@ -689,76 +754,175 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
   }
 
   return (
-    <div>
-      <PageHeader title="Products" subtitle={`${products.length} shown from ${pagination?.total ?? products.length}`} canAdd={canAdd} onAdd={openCreate} />
-      <SearchBox value={search} onChange={setSearch} placeholder="Search products, code, brand, category" />
-      {products.length ? (
-        <TableWrap loading={loading}>
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="bg-neutral-50 text-xs uppercase text-neutral-500">
-              <tr>
-                {['Product', 'Code', 'Brand', 'Category', 'Qty', 'Base Unit Price', 'Status', 'Action'].map((header) => <th key={header} className="px-4 py-3 font-medium">{header}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((product) => (
-                <tr key={product.id} className="border-t border-neutral-100">
-                  <td className="px-4 py-3">
-                    <Link href={`/products/${product.id}`} className="flex items-center gap-3 rounded-md hover:text-black focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2">
-                      <ProductThumb src={product.image_url ?? product.image} alt={product.name} />
-                      <div>
-                        <div className="font-medium underline-offset-2 hover:underline">{product.name}</div>
-                        <div className="text-xs text-neutral-500">{product.type}</div>
-                      </div>
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">{product.code}</td>
-                  <td className="px-4 py-3">{product.brand?.title ?? '-'}</td>
-                  <td className="px-4 py-3">{product.category?.name ?? '-'}</td>
-                  <td className="px-4 py-3">{product.qty ?? product.quantity ?? 0}</td>
-                  <td className="px-4 py-3">{product.price}</td>
-                  <td className="px-4 py-3"><StatusBadge active={product.is_active} /></td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <ActionButton
-                        icon={Eye}
-                        text="View product"
-                        color="text-blue-500 hover:text-blue-600"
-                        bgColor="bg-blue-50 hover:border-blue-100 hover:bg-blue-100"
-                        href={`/products/${product.id}`}
-                      />
-                      {canEdit ? (
-                        <ActionButton
-                          icon={Pencil}
-                          text="Edit product"
-                          color="text-amber-600 hover:text-amber-700"
-                          bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100"
-                          onClick={() => openEdit(product)}
-                        />
-                      ) : null}
-                      {canDelete ? (
-                        <ActionButton
-                          icon={Trash2}
-                          text="Delete product"
-                          color="text-red-500 hover:text-red-600"
-                          bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100"
-                          disabled={saving}
-                          onClick={() => void remove(product)}
-                        />
-                      ) : null}
-                    </div>
-                  </td>
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Package className="h-6 w-6" /></div>
+          <div><h1 className="text-2xl font-bold tracking-tight text-slate-950">Products</h1><p className="mt-1 text-sm text-slate-500">Manage your inventory products and stock in one place.</p></div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button type="button" variant="secondary" className="border-slate-200 bg-white shadow-sm" onClick={exportProducts} disabled={!visibleProducts.length}><Download className="h-4 w-4" />Export</Button>
+          {canAdd ? <Button type="button" className="bg-emerald-600 shadow-sm hover:bg-emerald-700" onClick={openCreate}><Plus className="h-4 w-4" />Add Product</Button> : null}
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <ProductMetric icon={Boxes} iconClassName="bg-cyan-50 text-cyan-600" label="Total Products" value={summary.total} caption="Matching products" />
+        <ProductMetric icon={CheckCircle2} iconClassName="bg-lime-50 text-lime-600" label="Active" value={summary.active} caption="Currently active products" />
+        <ProductMetric icon={AlertTriangle} iconClassName="bg-amber-50 text-amber-500" label="Low Stock" value={summary.low_stock} caption="Products low on stock" />
+        <ProductMetric icon={XCircle} iconClassName="bg-red-50 text-red-500" label="Out of Stock" value={summary.out_of_stock} caption="Products out of stock" />
+        <ProductMetric icon={Tags} iconClassName="bg-violet-50 text-violet-600" label="Categories" value={summary.categories} caption="Matching categories" />
+      </div>
+
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="grid gap-3 border-b border-slate-200 p-4 lg:grid-cols-[minmax(260px,1.5fr)_repeat(4,minmax(145px,.8fr))_auto_auto]">
+          <div className="relative"><Search className="pointer-events-none absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by product name, SKU, barcode..." className="pl-10" /></div>
+          <Select value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); setPage(1); }} options={[{ value: 'all', label: 'All Categories' }, ...filterCategories.map((category) => ({ value: String(category.id), label: category.name }))]} />
+          <Select value={brandFilter} onValueChange={(value) => { setBrandFilter(value); setPage(1); }} options={[{ value: 'all', label: 'All Brands' }, ...filterBrands.map((brand) => ({ value: String(brand.id), label: brand.title }))]} />
+          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} options={[{ value: 'all', label: 'All Status' }, { value: 'active', label: 'Active' }, { value: 'low_stock', label: 'Low Stock' }, { value: 'out_of_stock', label: 'Out of Stock' }, { value: 'inactive', label: 'Inactive' }]} />
+          <Select value={warehouseFilter} onValueChange={(value) => { setWarehouseFilter(value); setPage(1); }} options={[{ value: 'all', label: 'All Warehouses' }, ...filterWarehouses.map((warehouse) => ({ value: String(warehouse.id), label: warehouse.name }))]} />
+          <Button type="button" variant="secondary" className="border-slate-200 bg-white" onClick={() => setPage(1)}><Filter className="h-4 w-4" />Filters</Button>
+          <Button type="button" variant="secondary" className="w-10 px-0" aria-label="Reset filters" title="Reset filters" onClick={resetProductFilters}><RotateCcw className="h-4 w-4" /></Button>
+        </div>
+
+        <div className="relative overflow-x-auto" aria-busy={loading}>
+          {visibleProducts.length ? (
+            <table className="w-full min-w-[1180px] text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-500">
+                <tr>
+                  {['Product', 'SKU / Code', 'Brand', 'Category', 'Stock Qty', 'Unit Price (৳)', 'Status', 'Updated'].map((header) => <th key={header} className="px-5 py-3"><span className="inline-flex items-center gap-1">{header}<ChevronsUpDown className="h-3 w-3 text-slate-300" /></span></th>)}
+                  <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
-      ) : (
-        <EmptyState label={loading ? 'Loading...' : 'No products found.'} />
-      )}
-      <Pagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {visibleProducts.map((product) => {
+                  const status = productInventoryStatus(product);
+                  return (
+                    <tr key={product.id} className="transition hover:bg-slate-50/70">
+                      <td className="px-5 py-2.5"><Link href={`/products/${product.id}`} className="flex min-w-48 items-center gap-3 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"><ProductThumb src={product.image_url ?? product.image} alt={product.name} /><div className="min-w-0"><div className="truncate font-semibold text-slate-900 hover:text-emerald-700">{product.name}</div><div className="mt-0.5 capitalize text-xs text-slate-500">{product.type}</div></div></Link></td>
+                      <td className="px-5 py-2.5 font-medium text-slate-700">{product.code}</td>
+                      <td className="px-5 py-2.5 text-slate-600">{product.brand?.title ?? '-'}</td>
+                      <td className="px-5 py-2.5 text-slate-600">{product.category?.name ?? '-'}</td>
+                      <td className="px-5 py-2.5 font-semibold text-slate-800">{formatProductNumber(product.qty ?? product.quantity ?? 0)}</td>
+                      <td className="px-5 py-2.5 font-medium text-slate-700">{formatProductMoney(product.price)}</td>
+                      <td className="px-5 py-2.5"><span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${status.className}`}>{status.label}</span></td>
+                      <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{relativeProductDate(product.updated_at)}</td>
+                      <td className="whitespace-nowrap px-5 py-2.5"><div className="flex items-center justify-end gap-1.5">
+                        <ActionButton icon={Eye} text="View product" color="text-blue-500 hover:text-blue-600" bgColor="bg-blue-50 hover:border-blue-100 hover:bg-blue-100" href={`/products/${product.id}`} />
+                        {canEdit ? <ActionButton icon={Pencil} text="Edit product" color="text-amber-600 hover:text-amber-700" bgColor="bg-amber-50 hover:border-amber-100 hover:bg-amber-100" onClick={() => openEdit(product)} /> : null}
+                        <ActionButton icon={Copy} text="Copy product code" color="text-cyan-600 hover:text-cyan-700" bgColor="bg-cyan-50 hover:border-cyan-100 hover:bg-cyan-100" onClick={() => { void navigator.clipboard.writeText(product.code); toast.success('Product code copied'); }} />
+                        {canDelete ? <ActionButton icon={Trash2} text="Delete product" color="text-red-500 hover:text-red-600" bgColor="bg-red-50 hover:border-red-100 hover:bg-red-100" disabled={saving} onClick={() => void remove(product)} /> : null}
+                      </div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : <div className="p-5"><EmptyState label={loading ? 'Loading products...' : 'No products match these filters.'} /></div>}
+          {loading ? <div className="absolute inset-0 z-10 grid min-h-32 place-items-center bg-white/75"><span className="h-7 w-7 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-600" /></div> : null}
+        </div>
+        <ProductsTablePagination meta={pagination} loading={loading} onPage={setPage} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} shown={visibleProducts.length} />
+      </section>
     </div>
   );
+}
+
+function ProductMetric({
+  icon: Icon,
+  iconClassName,
+  label,
+  value,
+  caption,
+}: {
+  icon: LucideIcon;
+  iconClassName: string;
+  label: string;
+  value: number;
+  caption: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full ${iconClassName}`}><Icon className="h-6 w-6" /></div>
+        <div className="min-w-0"><div className="text-xs font-medium text-slate-600">{label}</div><div className="mt-1 text-2xl font-bold text-slate-950">{formatProductNumber(value)}</div><div className="mt-1 truncate text-xs text-slate-500">{caption}</div></div>
+      </div>
+    </div>
+  );
+}
+
+function ProductsTablePagination({
+  meta,
+  loading,
+  shown,
+  onPage,
+  onPerPageChange,
+}: {
+  meta: PaginationMeta | null;
+  loading: boolean;
+  shown: number;
+  onPage: (page: number) => void;
+  onPerPageChange: (perPage: number) => void;
+}) {
+  if (!meta) return null;
+  const pages = productPaginationPages(meta.current_page, meta.last_page);
+  const firstShown = shown ? meta.from ?? 1 : 0;
+  const lastShown = shown ? firstShown + shown - 1 : 0;
+
+  return (
+    <div className="grid gap-4 border-t border-slate-200 px-5 py-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+      <p className="text-sm text-slate-500">Showing <span className="font-medium text-slate-700">{firstShown}</span> to <span className="font-medium text-slate-700">{lastShown}</span> of <span className="font-medium text-slate-700">{formatProductNumber(meta.total)}</span> products</p>
+      <div className="flex items-center justify-center gap-1" aria-label="Pagination">
+        <Button type="button" variant="ghost" className="h-8 w-8 px-0 text-slate-400" aria-label="Previous page" disabled={loading || meta.current_page <= 1} onClick={() => onPage(meta.current_page - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+        {pages.map((item, index) => item === null ? <span key={`ellipsis-${index}`} className="grid h-8 w-8 place-items-center text-sm text-slate-400">...</span> : (
+          <Button key={item} type="button" variant="ghost" className={`h-8 w-8 px-0 ${item === meta.current_page ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'text-slate-600'}`} aria-current={item === meta.current_page ? 'page' : undefined} disabled={loading} onClick={() => onPage(item)}>{item}</Button>
+        ))}
+        <Button type="button" variant="ghost" className="h-8 w-8 px-0 text-slate-400" aria-label="Next page" disabled={loading || meta.current_page >= meta.last_page} onClick={() => onPage(meta.current_page + 1)}><ChevronRight className="h-4 w-4" /></Button>
+      </div>
+      <div className="sm:justify-self-end"><Select value={String(meta.per_page)} onValueChange={(value) => onPerPageChange(Number(value))} disabled={loading} options={[10, 15, 20, 50, 100].map((value) => ({ value: String(value), label: `${value} / page` }))} /></div>
+    </div>
+  );
+}
+
+function productPaginationPages(currentPage: number, lastPage: number): Array<number | null> {
+  if (lastPage <= 5) return Array.from({ length: lastPage }, (_, index) => index + 1);
+  const values = [...new Set([1, currentPage - 1, currentPage, currentPage + 1, lastPage])].filter((value) => value > 0 && value <= lastPage).sort((a, b) => a - b);
+  return values.flatMap((value, index) => index > 0 && value - values[index - 1] > 1 ? [null, value] : [value]);
+}
+
+function productInventoryStatus(product: Product) {
+  if (!(product.is_active === true || String(product.is_active) === '1')) return { key: 'inactive', label: 'Inactive', className: 'border-slate-200 bg-slate-100 text-slate-600' };
+  const quantity = Number(product.qty ?? product.quantity) || 0;
+  if (quantity <= 0) return { key: 'out_of_stock', label: 'Out of Stock', className: 'border-red-200 bg-red-50 text-red-600' };
+  const alertQuantity = Number(product.alert_quantity ?? product.low_stock_limit) || 0;
+  if (alertQuantity > 0 && quantity <= alertQuantity) return { key: 'low_stock', label: 'Low Stock', className: 'border-amber-200 bg-amber-50 text-amber-600' };
+  return { key: 'active', label: 'Active', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+}
+
+function formatProductNumber(value: number | string) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Number(value) || 0);
+}
+
+function formatProductMoney(value: number | string) {
+  return `৳${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value) || 0)}`;
+}
+
+function relativeProductDate(value?: string | null) {
+  if (!value) return '-';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return '-';
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(timestamp));
+}
+
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function FormSection({

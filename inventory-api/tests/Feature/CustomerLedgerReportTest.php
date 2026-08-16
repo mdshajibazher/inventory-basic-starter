@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\GeneralSetting;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductReturn;
@@ -102,9 +103,11 @@ class CustomerLedgerReportTest extends TestCase
             $table->string('payment_type')->nullable();
             $table->string('direction')->nullable();
             $table->double('amount');
+            $table->double('discount_amount')->default(0);
             $table->double('change')->nullable();
             $table->string('paying_method');
             $table->text('payment_note')->nullable();
+            $table->string('approval_status')->nullable();
             $table->timestamps();
         });
 
@@ -170,7 +173,7 @@ class CustomerLedgerReportTest extends TestCase
             PermissionMiddleware::class,
         ]);
 
-        \App\Models\GeneralSetting::create([
+        GeneralSetting::create([
             'site_title' => 'Inventory Management',
             'company_name' => 'Vision Trade International',
             'company_email' => 'test@example.com',
@@ -198,7 +201,7 @@ class CustomerLedgerReportTest extends TestCase
         $return = ReturnInvoice::create($this->returnPayload($customer->id, 'R-100', '2022-01-02', 60));
         ProductReturn::create($this->productReturnPayload($return->id, $product->id, '2022-01-02', 1, 60, 60));
 
-        DB::table('payments')->insert($this->paymentPayload($customer->id, 'P-100', '2022-01-03 10:00:00', Payment::DIRECTION_IN, 100, Payment::TYPE_CUSTOMER_ADVANCE));
+        DB::table('payments')->insert($this->paymentPayload($customer->id, 'P-100', '2022-01-03 10:00:00', Payment::DIRECTION_IN, 100, Payment::TYPE_CUSTOMER_ADVANCE, 10));
         DB::table('payments')->insert($this->paymentPayload($customer->id, 'RF-100', '2022-01-04 10:00:00', Payment::DIRECTION_OUT, 25, Payment::TYPE_SALE_RETURN_REFUND));
 
         $response = $this->getJson("/api/customers/{$customer->id}/ledger?from=2022-01-01&to=2022-01-31");
@@ -216,14 +219,15 @@ class CustomerLedgerReportTest extends TestCase
             ->assertJsonPath('data.rows.1.credit', 60)
             ->assertJsonPath('data.rows.1.balance', 510)
             ->assertJsonPath('data.rows.2.bill', 'P-100')
-            ->assertJsonPath('data.rows.2.credit', 100)
-            ->assertJsonPath('data.rows.2.balance', 410)
+            ->assertJsonPath('data.rows.2.credit', 90)
+            ->assertJsonPath('data.rows.2.discount_amount', 10)
+            ->assertJsonPath('data.rows.2.balance', 420)
             ->assertJsonPath('data.rows.3.bill', 'RF-100')
             ->assertJsonPath('data.rows.3.debit', 25)
-            ->assertJsonPath('data.rows.3.balance', 435)
+            ->assertJsonPath('data.rows.3.balance', 445)
             ->assertJsonPath('data.totals.debit', 365)
-            ->assertJsonPath('data.totals.credit', 160)
-            ->assertJsonPath('data.totals.closing_balance', 435);
+            ->assertJsonPath('data.totals.credit', 150)
+            ->assertJsonPath('data.totals.closing_balance', 445);
     }
 
     private function salePayload(int $customerId, string $reference, string $date, float $grandTotal): array
@@ -297,7 +301,7 @@ class CustomerLedgerReportTest extends TestCase
         ];
     }
 
-    private function paymentPayload(int $customerId, string $reference, string $createdAt, string $direction, float $amount, string $type): array
+    private function paymentPayload(int $customerId, string $reference, string $createdAt, string $direction, float $amount, string $type, float $discount = 0): array
     {
         return [
             'account_id' => 1,
@@ -306,6 +310,7 @@ class CustomerLedgerReportTest extends TestCase
             'payment_type' => $type,
             'direction' => $direction,
             'amount' => $amount,
+            'discount_amount' => $discount,
             'change' => 0,
             'paying_method' => 'Cash',
             'created_at' => $createdAt,

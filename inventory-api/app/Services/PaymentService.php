@@ -19,6 +19,7 @@ class PaymentService
             $data = $this->normalize($data);
             $this->validateBusinessRules($data);
             $this->validateDocumentBranch($data, $user);
+            $this->validateSaleSettlement($data);
 
             $payment = Payment::create([
                 'user_id' => $user->id,
@@ -35,6 +36,7 @@ class PaymentService
                 'payment_type' => $data['payment_type'],
                 'direction' => $data['direction'],
                 'amount' => round((float) $data['amount'], 2),
+                'discount_amount' => round((float) ($data['discount_amount'] ?? 0), 2),
                 'change' => round((float) ($data['change'] ?? 0), 2),
                 'paying_method' => $data['paying_method'],
                 'payment_note' => $data['payment_note'] ?? null,
@@ -69,7 +71,8 @@ class PaymentService
             ->where('payment_type', Payment::TYPE_SALE_PAYMENT)
             ->where('direction', Payment::DIRECTION_IN)
             ->where('approval_status', ApprovalService::APPROVED)
-            ->sum('amount');
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(discount_amount, 0)), 0) as settled_total')
+            ->value('settled_total');
 
         $sale->paid_amount = min(round($paidAmount, 2), (float) $sale->grand_total);
         $sale->payment_status = $this->salePaymentStatus($sale->paid_amount, (float) $sale->grand_total);
@@ -114,6 +117,8 @@ class PaymentService
 
     private function normalize(array $data): array
     {
+        $data['discount_amount'] = $data['discount_amount'] ?? 0;
+
         $defaults = match ($data['payment_type'] ?? null) {
             Payment::TYPE_SALE_PAYMENT, Payment::TYPE_CUSTOMER_ADVANCE => [
                 'direction' => Payment::DIRECTION_IN,
@@ -156,6 +161,26 @@ class PaymentService
 
         if ((float) ($data['amount'] ?? 0) <= 0) {
             $errors['amount'][] = 'The amount must be greater than 0.';
+        }
+
+        if ((float) ($data['discount_amount'] ?? 0) < 0) {
+            $errors['discount_amount'][] = 'The discount amount must be at least 0.';
+        }
+
+        if ((float) ($data['discount_amount'] ?? 0) > 0
+            && ! in_array($data['payment_type'] ?? null, [Payment::TYPE_SALE_PAYMENT, Payment::TYPE_CUSTOMER_ADVANCE], true)) {
+            $errors['discount_amount'][] = 'Discounts are only available for sales invoice payments and customer advances.';
+        }
+
+        if ((float) ($data['discount_amount'] ?? 0) > 0 && empty($data['sale_id'])) {
+            if (($data['payment_type'] ?? null) === Payment::TYPE_SALE_PAYMENT) {
+                $errors['sale_id'][] = 'A sales invoice is required when applying a payment discount.';
+            }
+        }
+
+        if (($data['payment_type'] ?? null) === Payment::TYPE_CUSTOMER_ADVANCE
+            && (float) ($data['discount_amount'] ?? 0) > (float) ($data['amount'] ?? 0)) {
+            $errors['discount_amount'][] = 'The advance discount cannot exceed the advance amount.';
         }
 
         if (empty($data['account_id'])) {
@@ -238,6 +263,70 @@ class PaymentService
                     $errorKey => ['The linked invoice does not belong to the selected branch.'],
                 ]);
             }
+        }
+    }
+
+    public function validatePaymentForApproval(Payment $payment): void
+    {
+        if (! $payment->sale_id) {
+            if ($payment->payment_type === Payment::TYPE_CUSTOMER_ADVANCE) {
+                if ((float) ($payment->discount_amount ?? 0) > (float) $payment->amount) {
+                    throw ValidationException::withMessages([
+                        'discount_amount' => ['The advance discount cannot exceed the advance amount.'],
+                    ]);
+                }
+
+                return;
+            }
+
+            if ((float) ($payment->discount_amount ?? 0) > 0) {
+                throw ValidationException::withMessages([
+                    'discount_amount' => ['A payment discount requires a linked sales invoice.'],
+                ]);
+            }
+
+            return;
+        }
+
+        $this->assertSettlementWithinDue(
+            (int) $payment->sale_id,
+            (float) $payment->amount,
+            (float) ($payment->discount_amount ?? 0)
+        );
+    }
+
+    private function validateSaleSettlement(array $data): void
+    {
+        if (($data['payment_type'] ?? null) !== Payment::TYPE_SALE_PAYMENT || empty($data['sale_id'])) {
+            return;
+        }
+
+        Sale::query()->lockForUpdate()->findOrFail($data['sale_id']);
+        $this->assertSettlementWithinDue(
+            (int) $data['sale_id'],
+            (float) $data['amount'],
+            (float) ($data['discount_amount'] ?? 0)
+        );
+    }
+
+    private function assertSettlementWithinDue(int $saleId, float $amount, float $discount): void
+    {
+        $sale = Sale::query()->findOrFail($saleId);
+        $alreadySettled = (float) Payment::query()
+            ->where('sale_id', $saleId)
+            ->where('payment_type', Payment::TYPE_SALE_PAYMENT)
+            ->where('direction', Payment::DIRECTION_IN)
+            ->where('approval_status', ApprovalService::APPROVED)
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(discount_amount, 0)), 0) as settled_total')
+            ->value('settled_total');
+        $due = max(round((float) $sale->grand_total - $alreadySettled, 2), 0);
+        $settlement = round($amount + $discount, 2);
+
+        if ($settlement > $due) {
+            throw ValidationException::withMessages([
+                'amount' => ['Payment amount plus discount cannot exceed the current invoice due.'],
+                'discount_amount' => ['Payment amount plus discount cannot exceed the current invoice due.'],
+            ]);
         }
     }
 

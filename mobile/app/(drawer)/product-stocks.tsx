@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { Button, DataTable, Dialog, Menu, Portal, Searchbar, SegmentedButtons, Text, TextInput } from 'react-native-paper';
 import { Redirect } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
-import { api, type StockAdjustmentPayload } from '@/src/lib/api';
+import { api, type StockAdjustmentPayload, type UploadImage } from '@/src/lib/api';
 import type { PaginationMeta, ProductStock, StockMovement, Unit, Warehouse } from '@/src/types';
 
 const perPage = 15;
@@ -19,6 +20,16 @@ type AdjustmentForm = {
   qty: string;
   movementDate: string;
   note: string;
+};
+
+type BatchAdjustmentLine = {
+  key: string;
+  productId: string;
+  batchId: string;
+  variantId: string;
+  unitId: string;
+  direction: 'increase' | 'decrease';
+  qty: string;
 };
 
 const emptyAdjustment: AdjustmentForm = {
@@ -56,6 +67,16 @@ export default function ProductStocksScreen() {
   const [saving, setSaving] = useState(false);
   const [editingMovement, setEditingMovement] = useState<StockMovement | null>(null);
   const [form, setForm] = useState<AdjustmentForm>(emptyAdjustment);
+  const [batchVisible, setBatchVisible] = useState(false);
+  const [batchWarehouseId, setBatchWarehouseId] = useState('none');
+  const [batchDocument, setBatchDocument] = useState<UploadImage | null>(null);
+  const [batchNote, setBatchNote] = useState('');
+  const [batchProductId, setBatchProductId] = useState('none');
+  const [batchProductSearch, setBatchProductSearch] = useState('');
+  const [batchLines, setBatchLines] = useState<BatchAdjustmentLine[]>([]);
+  const [adjustmentProducts, setAdjustmentProducts] = useState<ProductStock[]>([]);
+  const [batchProductOptions, setBatchProductOptions] = useState<ProductStock[]>([]);
+  const [batchSaving, setBatchSaving] = useState(false);
 
   const canAdjust = hasPermission('product-stocks-adjust');
 
@@ -76,12 +97,15 @@ export default function ProductStocksScreen() {
   }, [debouncedSearch, page, selectedWarehouseId]);
 
   const loadOptions = useCallback(async () => {
-    const [warehouseResponse, unitResponse] = await Promise.all([
+    const [warehouseResponse, unitResponse, productResponse] = await Promise.all([
       api.warehouses({ page: 1, perPage: 100, activeOnly: true }),
       api.units({ page: 1, perPage: 100 }),
+      api.productStocks({ page: 1, perPage: 100 }),
     ]);
     setWarehouses(warehouseResponse.data as Warehouse[]);
     setUnits(unitResponse.data as Unit[]);
+    setAdjustmentProducts(productResponse.data as ProductStock[]);
+    setBatchProductOptions(productResponse.data as ProductStock[]);
   }, []);
 
   const loadHistory = useCallback(async (productId: number, nextPage = historyPage) => {
@@ -105,6 +129,21 @@ export default function ProductStocksScreen() {
     }, 350);
     return () => clearTimeout(timeout);
   }, [search]);
+
+  useEffect(() => {
+    if (!batchVisible) return;
+    const timeout = setTimeout(async () => {
+      try {
+        const response = await api.productStocks({ page: 1, perPage: 100, search: batchProductSearch.trim() || undefined });
+        const results = response.data as ProductStock[];
+        setBatchProductOptions(results);
+        setAdjustmentProducts((current) => mergeProducts(current, results));
+      } catch (error) {
+        Alert.alert('Product search failed', error instanceof Error ? error.message : 'Unable to search products.');
+      }
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [batchProductSearch, batchVisible]);
 
   const batches = useMemo(() => {
     const byId = new Map<number, string>();
@@ -158,6 +197,96 @@ export default function ProductStocksScreen() {
     setForm(emptyAdjustment);
   }
 
+  function openBatchAdjustment() {
+    setBatchWarehouseId(String(warehouses[0]?.id ?? 'none'));
+    setBatchVisible(true);
+  }
+
+  function closeBatchAdjustment() {
+    setBatchVisible(false);
+    setBatchWarehouseId('none');
+    setBatchDocument(null);
+    setBatchNote('');
+    setBatchProductId('none');
+    setBatchProductSearch('');
+    setBatchLines([]);
+  }
+
+  function addBatchLine() {
+    const product = adjustmentProducts.find((item) => String(item.id) === batchProductId);
+    if (!product) return;
+    setBatchLines((current) => [...current, {
+      key: `${Date.now()}-${Math.random()}`,
+      productId: String(product.id),
+      batchId: 'none',
+      variantId: 'none',
+      unitId: String(product.unit?.id ?? 'none'),
+      direction: 'increase',
+      qty: '',
+    }]);
+    setBatchProductId('none');
+  }
+
+  function updateBatchLine(key: string, field: keyof Omit<BatchAdjustmentLine, 'key' | 'productId'>, value: string) {
+    setBatchLines((current) => current.map((line) => line.key === key ? { ...line, [field]: value } : line));
+  }
+
+  async function pickBatchDocument() {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['image/*', 'application/pdf', 'text/csv', 'text/plain', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    setBatchDocument({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'application/octet-stream' });
+  }
+
+  async function saveBatchAdjustment() {
+    if (batchWarehouseId === 'none' || !batchLines.length) {
+      Alert.alert('Missing fields', 'Warehouse and at least one product line are required.');
+      return;
+    }
+    const invalidLine = batchLines.find((line) => {
+      const product = adjustmentProducts.find((item) => String(item.id) === line.productId);
+      return line.unitId === 'none' || !Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0
+        || Boolean(product?.is_variant && line.variantId === 'none')
+        || Boolean(product?.is_batch && line.batchId === 'none');
+    });
+    if (invalidLine) {
+      Alert.alert('Incomplete product line', 'Complete quantity, unit, variant, and batch fields where required.');
+      return;
+    }
+    const buckets = batchLines.map((line) => `${line.productId}:${line.variantId}:${line.batchId}`);
+    if (new Set(buckets).size !== buckets.length) {
+      Alert.alert('Duplicate product line', 'Each product, variant, and batch combination can only be added once.');
+      return;
+    }
+
+    setBatchSaving(true);
+    try {
+      await api.createBatchStockAdjustment({
+        warehouse_id: Number(batchWarehouseId),
+        document: batchDocument,
+        note: batchNote.trim() || null,
+        lines: batchLines.map((line) => ({
+          product_id: Number(line.productId),
+          product_batch_id: line.batchId === 'none' ? null : Number(line.batchId),
+          variant_id: line.variantId === 'none' ? null : Number(line.variantId),
+          unit_id: Number(line.unitId),
+          direction: line.direction,
+          qty: Number(line.qty),
+        })),
+      });
+      closeBatchAdjustment();
+      await load(page);
+      Alert.alert('Success', 'Stock adjustment created.');
+    } catch (error) {
+      Alert.alert('Save failed', error instanceof Error ? error.message : 'Unable to save stock adjustment.');
+    } finally {
+      setBatchSaving(false);
+    }
+  }
+
   async function saveAdjustment() {
     if (!selectedProduct) return;
     const payload = adjustmentPayload(form, selectedProduct);
@@ -204,6 +333,7 @@ export default function ProductStocksScreen() {
           <Text variant="bodyMedium" style={styles.muted}>{items.length} shown from {pagination?.total ?? items.length}</Text>
         </View>
         <View style={styles.headerActions}>
+          {canAdjust ? <Button mode="contained" icon="plus" onPress={openBatchAdjustment}>Stock Adjustment</Button> : null}
           <SelectMenu label="Warehouse" value={selectedWarehouseId} options={warehouseFilterOptions} onSelect={changeWarehouseFilter} />
           <Button mode="outlined" icon="refresh" loading={loading} onPress={() => void load(page)}>Refresh</Button>
         </View>
@@ -404,6 +534,46 @@ export default function ProductStocksScreen() {
             <Button loading={saving} onPress={() => void saveAdjustment()}>Save</Button>
           </Dialog.Actions>
         </Dialog>
+
+        <Dialog visible={batchVisible} onDismiss={closeBatchAdjustment} style={styles.dialog}>
+          <Dialog.Title>Stock Adjustment</Dialog.Title>
+          <Dialog.ScrollArea>
+            <ScrollView contentContainerStyle={styles.formContent}>
+              <SelectMenu label="Warehouse" value={batchWarehouseId} options={optionList(warehouses.map((warehouse) => ({ value: String(warehouse.id), label: warehouse.name })))} onSelect={setBatchWarehouseId} />
+              <View style={styles.documentField}>
+                <Text variant="titleSmall">Attach Document</Text>
+                <View style={styles.actions}>
+                  <Button mode="outlined" icon="paperclip" onPress={() => void pickBatchDocument()}>{batchDocument ? 'Change Document' : 'Choose Document'}</Button>
+                  {batchDocument ? <Button mode="text" onPress={() => setBatchDocument(null)}>Remove</Button> : null}
+                </View>
+                {batchDocument ? <Text variant="bodySmall" style={styles.muted}>{batchDocument.name}</Text> : null}
+              </View>
+              <Searchbar value={batchProductSearch} onChangeText={setBatchProductSearch} placeholder="Search products by name or code" />
+              <SelectMenu label="Product Dropdown" value={batchProductId} options={optionList(batchProductOptions.map((product) => ({ value: String(product.id), label: `${product.name} (${product.code})` })))} onSelect={setBatchProductId} />
+              <Button mode="outlined" icon="plus" disabled={batchProductId === 'none'} onPress={addBatchLine}>Add Product</Button>
+              <Text variant="titleSmall">Product Lines</Text>
+              {batchLines.map((line, index) => {
+                const product = adjustmentProducts.find((item) => String(item.id) === line.productId);
+                return (
+                  <View key={line.key} style={styles.lineCard}>
+                    <View style={styles.lineHeader}>
+                      <View style={styles.lineTitle}><Text variant="titleSmall">{index + 1}. {product?.name}</Text><Text variant="bodySmall" style={styles.muted}>{product?.code}</Text></View>
+                      <Button compact mode="text" textColor="#b91c1c" onPress={() => setBatchLines((current) => current.filter((item) => item.key !== line.key))}>Remove</Button>
+                    </View>
+                    <SegmentedButtons value={line.direction} onValueChange={(value) => updateBatchLine(line.key, 'direction', value)} buttons={[{ value: 'increase', label: 'Increase' }, { value: 'decrease', label: 'Decrease' }]} />
+                    <TextInput mode="outlined" label="Quantity" value={line.qty} keyboardType="numeric" onChangeText={(value) => updateBatchLine(line.key, 'qty', value)} />
+                    <SelectMenu label="Unit" value={line.unitId} options={stockUnitOptions(product ?? null, units)} onSelect={(value) => updateBatchLine(line.key, 'unitId', value)} />
+                    {product?.is_variant ? <SelectMenu label="Variant" value={line.variantId} options={optionList((product.variants ?? []).map((variant) => ({ value: String(variant.variant_id), label: `${variant.name} (${variant.item_code})` })))} onSelect={(value) => updateBatchLine(line.key, 'variantId', value)} /> : null}
+                    {product?.is_batch ? <SelectMenu label="Batch" value={line.batchId} options={optionList(batchOptionsForProduct(product))} onSelect={(value) => updateBatchLine(line.key, 'batchId', value)} /> : null}
+                  </View>
+                );
+              })}
+              {!batchLines.length ? <Text style={styles.emptyLines}>Select a product and add it to the adjustment.</Text> : null}
+              <TextInput mode="outlined" label="Note" value={batchNote} multiline onChangeText={setBatchNote} />
+            </ScrollView>
+          </Dialog.ScrollArea>
+          <Dialog.Actions><Button onPress={closeBatchAdjustment}>Cancel</Button><Button loading={batchSaving} disabled={batchSaving} onPress={() => void saveBatchAdjustment()}>Save Adjustment</Button></Dialog.Actions>
+        </Dialog>
       </Portal>
     </Screen>
   );
@@ -490,6 +660,20 @@ function stockUnitOptions(product: ProductStock | null, units: Unit[]) {
     value: String(unit.id),
     label: `${unit.unit_name} (${unit.unit_code})`,
   })));
+}
+
+function batchOptionsForProduct(product: ProductStock | null | undefined) {
+  const byId = new Map<number, string>();
+  product?.stocks?.forEach((stock) => {
+    if (stock.product_batch_id && stock.batch_no) byId.set(stock.product_batch_id, stock.batch_no);
+  });
+  return [...byId.entries()].map(([id, label]) => ({ value: String(id), label }));
+}
+
+function mergeProducts(current: ProductStock[], incoming: ProductStock[]) {
+  const byId = new Map(current.map((product) => [product.id, product]));
+  incoming.forEach((product) => byId.set(product.id, product));
+  return [...byId.values()];
 }
 
 function productUnitsForFamily(product: ProductStock | null | undefined, units: Unit[]) {
@@ -588,5 +772,10 @@ const styles = StyleSheet.create({
   empty: { textAlign: 'center', color: '#666666', padding: 18 },
   dialog: { backgroundColor: '#ffffff' },
   formContent: { gap: 12, paddingVertical: 8 },
+  documentField: { gap: 8 },
+  lineCard: { gap: 10, padding: 12, borderWidth: 1, borderColor: '#e5e5e5', borderRadius: 8 },
+  lineHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  lineTitle: { flex: 1 },
+  emptyLines: { textAlign: 'center', color: '#666666', padding: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: '#cccccc', borderRadius: 8 },
   stockModalTotal: { flexDirection: 'row', justifyContent: 'space-between', gap: 16, paddingVertical: 14 },
 });

@@ -24,6 +24,7 @@ class CustomerLedgerService
         foreach ($rows as $row) {
             if ($fromDate && CarbonImmutable::parse($row['date'])->lt($fromDate)) {
                 $openingBalance += $row['debit'] - $row['credit'];
+
                 continue;
             }
 
@@ -126,10 +127,18 @@ class CustomerLedgerService
     {
         return Payment::query()
             ->where('customer_id', $customer->id)
+            ->where(function ($query) {
+                $query->where('approval_status', ApprovalService::APPROVED)
+                    ->orWhereNull('approval_status');
+            })
             ->when($toDate, fn ($query) => $query->whereDate('created_at', '<=', $toDate->toDateString()))
             ->get()
             ->map(function (Payment $payment) {
-                $amount = round((float) $payment->amount, 2);
+                $cashAmount = round((float) $payment->amount, 2);
+                $discountAmount = round((float) ($payment->discount_amount ?? 0), 2);
+                $amount = round($payment->payment_type === Payment::TYPE_CUSTOMER_ADVANCE
+                    ? max($cashAmount - $discountAmount, 0)
+                    : $cashAmount + $discountAmount, 2);
                 $isDebit = $payment->direction === Payment::DIRECTION_OUT;
 
                 return [
@@ -141,6 +150,8 @@ class CustomerLedgerService
                     'particular' => $this->paymentParticular($payment),
                     'debit' => $isDebit ? $amount : 0.0,
                     'credit' => $isDebit ? 0.0 : $amount,
+                    'cash_amount' => $cashAmount,
+                    'discount_amount' => $discountAmount,
                     'product_lines' => [],
                 ];
             });

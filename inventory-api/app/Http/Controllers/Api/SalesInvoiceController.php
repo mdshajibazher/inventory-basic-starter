@@ -42,7 +42,7 @@ class SalesInvoiceController extends Controller
         'products.unit:id,unit_code,unit_name',
         'products.batch:id,batch_no,expired_date',
         'products.variant:id,name',
-        'payments:id,sale_id,customer_id,account_id,payment_reference,payment_type,direction,amount,change,paying_method,payment_note',
+        'payments:id,sale_id,customer_id,account_id,payment_reference,payment_type,direction,amount,discount_amount,change,paying_method,payment_note',
     ];
 
     public function index(Request $request): JsonResponse
@@ -380,6 +380,7 @@ class SalesInvoiceController extends Controller
             'payment_type' => Payment::TYPE_SALE_PAYMENT,
             'direction' => Payment::DIRECTION_IN,
             'amount' => $paidAmount,
+            'discount_amount' => (float) ($data['payment_discount_amount'] ?? 0),
             'change' => (float) ($data['paying_amount'] ?? $paidAmount) - $paidAmount,
             'paying_method' => $this->paymentMethod((int) ($data['paid_by_id'] ?? 1)),
             'payment_note' => $data['payment_note'] ?? null,

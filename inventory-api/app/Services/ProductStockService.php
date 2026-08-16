@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\Adjustment;
 use App\Models\Product;
+use App\Models\ProductAdjustment;
 use App\Models\ProductBatch;
 use App\Models\ProductVariant;
 use App\Models\ProductWarehouse;
@@ -10,6 +12,8 @@ use App\Models\StockMovement;
 use App\Models\Unit;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class ProductStockService
@@ -106,11 +110,101 @@ class ProductStockService
         });
     }
 
+    public function createBatchAdjustment(array $data, User $user, ?string $documentPath = null): Adjustment
+    {
+        return DB::transaction(function () use ($data, $user, $documentPath) {
+            $reference = 'adj-'.now()->format('Ymd-His').'-'.Str::lower(Str::random(4));
+            $adjustment = Adjustment::create([
+                'reference_no' => $reference,
+                'warehouse_id' => $data['warehouse_id'],
+                'document' => $documentPath,
+                'total_qty' => array_sum(array_map('floatval', $data['qty'])),
+                'item' => count($data['product_id']),
+                'note' => $data['note'] ?? null,
+            ]);
+
+            foreach ($data['product_id'] as $index => $productId) {
+                $product = Product::query()->lockForUpdate()->findOrFail($productId);
+                $lineData = [
+                    'warehouse_id' => $data['warehouse_id'],
+                    'product_batch_id' => $data['product_batch_id'][$index] ?? null,
+                    'variant_id' => $data['variant_id'][$index] ?? null,
+                    'unit_id' => $data['unit_id'][$index],
+                    'direction' => $data['direction'][$index],
+                    'qty' => (float) $data['qty'][$index],
+                    'note' => $data['note'] ?? null,
+                ];
+                $this->assertAdjustableProduct($product, $lineData);
+                $unit = Unit::query()->findOrFail($lineData['unit_id']);
+                $signedBase = $this->signedBaseQuantity($lineData['qty'], $unit, $lineData['direction']);
+
+                $productLine = ProductAdjustment::create([
+                    'adjustment_id' => $adjustment->id,
+                    'product_id' => $product->id,
+                    'variant_id' => $lineData['variant_id'],
+                    'qty' => $lineData['qty'],
+                    'action' => $lineData['direction'],
+                ]);
+
+                [$before, $after] = $this->applyAggregateDelta(
+                    $product,
+                    (int) $lineData['warehouse_id'],
+                    $lineData['variant_id'],
+                    $lineData['product_batch_id'],
+                    $signedBase
+                );
+
+                StockMovement::create([
+                    'product_id' => $product->id,
+                    'warehouse_id' => $lineData['warehouse_id'],
+                    'product_batch_id' => $lineData['product_batch_id'],
+                    'variant_id' => $lineData['variant_id'],
+                    'unit_id' => $unit->id,
+                    'user_id' => $user->id,
+                    'source_type' => 'product_adjustment',
+                    'source_id' => $productLine->id,
+                    'type' => $lineData['direction'] === 'increase' ? 'stock_increase' : 'stock_decrease',
+                    'quantity' => $lineData['direction'] === 'increase' ? $lineData['qty'] : -$lineData['qty'],
+                    'quantity_base' => $signedBase,
+                    'before_quantity' => $before,
+                    'after_quantity' => $after,
+                    'reference_no' => $reference,
+                    'note' => $lineData['note'],
+                    'movement_date' => now()->toDateString(),
+                ]);
+            }
+
+            return $adjustment->load([
+                'warehouse:id,name',
+                'products.product:id,name,code',
+                'products.variant:id,name',
+                'products.movement.product:id,name,code,type,is_variant,is_batch',
+                'products.movement.warehouse:id,name',
+                'products.movement.batch:id,batch_no,expired_date',
+                'products.movement.variant:id,name',
+                'products.movement.unit:id,unit_code,unit_name',
+                'products.movement.user:id,name,email',
+            ]);
+        });
+    }
+
     public function updateAdjustment(StockMovement $movement, array $data, User $user): StockMovement
     {
         return DB::transaction(function () use ($movement, $data, $user) {
             $movement = StockMovement::query()->lockForUpdate()->findOrFail($movement->id);
             $this->assertEditable($movement);
+
+            if ($movement->source_type === 'product_adjustment') {
+                $groupWarehouseId = ProductAdjustment::query()
+                    ->whereKey($movement->source_id)
+                    ->join('adjustments', 'adjustments.id', '=', 'product_adjustments.adjustment_id')
+                    ->value('adjustments.warehouse_id');
+                if ($groupWarehouseId && (int) $groupWarehouseId !== (int) $data['warehouse_id']) {
+                    throw ValidationException::withMessages([
+                        'warehouse_id' => ['The warehouse cannot be changed for a grouped stock adjustment.'],
+                    ]);
+                }
+            }
 
             $product = Product::query()->lockForUpdate()->findOrFail($movement->product_id);
             $this->assertAdjustableProduct($product, $data);
@@ -160,6 +254,8 @@ class ProductStockService
                 'movement_date' => $data['movement_date'] ?? now()->toDateString(),
             ]);
 
+            $this->syncGroupedAdjustmentLine($movement);
+
             return $movement;
         });
     }
@@ -177,7 +273,18 @@ class ProductStockService
                 $movement->product_batch_id,
                 -1 * (float) $movement->quantity_base
             );
+            $sourceType = $movement->source_type;
+            $sourceId = $movement->source_id;
             $movement->delete();
+
+            if ($sourceType === 'product_adjustment' && $sourceId) {
+                $line = ProductAdjustment::query()->find($sourceId);
+                if ($line) {
+                    $adjustmentId = $line->adjustment_id;
+                    $line->delete();
+                    $this->refreshGroupedAdjustment($adjustmentId);
+                }
+            }
         });
     }
 
@@ -215,6 +322,48 @@ class ProductStockService
         $base = $this->convertToBase($quantity, $unit);
 
         return $direction === 'increase' ? $base : -$base;
+    }
+
+    private function syncGroupedAdjustmentLine(StockMovement $movement): void
+    {
+        if ($movement->source_type !== 'product_adjustment' || ! $movement->source_id) {
+            return;
+        }
+
+        $line = ProductAdjustment::query()->find($movement->source_id);
+        if (! $line) {
+            return;
+        }
+
+        $line->update([
+            'variant_id' => $movement->variant_id,
+            'qty' => abs((float) $movement->quantity),
+            'action' => (float) $movement->quantity >= 0 ? 'increase' : 'decrease',
+        ]);
+        $this->refreshGroupedAdjustment($line->adjustment_id);
+    }
+
+    private function refreshGroupedAdjustment(int $adjustmentId): void
+    {
+        $adjustment = Adjustment::query()->find($adjustmentId);
+        if (! $adjustment) {
+            return;
+        }
+
+        $lines = ProductAdjustment::query()->where('adjustment_id', $adjustmentId)->get();
+        if ($lines->isEmpty()) {
+            if ($adjustment->document) {
+                Storage::disk('public')->delete($adjustment->document);
+            }
+            $adjustment->delete();
+
+            return;
+        }
+
+        $adjustment->update([
+            'item' => $lines->count(),
+            'total_qty' => $lines->sum('qty'),
+        ]);
     }
 
     private function applyAggregateDelta(Product $product, int $warehouseId, ?int $variantId, ?int $batchId, float $delta): array

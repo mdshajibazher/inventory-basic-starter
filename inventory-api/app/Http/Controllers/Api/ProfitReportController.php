@@ -62,7 +62,7 @@ class ProfitReportController extends Controller
         $total = $metric === 'margin'
             ? (float) $summary['margin_percent']
             : (float) match ($metric) {
-                'discounts' => $summary['sales_discounts'] + $summary['order_discounts'] + $summary['coupon_discounts'],
+                'discounts' => $summary['sales_discounts'] + $summary['order_discounts'] + $summary['coupon_discounts'] + $summary['payment_discounts'],
                 'purchase_returns' => $summary['purchase_return_cost'],
                 default => $summary[$metric] ?? 0,
             };
@@ -160,12 +160,13 @@ class ProfitReportController extends Controller
         $returnCost = (float) $summaryReturnLines->sum('return_cost');
         $purchaseReturnCost = (float) $summaryPurchaseReturnLines->sum('purchase_return_cost');
         $expenseTotal = (float) $expenses->sum('amount');
+        $paymentDiscount = $this->paymentDiscounts($start, $end, $warehouseId, $billerId);
 
         $orderDiscount = (float) $salesInvoices->order_discount;
         $couponDiscount = (float) $salesInvoices->coupon_discount;
         $shipping = (float) $salesInvoices->shipping_cost;
 
-        $netRevenue = $salesLineRevenue - $orderDiscount - $couponDiscount + $shipping - $returnRevenue;
+        $netRevenue = $salesLineRevenue - $orderDiscount - $couponDiscount - $paymentDiscount + $shipping - $returnRevenue;
         $netCost = $salesCost - $returnCost - $purchaseReturnCost;
         $grossProfit = $netRevenue - $netCost;
         $netProfit = $grossProfit - $expenseTotal;
@@ -180,6 +181,7 @@ class ProfitReportController extends Controller
                 'sales_discounts' => $this->round($this->salesLineDiscounts($start, $end, $warehouseId, $billerId)),
                 'order_discounts' => $this->round($orderDiscount),
                 'coupon_discounts' => $this->round($couponDiscount),
+                'payment_discounts' => $this->round($paymentDiscount),
                 'shipping' => $this->round($shipping),
                 'returns' => $this->round($returnRevenue),
                 'cost_of_goods_sold' => $this->round($salesCost),
@@ -631,6 +633,44 @@ class ProfitReportController extends Controller
             ->sum('product_sales.discount');
     }
 
+    private function paymentDiscounts(Carbon $start, Carbon $end, ?int $warehouseId, int $billerId): float
+    {
+        return (float) DB::table('payments')
+            ->join('sales', 'sales.id', '=', 'payments.sale_id')
+            ->whereBetween('payments.created_at', [$start, $end])
+            ->where('payments.biller_id', $billerId)
+            ->where('payments.payment_type', 'sale_payment')
+            ->where('payments.approval_status', ApprovalService::APPROVED)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
+            ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
+            ->sum('payments.discount_amount');
+    }
+
+    private function paymentDiscountEntryRows(Carbon $start, Carbon $end, ?int $warehouseId, int $billerId): Collection
+    {
+        return DB::table('payments')
+            ->join('sales', 'sales.id', '=', 'payments.sale_id')
+            ->whereBetween('payments.created_at', [$start, $end])
+            ->where('payments.biller_id', $billerId)
+            ->where('payments.payment_type', 'sale_payment')
+            ->where('payments.approval_status', ApprovalService::APPROVED)
+            ->where('sales.approval_status', ApprovalService::APPROVED)
+            ->where('payments.discount_amount', '>', 0)
+            ->when($warehouseId, fn ($query) => $query->where('sales.warehouse_id', $warehouseId))
+            ->select(['payments.id', 'payments.payment_reference', 'payments.created_at', 'payments.discount_amount', 'payments.payment_note'])
+            ->latest('payments.id')
+            ->get()
+            ->map(fn ($row) => [
+                'date' => Carbon::parse($row->created_at)->toDateString(),
+                'label' => 'Payment discount',
+                'reference' => $row->payment_reference,
+                'type' => 'Sales payment discount',
+                'description' => $row->payment_note,
+                'amount' => $this->round((float) $row->discount_amount),
+                'amount_type' => 'money',
+            ]);
+    }
+
     private function detailRows(string $metric, Carbon $start, Carbon $end, ?int $warehouseId, int $billerId, string $search, array $report): Collection
     {
         $summary = $report['summary'];
@@ -642,6 +682,7 @@ class ProfitReportController extends Controller
                     ['Sales returns', -1 * (float) $summary['returns']],
                     ['Order discounts', -1 * (float) $summary['order_discounts']],
                     ['Coupon discounts', -1 * (float) $summary['coupon_discounts']],
+                    ['Payment discounts', -1 * (float) $summary['payment_discounts']],
                     ['Shipping', (float) $summary['shipping']],
                 ]),
             ]),
@@ -675,11 +716,14 @@ class ProfitReportController extends Controller
             ])),
             'returns' => collect($this->productDetailRows($report['products'], 'Sales return', 'net_returns')),
             'purchase_returns' => collect($this->productDetailRows($report['products'], 'Purchase return', 'purchase_return_cost')),
-            'discounts' => collect($this->componentRows([
-                ['Line discounts', (float) $summary['sales_discounts']],
-                ['Order discounts', (float) $summary['order_discounts']],
-                ['Coupon discounts', (float) $summary['coupon_discounts']],
-            ])),
+            'discounts' => collect([
+                ...$this->componentRows([
+                    ['Line discounts', (float) $summary['sales_discounts']],
+                    ['Order discounts', (float) $summary['order_discounts']],
+                    ['Coupon discounts', (float) $summary['coupon_discounts']],
+                ]),
+                ...$this->paymentDiscountEntryRows($start, $end, $warehouseId, $billerId)->all(),
+            ]),
         };
     }
 
@@ -691,6 +735,7 @@ class ProfitReportController extends Controller
                 ['label' => 'Sales returns', 'amount' => -1 * (float) $summary['returns']],
                 ['label' => 'Order discounts', 'amount' => -1 * (float) $summary['order_discounts']],
                 ['label' => 'Coupon discounts', 'amount' => -1 * (float) $summary['coupon_discounts']],
+                ['label' => 'Payment discounts', 'amount' => -1 * (float) $summary['payment_discounts']],
                 ['label' => 'Shipping', 'amount' => (float) $summary['shipping']],
             ],
             'gross_profit' => [
@@ -715,6 +760,7 @@ class ProfitReportController extends Controller
                 ['label' => 'Line discounts', 'amount' => (float) $summary['sales_discounts']],
                 ['label' => 'Order discounts', 'amount' => (float) $summary['order_discounts']],
                 ['label' => 'Coupon discounts', 'amount' => (float) $summary['coupon_discounts']],
+                ['label' => 'Payment discounts', 'amount' => (float) $summary['payment_discounts']],
             ],
             default => [],
         };

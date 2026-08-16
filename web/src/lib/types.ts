@@ -165,6 +165,14 @@ export type PaginatedResponse<T> = {
   links?: unknown;
 };
 
+export type ProductSummary = {
+  total: number;
+  active: number;
+  low_stock: number;
+  out_of_stock: number;
+  categories: number;
+};
+
 export type ActivityLogChange = {
   field: string;
   old: unknown;
@@ -237,6 +245,7 @@ export type Product = {
   selling_price: string | number;
   qty: number;
   quantity: number;
+  effective_qty?: number;
   alert_quantity?: number | null;
   low_stock_limit: number;
   tax_id?: number | null;
@@ -263,6 +272,8 @@ export type Product = {
   sale_unit?: Unit;
   tax?: Tax;
   activity_logs?: ActivityLog[];
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type ProductWarehousePrice = {
@@ -368,6 +379,7 @@ export type ProfitReportSummary = {
   sales_discounts: number;
   order_discounts: number;
   coupon_discounts: number;
+  payment_discounts: number;
   shipping: number;
   returns: number;
   cost_of_goods_sold: number;
@@ -582,6 +594,8 @@ export type Payment = {
   payment_type: PaymentType;
   direction: PaymentDirection;
   amount: number | string;
+  discount_amount?: number | string | null;
+  settled_amount?: number | string | null;
   change?: number | string | null;
   paying_method: string;
   payment_note?: string | null;
@@ -676,6 +690,8 @@ export type CustomerLedgerRow = {
   particular: string;
   debit: number;
   credit: number;
+  cash_amount?: number;
+  discount_amount?: number;
   product_lines: string[];
   balance: number;
 };

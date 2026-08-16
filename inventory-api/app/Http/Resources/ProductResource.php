@@ -10,6 +10,10 @@ class ProductResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $effectiveQty = array_key_exists('effective_qty', $this->resource->getAttributes())
+            ? (float) $this->resource->getAttribute('effective_qty')
+            : (float) $this->qty;
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -27,8 +31,9 @@ class ProductResource extends JsonResource
             'purchase_price' => $this->cost,
             'price' => $this->price,
             'selling_price' => $this->price,
-            'qty' => $this->qty,
-            'quantity' => $this->qty,
+            'qty' => $effectiveQty,
+            'quantity' => $effectiveQty,
+            'effective_qty' => $effectiveQty,
             'alert_quantity' => $this->alert_quantity,
             'low_stock_limit' => $this->alert_quantity,
             'promotion' => $this->promotion,

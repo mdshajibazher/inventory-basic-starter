@@ -4,13 +4,17 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StockAdjustmentRequest;
+use App\Http\Requests\StoreStockAdjustmentRequest;
+use App\Http\Resources\AdjustmentResource;
 use App\Http\Resources\ProductStockResource;
 use App\Http\Resources\StockMovementResource;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Services\ProductStockService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 class StockController extends Controller
 {
@@ -80,6 +84,30 @@ class StockController extends Controller
             'message' => 'Stock adjustment created successfully.',
             'data' => new StockMovementResource($movement->load($this->movementRelations())),
         ], 201);
+    }
+
+    public function storeBatchAdjustment(StoreStockAdjustmentRequest $request, ProductStockService $stockService)
+    {
+        $documentPath = null;
+
+        try {
+            $documentPath = $request->file('document')?->store('adjustment/documents', 'public');
+            $adjustment = $stockService->createBatchAdjustment(
+                $request->validated(),
+                $request->user(),
+                $documentPath
+            );
+
+            return response()->json([
+                'message' => 'Stock adjustment created successfully.',
+                'data' => new AdjustmentResource($adjustment),
+            ], 201);
+        } catch (Throwable $exception) {
+            if ($documentPath) {
+                Storage::disk('public')->delete($documentPath);
+            }
+            throw $exception;
+        }
     }
 
     public function updateAdjustment(StockAdjustmentRequest $request, StockMovement $movement, ProductStockService $stockService)

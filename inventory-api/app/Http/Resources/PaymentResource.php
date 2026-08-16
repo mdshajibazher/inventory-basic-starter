@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\Payment;
 use App\Services\ApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -16,6 +17,8 @@ class PaymentResource extends JsonResource
             'payment_type' => $this->payment_type,
             'direction' => $this->direction,
             'amount' => $this->amount,
+            'discount_amount' => $this->discount_amount ?? 0,
+            'settled_amount' => $this->settledAmount(),
             'change' => $this->change,
             'paying_method' => $this->paying_method,
             'payment_note' => $this->payment_note,
@@ -87,5 +90,15 @@ class PaymentResource extends JsonResource
             'id' => null,
             'reference_no' => null,
         ];
+    }
+
+    private function settledAmount(): float
+    {
+        $amount = (float) $this->amount;
+        $discount = (float) ($this->discount_amount ?? 0);
+
+        return round($this->payment_type === Payment::TYPE_CUSTOMER_ADVANCE
+            ? max($amount - $discount, 0)
+            : $amount + $discount, 2);
     }
 }

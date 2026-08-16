@@ -170,6 +170,7 @@ export type PaymentPayload = {
   payment_type: PaymentType;
   direction?: PaymentDirection;
   amount: number;
+  discount_amount?: number;
   change?: number;
   paying_method: string;
   payment_note?: string | null;
@@ -184,6 +185,22 @@ export type StockAdjustmentPayload = {
   qty: number;
   movement_date?: string | null;
   note?: string | null;
+};
+
+export type BatchStockAdjustmentLinePayload = {
+  product_id: number;
+  product_batch_id?: number | null;
+  variant_id?: number | null;
+  unit_id: number;
+  direction: 'increase' | 'decrease';
+  qty: number;
+};
+
+export type BatchStockAdjustmentPayload = {
+  warehouse_id: number;
+  document?: UploadImage | null;
+  note?: string | null;
+  lines: BatchStockAdjustmentLinePayload[];
 };
 
 export type TransferLinePayload = {
@@ -333,13 +350,14 @@ export type SalesInvoicePayload = {
   paid_by_id?: number | null;
   paying_amount?: number;
   paid_amount?: number;
+  payment_discount_amount?: number;
   payment_note?: string | null;
   sale_note?: string | null;
   staff_note?: string | null;
   document?: UploadImage | null;
 };
 
-export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
+export type ReturnInvoicePayload = Omit<SalesInvoicePayload, 'sale_status' | 'payment_status' | 'paid_by_id' | 'paying_amount' | 'paid_amount' | 'payment_discount_amount' | 'payment_note' | 'coupon_id' | 'coupon_discount' | 'coupon_active' | 'shipping_cost'> & {
   return_date?: string | null;
   return_note?: string | null;
 };
@@ -598,6 +616,7 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   appendNullableNumber(formData, 'paid_by_id', payload.paid_by_id);
   appendNullableNumber(formData, 'paying_amount', payload.paying_amount ?? payload.paid_amount ?? 0);
   appendNullableNumber(formData, 'paid_amount', payload.paid_amount ?? 0);
+  appendNullableNumber(formData, 'payment_discount_amount', payload.payment_discount_amount ?? 0);
   appendNullableString(formData, 'payment_note', payload.payment_note);
   appendNullableString(formData, 'sale_note', payload.sale_note);
   appendNullableString(formData, 'staff_note', payload.staff_note);
@@ -710,6 +729,20 @@ function transferJsonPayload(payload: TransferPayload) {
     subtotal: payload.lines.map((line) => line.subtotal ?? line.qty * (line.net_unit_cost ?? 0)),
     line_note: payload.lines.map((line) => line.line_note ?? null),
   };
+}
+
+function batchStockAdjustmentFormData(payload: BatchStockAdjustmentPayload) {
+  const formData = new FormData();
+  formData.append('warehouse_id', String(payload.warehouse_id));
+  appendNullableString(formData, 'note', payload.note);
+  appendImage(formData, 'document', payload.document);
+  appendNumberArray(formData, 'product_id', payload.lines.map((line) => line.product_id));
+  appendNullableNumberArray(formData, 'variant_id', payload.lines.map((line) => line.variant_id));
+  appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
+  appendNumberArray(formData, 'unit_id', payload.lines.map((line) => line.unit_id));
+  payload.lines.forEach((line) => formData.append('direction[]', line.direction));
+  appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
+  return formData;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -1265,6 +1298,12 @@ export const api = {
     request<{ data: unknown; message: string }>(`/products/${productId}/stock-adjustments`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+
+  createBatchStockAdjustment: (payload: BatchStockAdjustmentPayload) =>
+    request<{ data: unknown; message: string }>('/stock-adjustments', {
+      method: 'POST',
+      body: batchStockAdjustmentFormData(payload),
     }),
 
   updateStockAdjustment: (movementId: number, payload: StockAdjustmentPayload) =>

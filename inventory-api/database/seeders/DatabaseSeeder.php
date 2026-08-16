@@ -184,39 +184,19 @@ class DatabaseSeeder extends Seeder
         $this->call(PurchaseStatusSeeder::class);
         $this->call(BillerSeeder::class);
         $this->call(SupplierSeeder::class);
-        $this->call(BrandSeeder::class);
         $this->call(AccountSeeder::class);
         $this->call(ExpenseCategorySeeder::class);
-        $this->call(CustomerSeeder::class);
-        // $this->call(StandardProductDemoSeeder::class);
-        // $this->call(ProductSeeder::class);
 
-        // Product::query()->firstOrCreate(
-        //     ['sku' => 'COKE-500'],
-        //     [
-        //         'category_id' => $drinks->id,
-        //         'name' => 'Coca-Cola 500ml',
-        //         'barcode' => '100000000001',
-        //         'purchase_price' => 35,
-        //         'selling_price' => 45,
-        //         'quantity' => 20,
-        //         'low_stock_limit' => 5,
-        //         'description' => 'Demo product',
-        //     ]
-        // );
+        $this->call(LegacyBrandSeeder::class);
+        $this->call(LegacyCategorySeeder::class);
+        $this->call(LegacyProductSeeder::class);
+        $this->call(LegacyUserToCustomerSeeder::class);
+        $this->call(LegacyAdminToUserSeeder::class);
+        $this->call(LegacySupplierAndPurchaseSeeder::class);
+        $this->call(LegacySaleSeeder::class);
+        $this->call(LegacyProductReturnSeeder::class);
+        $this->call(LegacyStockAdjustmentSeeder::class);
+        $this->call(LegacyAdvanceCashSeeder::class);
 
-        // Product::query()->firstOrCreate(
-        //     ['sku' => 'PAPER-A4'],
-        //     [
-        //         'category_id' => $office->id,
-        //         'name' => 'A4 Paper Ream',
-        //         'barcode' => '100000000002',
-        //         'purchase_price' => 420,
-        //         'selling_price' => 500,
-        //         'quantity' => 4,
-        //         'low_stock_limit' => 5,
-        //         'description' => 'Low-stock demo product',
-        //     ]
-        // );
     }
 }

@@ -17,6 +17,7 @@ type PaymentForm = {
   paymentType: PaymentType;
   invoice: InvoiceOption | null;
   amount: string;
+  discountAmount: string;
   change: string;
   payingMethod: string;
   paymentReference: string;
@@ -44,6 +45,7 @@ const initialForm: PaymentForm = {
   paymentType: 'customer_advance',
   invoice: null,
   amount: '',
+  discountAmount: '0',
   change: '0',
   payingMethod: 'Cash',
   paymentReference: '',
@@ -74,6 +76,13 @@ export default function PaymentsScreen() {
   const canCreate = hasPermission(['sales-add', 'purchases-add', 'accounts-index']);
   const direction = directionFor(form.paymentType);
   const invoicePayment = isInvoicePayment(form.paymentType);
+  const discountTotal = useMemo(() => payments.reduce((total, payment) => total + Number(payment.discount_amount ?? 0), 0), [payments]);
+  const maxDiscount = form.paymentType === 'customer_advance'
+    ? Math.max(roundMoney(Number(form.amount || 0)), 0)
+    : form.paymentType === 'sale_payment' && form.invoice
+      ? Math.max(roundMoney(invoiceDue(form.invoice) - Number(form.amount || 0)), 0)
+      : 0;
+  const discountError = paymentDiscountError(form.paymentType, form.invoice, form.amount, form.discountAmount, maxDiscount);
 
   const loadPayments = useCallback(async (nextPage = 1) => {
     setLoading(true);
@@ -162,10 +171,15 @@ export default function PaymentsScreen() {
 
   async function submitPayment() {
     const amount = Number(form.amount);
+    const discountAmount = form.paymentType === 'sale_payment' || form.paymentType === 'customer_advance' ? Number(form.discountAmount || 0) : 0;
     const change = invoicePayment ? Number(form.change || 0) : 0;
 
     if (!form.account || !amount || amount <= 0) {
       Alert.alert('Missing payment fields', 'Account and an amount greater than 0 are required.');
+      return;
+    }
+    if (discountError) {
+      Alert.alert('Invalid discount', discountError);
       return;
     }
     if (form.partyKind === 'customer' && !form.customer) {
@@ -184,6 +198,7 @@ export default function PaymentsScreen() {
       payment_type: form.paymentType,
       direction,
       amount,
+      discount_amount: discountAmount,
       change,
       paying_method: form.payingMethod,
       payment_reference: nullableText(form.paymentReference),
@@ -227,12 +242,13 @@ export default function PaymentsScreen() {
       supplier: kind === 'supplier' ? current.supplier : null,
       paymentType: kind === 'customer' ? 'customer_advance' : 'supplier_advance',
       invoice: null,
+      discountAmount: '0',
       change: '0',
     }));
   }
 
   function updatePaymentType(type: PaymentType) {
-    setForm((current) => ({ ...current, paymentType: type, invoice: null, change: '0' }));
+    setForm((current) => ({ ...current, paymentType: type, invoice: null, discountAmount: '0', change: '0' }));
   }
 
   function selectInvoice(invoice: InvoiceOption) {
@@ -241,6 +257,7 @@ export default function PaymentsScreen() {
       ...current,
       invoice,
       amount: isInvoicePayment(current.paymentType) && due > 0 ? String(due) : current.amount,
+      discountAmount: '0',
       change: '0',
     }));
   }
@@ -259,6 +276,7 @@ export default function PaymentsScreen() {
         <View>
           <Text variant="headlineSmall">Payments</Text>
           <Text variant="bodyMedium" style={styles.muted}>{pagination?.total ?? payments.length} payment records</Text>
+          {discountTotal > 0 ? <Text variant="bodySmall" style={styles.muted}>Discounts: {money(discountTotal)}</Text> : null}
         </View>
         {canCreate ? <Button mode="contained" onPress={() => setModalOpen(true)}>Record</Button> : null}
       </View>
@@ -346,13 +364,29 @@ export default function PaymentsScreen() {
             ) : null}
             <TextInput mode="outlined" label="Direction" value={direction} editable={false} />
             <TextInput mode="outlined" label="Amount" keyboardType="decimal-pad" value={form.amount} onChangeText={updateAmount} />
+            {form.paymentType === 'sale_payment' || form.paymentType === 'customer_advance' ? (
+              <View>
+                <TextInput mode="outlined" label={form.paymentType === 'customer_advance' ? 'Discount / Charge' : 'Discount Amount'} keyboardType="decimal-pad" value={form.discountAmount} onChangeText={(discountAmount) => setForm((current) => ({ ...current, discountAmount }))} error={Boolean(discountError)} />
+                <Text variant="bodySmall" style={discountError ? styles.errorText : styles.muted}>
+                  {discountError ?? `Maximum available discount: ${money(maxDiscount)}`}
+                </Text>
+              </View>
+            ) : null}
+            {form.paymentType === 'sale_payment' && form.invoice ? (
+              <Text variant="bodySmall" style={styles.muted}>
+                Settled {money(Number(form.amount || 0) + Number(form.discountAmount || 0))} · Remaining {money(Math.max(roundMoney(invoiceDue(form.invoice) - Number(form.amount || 0) - Number(form.discountAmount || 0)), 0))}
+              </Text>
+            ) : null}
+            {form.paymentType === 'customer_advance' ? (
+              <Text variant="bodySmall" style={styles.muted}>Net advance credit: {money(Math.max(roundMoney(Number(form.amount || 0) - Number(form.discountAmount || 0)), 0))}</Text>
+            ) : null}
             {invoicePayment ? <TextInput mode="outlined" label="Change" keyboardType="decimal-pad" value={form.change} editable={false} /> : null}
             <SelectButtons label="Paying Method" value={form.payingMethod} options={methods.map((method) => ({ value: method, label: method }))} onSelect={(payingMethod) => setForm((current) => ({ ...current, payingMethod }))} />
             <TextInput mode="outlined" label="Payment Reference" value={form.paymentReference} onChangeText={(paymentReference) => setForm((current) => ({ ...current, paymentReference }))} placeholder="Auto generated if empty" />
             <TextInput mode="outlined" label="Payment Note" multiline value={form.paymentNote} onChangeText={(paymentNote) => setForm((current) => ({ ...current, paymentNote }))} />
             <View style={styles.actions}>
               <Button mode="outlined" disabled={saving} onPress={() => setModalOpen(false)}>Cancel</Button>
-              <Button mode="contained" loading={saving} disabled={saving} onPress={submitPayment}>Save Payment</Button>
+              <Button mode="contained" loading={saving} disabled={saving || Boolean(discountError)} onPress={submitPayment}>Save Payment</Button>
             </View>
           </ScrollView>
         </Modal>
@@ -427,6 +461,7 @@ function PaymentCard({ payment, saving, onApprove }: { payment: Payment; saving:
         <Text variant="bodySmall" style={styles.muted}>Account: {payment.account?.name ?? '-'}</Text>
         <Text variant="bodySmall" style={styles.muted}>Document: {documentLabel(payment)}</Text>
         <Text variant="bodySmall" style={styles.muted}>Method: {payment.paying_method}</Text>
+        {Number(payment.discount_amount ?? 0) > 0 ? <Text variant="bodySmall" style={styles.muted}>Discount: {money(payment.discount_amount)} · Settled: {money(payment.settled_amount ?? (payment.payment_type === 'customer_advance' ? Number(payment.amount) - Number(payment.discount_amount ?? 0) : Number(payment.amount) + Number(payment.discount_amount ?? 0)))}</Text> : null}
         <Text variant="bodySmall" style={payment.approval_status === 'pending' ? styles.pending : styles.approved}>
           {payment.approval_status === 'pending' ? 'Pending approval' : 'Approved'}
         </Text>
@@ -556,7 +591,20 @@ function documentLabel(payment: Payment): string {
 }
 
 function invoiceDetail(invoice: InvoiceOption): string {
-  return `Total ${money(invoice.grand_total ?? 0)}, paid ${money(invoice.paid_amount ?? 0)}, due ${money(invoiceDue(invoice))}`;
+  return `Total ${money(invoice.grand_total ?? 0)}, settled ${money(invoice.paid_amount ?? 0)}, due ${money(invoiceDue(invoice))}`;
+}
+
+function paymentDiscountError(type: PaymentType, invoice: InvoiceOption | null, rawAmount: string, rawDiscount: string, maxDiscount: number): string | null {
+  if (type !== 'sale_payment' && type !== 'customer_advance') return null;
+  const amount = Number(rawAmount || 0);
+  const discount = Number(rawDiscount || 0);
+  if (!Number.isFinite(discount)) return 'Enter a valid discount amount.';
+  if (discount < 0) return 'Discount amount cannot be negative.';
+  if (type === 'customer_advance' && roundMoney(discount) > maxDiscount) return `Discount / charge cannot exceed ${money(maxDiscount)}.`;
+  if (type === 'sale_payment' && discount > 0 && !invoice) return 'Select a sales invoice before applying a discount.';
+  if (invoice && Number.isFinite(amount) && roundMoney(amount) > invoiceDue(invoice)) return 'Payment amount already exceeds the current invoice due.';
+  if (roundMoney(discount) > maxDiscount) return `Discount cannot exceed ${money(maxDiscount)}.`;
+  return null;
 }
 
 function invoiceDue(invoice: InvoiceOption | null): number {
@@ -610,6 +658,7 @@ const styles = StyleSheet.create({
   modal: { maxHeight: '92%', margin: 16, borderRadius: 8, backgroundColor: '#ffffff' },
   modalContent: { gap: 12, padding: 16 },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
+  errorText: { color: '#b91c1c', marginTop: 4 },
   selectBlock: { gap: 6 },
   fieldLabel: { color: '#222222' },
   chipRow: { gap: 8, paddingRight: 8 },

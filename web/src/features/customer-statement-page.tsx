@@ -117,7 +117,10 @@ export function StatementDocument({ report }: { report: CustomerLedgerReport }) 
             <tr key={`${row.type}-${row.id}-${row.date}`}>
               <td className="border border-black px-2 py-3 align-middle">{formatDate(row.date)}</td>
               <td className="border border-black px-2 py-3 align-middle">{row.bill || 'N/A'}</td>
-              <td className="whitespace-pre-line border border-black px-2 py-3 align-middle">{row.particular}</td>
+              <td className="whitespace-pre-line border border-black px-2 py-3 align-middle">
+                {row.particular}
+                {row.type === 'payment' && Number(row.discount_amount ?? 0) > 0 ? `\nCash: ${money(row.cash_amount ?? 0)}\nDiscount: ${money(row.discount_amount ?? 0)}` : ''}
+              </td>
               <td className="border border-black px-2 py-3 align-middle">{money(row.debit)}</td>
               <td className="border border-black px-2 py-3 align-middle">{money(row.credit)}</td>
               <td className="border border-black px-2 py-3 align-top text-base leading-7">
