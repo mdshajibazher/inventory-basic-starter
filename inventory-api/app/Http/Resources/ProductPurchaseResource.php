@@ -24,7 +24,7 @@ class ProductPurchaseResource extends JsonResource
             'tax_rate' => $this->tax_rate,
             'tax' => $this->tax,
             'total' => $this->total,
-            'product' => $this->whenLoaded('product'),
+            'product' => $this->whenLoaded('product', fn () => new InvoiceLineProductResource($this->product)),
             'unit' => $this->whenLoaded('unit'),
             'batch' => $this->whenLoaded('batch'),
             'variant' => $this->whenLoaded('variant'),

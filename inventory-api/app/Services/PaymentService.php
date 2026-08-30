@@ -47,6 +47,70 @@ class PaymentService
         });
     }
 
+    public function canEdit(User $user, Payment $payment): bool
+    {
+        return ($payment->approval_status ?? ApprovalService::APPROVED) === ApprovalService::PENDING
+            && $this->canEditDomain($user, $payment);
+    }
+
+    public function canEditDomain(User $user, Payment $payment): bool
+    {
+        if ($user->can('accounts-edit')) {
+            return true;
+        }
+
+        return $payment->customer_id
+            ? $user->can('sales-edit')
+            : $user->can('purchases-edit');
+    }
+
+    public function update(Payment $payment, array $data, User $user): Payment
+    {
+        return DB::transaction(function () use ($payment, $data, $user) {
+            $payment = Payment::query()->lockForUpdate()->findOrFail($payment->id);
+
+            if (($payment->approval_status ?? ApprovalService::APPROVED) !== ApprovalService::PENDING) {
+                throw ValidationException::withMessages([
+                    'payment' => ['Only pending payments can be edited.'],
+                ]);
+            }
+
+            $data = $this->normalize($data);
+            $wasCustomerPayment = ! empty($payment->customer_id);
+            $willBeCustomerPayment = ! empty($data['customer_id']);
+
+            if ($wasCustomerPayment !== $willBeCustomerPayment) {
+                throw ValidationException::withMessages([
+                    'payment_type' => ['A payment cannot be changed between customer and supplier types.'],
+                ]);
+            }
+
+            $this->validateBusinessRules($data);
+            $this->validateDocumentBranch($data, $user);
+            $this->validateSaleSettlement($data);
+
+            $payment->fill([
+                'purchase_id' => $data['purchase_id'] ?? null,
+                'sale_id' => $data['sale_id'] ?? null,
+                'sale_return_id' => $data['sale_return_id'] ?? null,
+                'purchase_return_id' => $data['purchase_return_id'] ?? null,
+                'account_id' => $data['account_id'],
+                'customer_id' => $data['customer_id'] ?? null,
+                'supplier_id' => $data['supplier_id'] ?? null,
+                'payment_reference' => $data['payment_reference'] ?? $payment->payment_reference,
+                'payment_type' => $data['payment_type'],
+                'direction' => $data['direction'],
+                'amount' => round((float) $data['amount'], 2),
+                'discount_amount' => round((float) ($data['discount_amount'] ?? 0), 2),
+                'change' => round((float) ($data['change'] ?? 0), 2),
+                'paying_method' => $data['paying_method'],
+                'payment_note' => $data['payment_note'] ?? null,
+            ])->save();
+
+            return $payment->load($this->relations());
+        });
+    }
+
     public function recalculateLinkedInvoice(Payment $payment): void
     {
         if ($payment->sale_id) {
@@ -106,8 +170,8 @@ class PaymentService
             'biller:id,name,company_name',
             'customer:id,name,email,phone_number',
             'supplier:id,name,email,phone_number',
-            'sale:id,reference_no,grand_total',
-            'purchase:id,reference_no,grand_total',
+            'sale:id,reference_no,grand_total,paid_amount',
+            'purchase:id,reference_no,grand_total,paid_amount',
             'saleReturn:id,reference_no,grand_total',
             'purchaseReturn:id,reference_no,grand_total',
             'user:id,name,email',

@@ -538,6 +538,7 @@ export type Payment = {
   approved_by?: number | null;
   approved_at?: string | null;
   can_approve?: boolean;
+  can_edit?: boolean;
   account_id: number;
   customer_id?: number | null;
   supplier_id?: number | null;

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Building2, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, Filter, Hash, Landmark, Plus, ReceiptText, RotateCcw, Save, Search, Smartphone, TrendingUp, UserRound, WalletCards } from 'lucide-react';
+import { Banknote, Building2, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, Filter, Hash, Landmark, Pencil, Plus, ReceiptText, RotateCcw, Save, Search, Smartphone, TrendingUp, UserRound, WalletCards } from 'lucide-react';
 import { Pagination } from '@/components/resource-shell';
 import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
 import { useAuth } from '@/context/auth-context';
@@ -71,6 +71,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [ledgerCustomer, setLedgerCustomer] = useState<Customer | null>(null);
   const [ledgerSupplier, setLedgerSupplier] = useState<Supplier | null>(null);
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
@@ -218,15 +219,60 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
 
     setSaving(true);
     try {
-      await api.createPayment(payload);
-      toast.success('Payment recorded');
+      if (editingPayment) {
+        await api.updatePayment(editingPayment.id, payload);
+      } else {
+        await api.createPayment(payload);
+      }
+      toast.success(editingPayment ? 'Payment updated' : 'Payment recorded');
       setModalOpen(false);
+      setEditingPayment(null);
       setForm(initialFormFor(mode));
-      void loadPayments(1);
+      void loadPayments(editingPayment ? page : 1);
     } catch (error) {
-      toast.error('Unable to record payment', { description: errorMessage(error) });
+      toast.error(editingPayment ? 'Unable to update payment' : 'Unable to record payment', { description: errorMessage(error) });
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openCreatePayment() {
+    setEditingPayment(null);
+    setForm(initialFormFor(mode));
+    setModalOpen(true);
+  }
+
+  function openEditPayment(payment: Payment) {
+    const invoice = paymentInvoice(payment);
+    const amount = String(payment.amount ?? '');
+    const change = String(payment.change ?? 0);
+
+    setEditingPayment(payment);
+    setForm({
+      partyKind: supplierMode ? 'supplier' : 'customer',
+      customer: supplierMode ? null : (payment.customer as Customer | null | undefined) ?? null,
+      supplier: supplierMode ? (payment.supplier as Supplier | null | undefined) ?? null : null,
+      account: (payment.account as Account | null | undefined) ?? null,
+      paymentType: payment.payment_type,
+      invoice,
+      amount,
+      discountAmount: String(payment.discount_amount ?? 0),
+      cashReceived: payment.payment_type === 'sale_payment' && payment.paying_method === 'Cash'
+        ? String(roundMoney(Number(amount) + Number(change)))
+        : '',
+      change,
+      payingMethod: payment.paying_method,
+      paymentReference: payment.payment_reference ?? '',
+      paymentNote: payment.payment_note ?? '',
+    });
+    setModalOpen(true);
+  }
+
+  function changeModalOpen(open: boolean) {
+    setModalOpen(open);
+    if (!open) {
+      setEditingPayment(null);
+      setForm(initialFormFor(mode));
     }
   }
 
@@ -334,7 +380,7 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
             <Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="h-8 w-32 border-0 px-0 focus:border-0" />
           </div>
           {canCreate ? (
-            <Button onClick={() => setModalOpen(true)} className="h-11 bg-emerald-600 px-5 hover:bg-emerald-700">
+            <Button onClick={openCreatePayment} className="h-11 bg-emerald-600 px-5 hover:bg-emerald-700">
               <Plus className="h-4 w-4" />
               New {supplierMode ? 'Supplier' : 'Customer'} Payment
             </Button>
@@ -363,11 +409,11 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
         searchAccounts={searchAccounts}
       />
 
-      {displayedPayments.length ? <PaymentTable payments={displayedPayments} loading={loading} saving={saving} onApprove={(id) => void approvePayment(id)} /> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
+      {displayedPayments.length ? <PaymentTable payments={displayedPayments} loading={loading} saving={saving} onApprove={(id) => void approvePayment(id)} onEdit={openEditPayment} /> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
       <Pagination meta={pagination} loading={loading} onPage={(nextPage) => void loadPayments(nextPage)} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
       <PaymentTotals totals={totals} mode={mode} />
 
-      <Modal title="Record Payment" description={modalDescription(form.paymentType)} open={modalOpen} onOpenChange={setModalOpen} contentClassName="max-w-5xl p-0">
+      <Modal title={editingPayment ? 'Edit Payment' : 'Record Payment'} description={modalDescription(form.paymentType)} open={modalOpen} onOpenChange={changeModalOpen} contentClassName="max-w-5xl p-0">
         <form onSubmit={submitPayment} className="grid gap-5 p-5 pt-0">
           <p className="-mt-3 text-sm text-neutral-500">{modalDescription(form.paymentType)}</p>
           <PaymentTypeTabs value={form.paymentType} options={typeOptions} onChange={(type) => updatePaymentType(type)} />
@@ -475,9 +521,9 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
             <PaymentSummary form={form} />
           </div>
           <div className="flex flex-col-reverse gap-2 border-t border-neutral-100 pt-4 sm:flex-row sm:justify-end">
-            <Button type="button" variant="secondary" onClick={() => setModalOpen(false)}>Cancel</Button>
+            <Button type="button" variant="secondary" onClick={() => changeModalOpen(false)}>Cancel</Button>
             <Button type="submit" disabled={saving || Boolean(discountError)} className="bg-green-700 hover:bg-green-800">
-              <Save className="h-4 w-4" />{saving ? 'Saving...' : saveLabel(form.paymentType)}
+              <Save className="h-4 w-4" />{saving ? 'Saving...' : editingPayment ? 'Update Payment' : saveLabel(form.paymentType)}
             </Button>
           </div>
         </form>
@@ -749,7 +795,7 @@ function Filters(props: {
   );
 }
 
-function PaymentTable({ payments, loading, saving, onApprove }: { payments: Payment[]; loading: boolean; saving: boolean; onApprove: (id: number) => void }) {
+function PaymentTable({ payments, loading, saving, onApprove, onEdit }: { payments: Payment[]; loading: boolean; saving: boolean; onApprove: (id: number) => void; onEdit: (payment: Payment) => void }) {
   return (
     <div className="relative overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
       <table className="min-w-full text-sm">
@@ -790,6 +836,7 @@ function PaymentTable({ payments, loading, saving, onApprove }: { payments: Paym
               <td className="whitespace-nowrap px-5 py-4"><ApprovalBadge status={payment.approval_status} /></td>
               <td className="whitespace-nowrap px-5 py-4 text-right">
                 <Link className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100" href={`/payments/${payment.id}`} aria-label="View payment" title="View payment"><Eye className="h-4 w-4" /></Link>
+                {payment.can_edit ? <Button type="button" variant="secondary" className="mr-2 h-9 w-9 px-0 text-amber-600" disabled={saving} onClick={() => onEdit(payment)} aria-label="Edit payment" title="Edit payment"><Pencil className="h-4 w-4" /></Button> : null}
                 {payment.can_approve ? <Button type="button" variant="secondary" className="h-9" disabled={saving} onClick={() => onApprove(payment.id)}>Approve</Button> : null}
               </td>
             </tr>
@@ -1017,6 +1064,14 @@ function invoiceSelectPlaceholder(type: PaymentType): string {
 
 function documentLabel(payment: Payment): string {
   return payment.reference_document?.reference_no || payment.sale?.reference_no || payment.purchase?.reference_no || payment.sale_return?.reference_no || payment.purchase_return?.reference_no || paymentTypeLabels[payment.payment_type] || '-';
+}
+
+function paymentInvoice(payment: Payment): InvoiceOption | null {
+  if (payment.payment_type === 'sale_payment') return payment.sale ?? null;
+  if (payment.payment_type === 'purchase_payment') return payment.purchase ?? null;
+  if (payment.payment_type === 'sale_return_refund') return payment.sale_return ?? null;
+  if (payment.payment_type === 'purchase_return_refund') return payment.purchase_return ?? null;
+  return null;
 }
 
 function paymentDateValue(payment: Payment): string {

@@ -127,6 +127,9 @@ class StorePurchaseRequest extends FormRequest
                 ->where('is_variant', true)
                 ->pluck('id')
                 ->all();
+            $isPartialPurchase = (int) $this->input('status') === 2;
+            $hasReceivedQuantity = false;
+            $hasIncompleteLine = false;
 
             foreach ($productIds as $index => $productId) {
                 $requiresBatch = in_array((int) $productId, $batchProductIds, true);
@@ -134,8 +137,13 @@ class StorePurchaseRequest extends FormRequest
                 $qty = (float) $this->input("qty.{$index}", 0);
                 $received = (float) $this->input("received.{$index}", 0);
 
-                if ((int) $this->input('status') === 2 && $received >= $qty) {
-                    $validator->errors()->add("received.{$index}", 'For partial purchases, received quantity must be less than ordered quantity.');
+                if ($isPartialPurchase) {
+                    $hasReceivedQuantity = $hasReceivedQuantity || $received > 0;
+                    $hasIncompleteLine = $hasIncompleteLine || $received < $qty;
+
+                    if ($received > $qty) {
+                        $validator->errors()->add("received.{$index}", 'Line '.((int) $index + 1).' received quantity cannot exceed ordered quantity.');
+                    }
                 }
 
                 if ($requiresVariant) {
@@ -163,6 +171,14 @@ class StorePurchaseRequest extends FormRequest
                 if ($requiresBatch && blank($this->input("expired_date.{$index}"))) {
                     $validator->errors()->add("expired_date.{$index}", 'The expired date is required for batch products.');
                 }
+            }
+
+            if ($isPartialPurchase && ! $hasReceivedQuantity) {
+                $validator->errors()->add('received', 'For partial purchases, at least one line must have a received quantity greater than zero.');
+            }
+
+            if ($isPartialPurchase && ! $hasIncompleteLine) {
+                $validator->errors()->add('received', 'For partial purchases, at least one line must have a received quantity less than ordered quantity.');
             }
         });
     }

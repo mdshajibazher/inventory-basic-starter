@@ -13,6 +13,9 @@ import { useAuth } from '@/context/auth-context';
 import { ActivityLogTimeline } from '@/components/activity-log';
 import { Pagination, TableWrap } from '@/components/resource-shell';
 import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
+import { purchaseLineLayout } from './purchase-line-layout';
+import { partialReceivedError } from './purchase-received-validation';
+import { purchaseVariantLabel } from './purchase-variant-label';
 
 type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
@@ -135,6 +138,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
   const showReceived = !isReturn && Number(form.purchaseStatusId) === PURCHASE_STATUS_PARTIAL;
   const hasBatchLine = lines.some((line) => isBatchProduct(products.find((product) => String(product.id) === line.productId)));
   const hasVariantLine = lines.some((line) => isVariantProduct(products.find((product) => String(product.id) === line.productId)));
+  const lineLayout = purchaseLineLayout({ hasVariantLine, hasBatchLine, showReceived });
   const totals = useMemo(() => calculateTotals(lines, form), [lines, form]);
 
   const searchSuppliers = useCallback(async (query: string) => {
@@ -610,7 +614,7 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
                   />
                 </div>
                 <div className="grid gap-3 xl:grid-cols-12">
-                  <div className={lineHasVariant ? 'xl:col-span-2' : 'xl:col-span-3'}>
+                  <div className={lineLayout.product === 3 ? 'min-w-0 xl:col-span-3' : 'min-w-0 xl:col-span-2'}>
                     <SearchableSelect
                       label="Product"
                       valueLabel={productLabel(line.productId, line.variantId, products)}
@@ -622,8 +626,8 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
                       onSelect={(product) => selectProduct(line.key, product)}
                     />
                   </div>
-                  {lineHasVariant || hasVariantLine ? (
-                    <div className="xl:col-span-2">
+                  {lineLayout.variant === 2 ? (
+                    <div className="min-w-0 xl:col-span-2">
                       <Field label="Variant">
                         {lineHasVariant ? <Select value={line.variantId} onValueChange={(value) => selectVariant(line.key, value)} options={variantSelectOptions(product)} /> : <div className="h-10" />}
                       </Field>
@@ -652,10 +656,10 @@ export function PurchaseInvoicesPage({ mode = 'index', invoiceId, kind = 'purcha
                       </div>
                     </>
                   ) : null}
-                  <div className={hasBatchLine || showReceived || lineHasVariant ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                  <div className={lineLayout.cost === 1 ? 'xl:col-span-1' : 'xl:col-span-2'}>
                     <Field label="Unit Cost (৳)"><Input type="number" step="0.01" min="0" value={line.cost} onChange={(event) => updateLine(line.key, 'cost', event.target.value)} /></Field>
                   </div>
-                  <div className={hasBatchLine || showReceived || lineHasVariant ? 'xl:col-span-1' : 'xl:col-span-2'}>
+                  <div className={lineLayout.discount === 1 ? 'xl:col-span-1' : 'xl:col-span-2'}>
                     <Field label="Discount (৳)"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
                   </div>
                   <div className="xl:col-span-1">
@@ -969,9 +973,9 @@ function SearchableSelect<T>({ label, valueLabel, placeholder, search, keyFor, l
 
   return (
     <Field label={label}>
-      <div className="relative">
-        <Button type="button" variant="secondary" className="h-10 w-full justify-between overflow-hidden px-3 text-left font-normal" onClick={() => { setQuery(''); setDebouncedQuery(''); setOpen(true); }}>
-          <span className="truncate">{valueLabel}</span>
+      <div className="relative min-w-0">
+        <Button type="button" variant="secondary" className="h-10 min-w-0 w-full justify-between overflow-hidden px-3 text-left font-normal" onClick={() => { setQuery(''); setDebouncedQuery(''); setOpen(true); }}>
+          <span className="min-w-0 flex-1 truncate">{valueLabel}</span>
         </Button>
         {open ? createPortal(
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={() => setOpen(false)}>
@@ -1032,8 +1036,11 @@ function buildPayload(form: FormState, lines: InvoiceLine[], products: Product[]
     toast.error('Invalid quantity', { description: 'Line quantities must be greater than zero.' });
     return null;
   }
-  if (statusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received >= item.values.qty)) {
-    toast.error('Invalid received quantity', { description: 'For partial purchases, received quantity must be less than ordered quantity.' });
+  const receivedError = statusId === PURCHASE_STATUS_PARTIAL
+    ? partialReceivedError(invoiceLines.map((item) => ({ qty: item.values.qty, received: numberValue(item.line.received) })))
+    : null;
+  if (receivedError) {
+    toast.error('Invalid received quantity', { description: receivedError });
     return null;
   }
   if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate)))) {
@@ -1178,7 +1185,7 @@ function productLabel(productId: string, variantId: string, products: Product[])
   if (!product) return 'Select product';
 
   const variant = productVariantById(product, nullableId(variantId));
-  return variant ? `${product.name} - ${variant.name} (${variant.item_code})` : `${product.name} (${product.code})`;
+  return variant ? `${product.name} - ${purchaseVariantLabel(variant)}` : `${product.name} (${product.code})`;
 }
 
 function isInvoiceProductSupported(product: Product) {
@@ -1197,7 +1204,7 @@ function productVariantById(product: Product | undefined | null, variantId: numb
 function variantSelectOptions(product: Product | undefined | null) {
   const variants = product?.variants ?? [];
   return variants.length
-    ? [{ value: 'none', label: 'Select variant' }, ...variants.map((variant) => ({ value: String(variant.variant_id), label: `${variant.name} (${variant.item_code})` }))]
+    ? [{ value: 'none', label: 'Select variant' }, ...variants.map((variant) => ({ value: String(variant.variant_id), label: purchaseVariantLabel(variant) }))]
     : [{ value: 'none', label: 'No variants found' }];
 }
 

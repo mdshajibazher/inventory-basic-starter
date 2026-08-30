@@ -271,8 +271,8 @@ export default function DrawerLayout() {
       <Drawer.Screen
         name="profit-report"
         options={{
-          title: 'Profit Report',
-          drawerLabel: 'Profit Report',
+          title: 'Profit Loss Report',
+          drawerLabel: 'Profit Loss Report',
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="chart-line" size={size} color={color} />
           ),
@@ -556,7 +556,7 @@ function AppDrawerContent({
   ].filter(Boolean);
 
   const reportItems = [
-    item('profit-report', 'Profit Report', 'chart-line', hasPermission('reports-profit')),
+    item('profit-report', 'Profit Loss Report', 'chart-line', hasPermission('reports-profit')),
   ].filter(Boolean);
 
   return (

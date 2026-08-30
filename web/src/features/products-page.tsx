@@ -12,6 +12,8 @@ import { errorMessage, toNullableNumber, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActionButton, Button, Checkbox, Field, Input, Select, Switch, Textarea } from '@/components/ui';
 import { EmptyState } from '@/components/resource-shell';
+import { productBadgeTone, productTaxLabel, productUnitLabel, productVariantLabel } from './product-list-display';
+import { VariantRemoveButton } from './variant-remove-button';
 
 type ProductForm = {
   type: string;
@@ -598,14 +600,14 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
               </div>
               {form.variants.length ? (
                 <div className="mt-4 w-full max-w-full overflow-x-auto rounded-md border border-slate-200">
-                  <table className="w-full min-w-[640px] text-left text-sm">
+                  <table className="w-full min-w-[760px] text-left text-sm">
                     <thead className="bg-slate-50 text-xs font-medium text-slate-500">
                       <tr>
                         <th className="w-10 px-3 py-2"><GripVertical className="h-4 w-4" /></th>
                         <th className="px-3 py-2">Name</th>
                         <th className="px-3 py-2">Item Code</th>
                         <th className="px-3 py-2">Additional Price</th>
-                        <th className="w-12 px-3 py-2"><Trash2 className="h-4 w-4" /></th>
+                        <th className="w-28 px-3 py-2 text-center">Remove</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -615,10 +617,8 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                           <td className="px-3 py-2"><Input value={variant.name} onChange={(event) => setVariantValue(index, 'name', event.target.value)} /></td>
                           <td className="px-3 py-2"><Input value={variant.itemCode} onChange={(event) => setVariantValue(index, 'itemCode', event.target.value)} /></td>
                           <td className="px-3 py-2"><Input type="number" step="0.01" value={variant.additionalPrice} onChange={(event) => setVariantValue(index, 'additionalPrice', event.target.value)} /></td>
-                          <td className="px-3 py-2">
-                            <Button type="button" variant="danger" className="h-9 w-9 px-0" aria-label="Remove variant" title="Remove variant" onClick={() => removeVariant(index)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                          <td className="px-3 py-2 text-center">
+                            <VariantRemoveButton onRemove={() => removeVariant(index)} />
                           </td>
                         </tr>
                       ))}
@@ -787,10 +787,10 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
 
         <div className="relative overflow-x-auto" aria-busy={loading}>
           {visibleProducts.length ? (
-            <table className="w-full min-w-[1180px] text-left text-sm">
+            <table className="w-full min-w-[1940px] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-500">
                 <tr>
-                  {['Product', 'SKU / Code', 'Brand', 'Category', 'Stock Qty', 'Unit Price (৳)', 'Status', 'Updated'].map((header) => <th key={header} className="px-5 py-3"><span className="inline-flex items-center gap-1">{header}<ChevronsUpDown className="h-3 w-3 text-slate-300" /></span></th>)}
+                  {['Product', 'SKU / Code', 'Product Type', 'Tax', 'Is Variant', 'Base Unit', 'Sale Unit', 'Purchase Unit', 'Brand', 'Category', 'Stock Qty', 'Unit Price (৳)', 'Status', 'Updated'].map((header) => <th key={header} className="whitespace-nowrap px-5 py-3"><span className="inline-flex items-center gap-1">{header}<ChevronsUpDown className="h-3 w-3 text-slate-300" /></span></th>)}
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -799,8 +799,14 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                   const status = productInventoryStatus(product);
                   return (
                     <tr key={product.id} className="transition hover:bg-slate-50/70">
-                      <td className="px-5 py-2.5"><Link href={`/products/${product.id}`} className="flex min-w-48 items-center gap-3 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"><ProductThumb src={product.image_url ?? product.image} alt={product.name} /><div className="min-w-0"><div className="truncate font-semibold text-slate-900 hover:text-emerald-700">{product.name}</div><div className="mt-0.5 capitalize text-xs text-slate-500">{product.type}</div></div></Link></td>
+                      <td className="px-5 py-2.5"><Link href={`/products/${product.id}`} className="flex min-w-48 items-center gap-3 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"><ProductThumb src={product.image_url ?? product.image} alt={product.name} /><div className="min-w-0 truncate font-semibold text-slate-900 hover:text-emerald-700">{product.name}</div></Link></td>
                       <td className="px-5 py-2.5 font-medium text-slate-700">{product.code}</td>
+                      <td className="px-5 py-2.5"><ProductValueBadge label={product.type || 'Unknown'} capitalize /></td>
+                      <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{productTaxLabel(product.tax)}</td>
+                      <td className="px-5 py-2.5"><VariantBadge value={product.is_variant} /></td>
+                      <td className="px-5 py-2.5"><ProductValueBadge label={productUnitLabel(product.unit)} /></td>
+                      <td className="px-5 py-2.5"><ProductValueBadge label={productUnitLabel(product.sale_unit)} /></td>
+                      <td className="px-5 py-2.5"><ProductValueBadge label={productUnitLabel(product.purchase_unit)} /></td>
                       <td className="px-5 py-2.5 text-slate-600">{product.brand?.title ?? '-'}</td>
                       <td className="px-5 py-2.5 text-slate-600">{product.category?.name ?? '-'}</td>
                       <td className="px-5 py-2.5 font-semibold text-slate-800">{formatProductNumber(product.qty ?? product.quantity ?? 0)}</td>
@@ -825,6 +831,32 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
       </section>
     </div>
   );
+}
+
+const productBadgeClasses = [
+  'border-sky-200 bg-sky-50 text-sky-700',
+  'border-violet-200 bg-violet-50 text-violet-700',
+  'border-emerald-200 bg-emerald-50 text-emerald-700',
+  'border-amber-200 bg-amber-50 text-amber-700',
+  'border-rose-200 bg-rose-50 text-rose-700',
+  'border-cyan-200 bg-cyan-50 text-cyan-700',
+];
+
+function ProductValueBadge({ label, capitalize = false }: { label: string; capitalize?: boolean }) {
+  const className = label === 'N/A'
+    ? 'border-slate-200 bg-slate-50 text-slate-500'
+    : productBadgeClasses[productBadgeTone(label, productBadgeClasses.length)];
+
+  return <span className={`inline-flex whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-semibold ${capitalize ? 'capitalize ' : ''}${className}`}>{label}</span>;
+}
+
+function VariantBadge({ value }: { value: Product['is_variant'] }) {
+  const label = productVariantLabel(value);
+  const className = label === 'Yes'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-slate-200 bg-slate-50 text-slate-600';
+
+  return <span className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold ${className}`}>{label}</span>;
 }
 
 function ProductMetric({

@@ -10,6 +10,7 @@ import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
 import type { ProfitReport, Warehouse } from '@/src/types';
+import { lossAmount } from '@/src/profit-loss-summary';
 
 type Tone = 'green' | 'blue' | 'purple' | 'amber' | 'red' | 'orange';
 
@@ -154,7 +155,7 @@ export default function ProfitReportScreen() {
           <MaterialCommunityIcons name="arrow-left" size={28} color="#050505" />
         </Pressable>
         <View style={styles.headerTitle}>
-          <Text variant="headlineMedium" style={styles.title}>Profit Report</Text>
+          <Text variant="headlineMedium" style={styles.title}>Profit Loss Report</Text>
           <Text variant="bodyLarge" style={styles.muted}>{formatDate(startDate)} - {formatDate(endDate)}</Text>
         </View>
         <Pressable style={styles.iconButton} onPress={() => void exportPdf()} disabled={exporting}>
@@ -191,6 +192,8 @@ export default function ProfitReportScreen() {
         <SummaryCard onPress={() => openDetail('gross_profit')} icon="chart-bar" tone="blue" label="Gross Profit" value={money(summary?.gross_profit)} detail={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
         <SummaryCard onPress={() => openDetail('expenses')} icon="receipt-text-outline" tone="purple" label="Expenses" value={money(summary?.expenses)} />
         <SummaryCard onPress={() => openDetail('net_profit')} icon="wallet-outline" tone="green" label="Net Profit" value={money(summary?.net_profit)} />
+        <SummaryCard onPress={() => openDetail('gross_profit')} icon="trending-down" tone="red" label="Gross Loss" value={money(lossAmount(summary?.gross_profit))} detail="When gross profit is negative" />
+        <SummaryCard onPress={() => openDetail('net_profit')} icon="trending-down" tone="red" label="Net Loss" value={money(lossAmount(summary?.net_profit))} detail="When net profit is negative" />
         <SummaryCard onPress={() => openDetail('margin')} icon="chart-pie" tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
         <SummaryCard onPress={() => openDetail('cash_in')} icon="arrow-down-bold" tone="green" label="Cash In" value={money(summary?.cash_in)} />
         <SummaryCard onPress={() => openDetail('cash_out')} icon="arrow-up-bold" tone="red" label="Cash Out" value={money(summary?.cash_out)} />

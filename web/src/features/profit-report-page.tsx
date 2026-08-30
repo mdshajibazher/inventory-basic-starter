@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Repeat2,
   ShoppingCart,
+  TrendingDown,
   Wallet,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -27,6 +28,7 @@ import { EmptyState } from '@/components/resource-shell';
 import { api } from '@/lib/api';
 import type { ProfitReport, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
+import { lossAmount } from './profit-loss-summary';
 
 function monthRange() {
   const now = new Date();
@@ -156,7 +158,7 @@ export function ProfitReportPage({
     <div className="space-y-4">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Profit Report</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Profit Loss Report</h1>
           <p className="mt-1 text-sm text-neutral-500">
             {report ? `${formatDate(report.filters.start_date)} - ${formatDate(report.filters.end_date)}` : 'Current month'}
           </p>
@@ -209,6 +211,8 @@ export function ProfitReportPage({
         <SummaryCard href={detailHref('gross_profit')} icon={BarChart3} tone="blue" label="Gross profit" value={money(summary?.gross_profit)} subValue={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
         <SummaryCard href={detailHref('expenses')} icon={ReceiptText} tone="violet" label="Expenses" value={money(summary?.expenses)} />
         <SummaryCard href={detailHref('net_profit')} icon={Wallet} tone="green" label="Net profit" value={money(summary?.net_profit)} />
+        <SummaryCard href={detailHref('gross_profit')} icon={TrendingDown} tone="rose" label="Gross loss" value={money(lossAmount(summary?.gross_profit))} subValue="When gross profit is negative" />
+        <SummaryCard href={detailHref('net_profit')} icon={TrendingDown} tone="rose" label="Net loss" value={money(lossAmount(summary?.net_profit))} subValue="When net profit is negative" />
         <SummaryCard href={detailHref('margin')} icon={BadgePercent} tone="amber" label="Margin" value={percent(summary?.margin_percent)} />
         <SummaryCard href={detailHref('cash_in')} icon={ArrowDownToLine} tone="green" label="Cash in" value={money(summary?.cash_in)} />
         <SummaryCard href={detailHref('cash_out')} icon={ArrowUpFromLine} tone="rose" label="Cash out" value={money(summary?.cash_out)} />

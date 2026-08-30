@@ -2,10 +2,12 @@
 
 namespace Database\Seeders;
 
+use App\Models\Biller;
 use App\Models\Category;
 use App\Models\CustomerGroup;
 use App\Models\User;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
@@ -101,6 +103,7 @@ class DatabaseSeeder extends Seeder
             'users-delete',
         ];
 
+        $this->call(BillerSeeder::class);
         Permission::query()
             ->whereIn('name', ['brand', 'category', 'currency', 'tax', 'unit'])
             ->delete();
@@ -148,14 +151,18 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
+        $user_data = [
+                'name' => 'Inventory Admin',
+                'password' => Hash::make('password'),
+                'phone' => '01700817934',
+                'biller_id' => Biller::first()?->id,
+                'role_id' => $adminRole->id,
+                'is_active' => 1,
+        ];
         $user = User::query()->firstOrCreate(
             ['email' => 'admin@example.com'],
-            [
-                'name' => 'Inventory Admin',
-                'password' => 'password',
-                'phone' => '01700817934',
-                'role_id' => $adminRole->id,
-            ]
+            $user_data,
+
         );
         $user->forceFill(['role_id' => $adminRole->id])->save();
         $user->assignRole($adminRole);
@@ -182,21 +189,21 @@ class DatabaseSeeder extends Seeder
         $this->call(UnitSeeder::class);
         $this->call(TaxSeeder::class);
         $this->call(PurchaseStatusSeeder::class);
-        $this->call(BillerSeeder::class);
+
         $this->call(SupplierSeeder::class);
         $this->call(AccountSeeder::class);
         $this->call(ExpenseCategorySeeder::class);
 
-        $this->call(LegacyBrandSeeder::class);
-        $this->call(LegacyCategorySeeder::class);
-        $this->call(LegacyProductSeeder::class);
-        $this->call(LegacyUserToCustomerSeeder::class);
-        $this->call(LegacyAdminToUserSeeder::class);
-        $this->call(LegacySupplierAndPurchaseSeeder::class);
-        $this->call(LegacySaleSeeder::class);
-        $this->call(LegacyProductReturnSeeder::class);
-        $this->call(LegacyStockAdjustmentSeeder::class);
-        $this->call(LegacyAdvanceCashSeeder::class);
+        // $this->call(LegacyBrandSeeder::class);
+        // $this->call(LegacyCategorySeeder::class);
+        // $this->call(LegacyProductSeeder::class);
+        // $this->call(LegacyUserToCustomerSeeder::class);
+        // $this->call(LegacyAdminToUserSeeder::class);
+        // $this->call(LegacySupplierAndPurchaseSeeder::class);
+        // $this->call(LegacySaleSeeder::class);
+        // $this->call(LegacyProductReturnSeeder::class);
+        // $this->call(LegacyStockAdjustmentSeeder::class);
+        // $this->call(LegacyAdvanceCashSeeder::class);
 
     }
 }

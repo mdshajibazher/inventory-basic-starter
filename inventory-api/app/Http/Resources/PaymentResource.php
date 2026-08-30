@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Models\Payment;
 use App\Services\ApprovalService;
+use App\Services\PaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -27,6 +28,7 @@ class PaymentResource extends JsonResource
             'approved_at' => $this->approved_at,
             'approver' => $this->whenLoaded('approver'),
             'can_approve' => $request->user() ? app(ApprovalService::class)->canApprove($request->user(), 'payments') && ($this->approval_status ?? ApprovalService::APPROVED) === ApprovalService::PENDING : false,
+            'can_edit' => $request->user() ? app(PaymentService::class)->canEdit($request->user(), $this->resource) : false,
             'account_id' => $this->account_id,
             'biller_id' => $this->biller_id,
             'customer_id' => $this->customer_id,

@@ -1047,6 +1047,8 @@ export const api = {
     })}`),
   createPayment: (payload: PaymentPayload) =>
     request<{ data: Payment; message: string }>('/payments', { method: 'POST', body: JSON.stringify(payload) }),
+  updatePayment: (id: number, payload: PaymentPayload) =>
+    request<{ data: Payment; message: string }>(`/payments/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   payment: (id: number) => request<{ data: Payment }>(`/payments/${id}`),
   approvePayment: (id: number) => request<{ data: Payment; message: string }>(`/payments/${id}/approve`, { method: 'POST' }),
 };

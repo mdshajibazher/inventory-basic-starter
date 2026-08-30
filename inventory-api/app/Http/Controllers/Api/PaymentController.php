@@ -57,6 +57,19 @@ class PaymentController extends Controller
         ]);
     }
 
+    public function update(StorePaymentRequest $request, Payment $payment, PaymentService $payments): JsonResponse
+    {
+        $this->authorizeBranch($payment, $request);
+        abort_unless($payments->canEditDomain($request->user(), $payment), 403);
+
+        $payment = $payments->update($payment, $request->validated(), $request->user());
+
+        return response()->json([
+            'message' => 'Payment updated successfully.',
+            'data' => new PaymentResource($payment),
+        ]);
+    }
+
     public function approve(Payment $payment, Request $request, ApprovalService $approvals, RecordNotificationService $notifications): JsonResponse
     {
         $this->authorizeBranch($payment, $request);

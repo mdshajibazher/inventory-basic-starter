@@ -182,9 +182,9 @@ export function Select({
 }) {
   return (
     <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
-      <SelectPrimitive.Trigger className="flex h-10 w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 text-left text-sm outline-none focus:border-black disabled:cursor-not-allowed disabled:opacity-50">
-        <SelectPrimitive.Value placeholder={placeholder} />
-        <SelectPrimitive.Icon>
+      <SelectPrimitive.Trigger className="flex h-10 min-w-0 w-full items-center justify-between gap-2 overflow-hidden rounded-md border border-neutral-200 bg-white px-3 text-left text-sm outline-none focus:border-black disabled:cursor-not-allowed disabled:opacity-50">
+        <SelectPrimitive.Value placeholder={placeholder} className="min-w-0 flex-1 truncate" />
+        <SelectPrimitive.Icon className="shrink-0">
           <ChevronDown className="h-4 w-4" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>

@@ -9,6 +9,7 @@ import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type PurchaseInvoicePayload, type PurchaseReturnPayload } from '@/src/lib/api';
+import { partialReceivedError } from '@/src/purchase-received-validation';
 import type { Product, PurchaseStatus, Supplier, Tax, Unit, Warehouse } from '@/src/types';
 
 type ProductOptions = { taxes?: Tax[]; units?: Unit[] };
@@ -952,8 +953,11 @@ function buildPayload(form: typeof initialForm, lines: InvoiceLine[], products: 
     Alert.alert('Invalid quantity', 'Line quantities must be greater than zero.');
     return null;
   }
-  if (form.purchaseStatusId === PURCHASE_STATUS_PARTIAL && invoiceLines.some((item) => item.values.received < 0 || item.values.received >= item.values.qty)) {
-    Alert.alert('Invalid received quantity', 'For partial purchases, received quantity must be less than ordered quantity.');
+  const receivedError = form.purchaseStatusId === PURCHASE_STATUS_PARTIAL
+    ? partialReceivedError(invoiceLines.map((item) => ({ qty: item.values.qty, received: numberValue(item.line.received) })))
+    : null;
+  if (receivedError) {
+    Alert.alert('Invalid received quantity', receivedError);
     return null;
   }
   if (invoiceLines.some((item) => isBatchProduct(item.product) && (!item.line.batchNo.trim() || (kind === 'purchase' && !item.line.expiredDate.trim())))) {

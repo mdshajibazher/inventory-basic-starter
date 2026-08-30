@@ -61,6 +61,7 @@ export default function PaymentsScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [form, setForm] = useState<PaymentForm>(initialForm);
   const [ledgerPartyKind, setLedgerPartyKind] = useState<'all' | PartyKind>('all');
   const [ledgerCustomer, setLedgerCustomer] = useState<Customer | null>(null);
@@ -153,6 +154,10 @@ export default function PaymentsScreen() {
       const response = await api.returnInvoiceOptions({ search: query, customerId: form.customer?.id, approvedOnly: true });
       return response.data;
     }
+    if (form.paymentType === 'purchase_return_refund') {
+      const response = await api.purchaseReturnInvoiceOptions({ search: query, supplierId: form.supplier?.id, approvedOnly: true });
+      return response.data;
+    }
     return [];
   }, [form.customer?.id, form.paymentType, form.supplier?.id]);
 
@@ -206,20 +211,57 @@ export default function PaymentsScreen() {
       sale_id: form.paymentType === 'sale_payment' ? form.invoice?.id ?? null : null,
       purchase_id: form.paymentType === 'purchase_payment' ? form.invoice?.id ?? null : null,
       sale_return_id: form.paymentType === 'sale_return_refund' ? form.invoice?.id ?? null : null,
-      purchase_return_id: null,
+      purchase_return_id: form.paymentType === 'purchase_return_refund' ? form.invoice?.id ?? null : null,
     };
 
     setSaving(true);
     try {
-      await api.createPayment(payload);
+      if (editingPayment) {
+        await api.updatePayment(editingPayment.id, payload);
+      } else {
+        await api.createPayment(payload);
+      }
       setModalOpen(false);
+      setEditingPayment(null);
       setForm(initialForm);
-      void loadPayments(1);
+      void loadPayments(editingPayment ? page : 1);
     } catch (error) {
-      Alert.alert('Unable to record payment', errorMessage(error));
+      Alert.alert(editingPayment ? 'Unable to update payment' : 'Unable to record payment', errorMessage(error));
     } finally {
       setSaving(false);
     }
+  }
+
+  function openCreatePayment() {
+    setEditingPayment(null);
+    setForm(initialForm);
+    setModalOpen(true);
+  }
+
+  function openEditPayment(payment: Payment) {
+    const partyKind: PartyKind = payment.customer_id ? 'customer' : 'supplier';
+    setEditingPayment(payment);
+    setForm({
+      partyKind,
+      customer: partyKind === 'customer' ? (payment.customer as Customer | null | undefined) ?? null : null,
+      supplier: partyKind === 'supplier' ? (payment.supplier as Supplier | null | undefined) ?? null : null,
+      account: (payment.account as Account | null | undefined) ?? null,
+      paymentType: payment.payment_type,
+      invoice: paymentInvoice(payment),
+      amount: String(payment.amount ?? ''),
+      discountAmount: String(payment.discount_amount ?? 0),
+      change: String(payment.change ?? 0),
+      payingMethod: payment.paying_method,
+      paymentReference: payment.payment_reference ?? '',
+      paymentNote: payment.payment_note ?? '',
+    });
+    setModalOpen(true);
+  }
+
+  function closePaymentModal() {
+    setModalOpen(false);
+    setEditingPayment(null);
+    setForm(initialForm);
   }
 
   async function approvePayment(id: number) {
@@ -278,7 +320,7 @@ export default function PaymentsScreen() {
           <Text variant="bodyMedium" style={styles.muted}>{pagination?.total ?? payments.length} payment records</Text>
           {discountTotal > 0 ? <Text variant="bodySmall" style={styles.muted}>Discounts: {money(discountTotal)}</Text> : null}
         </View>
-        {canCreate ? <Button mode="contained" onPress={() => setModalOpen(true)}>Record</Button> : null}
+        {canCreate ? <Button mode="contained" onPress={openCreatePayment}>Record</Button> : null}
       </View>
 
       <SegmentedButtons
@@ -331,7 +373,7 @@ export default function PaymentsScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.list}
         ListEmptyComponent={!loading ? <Text style={styles.empty}>No payments found.</Text> : null}
-        renderItem={({ item }) => <PaymentCard payment={item} saving={saving} onApprove={approvePayment} />}
+        renderItem={({ item }) => <PaymentCard payment={item} saving={saving} onApprove={approvePayment} onEdit={openEditPayment} />}
       />
       <View style={styles.pagination}>
         <Button mode="outlined" disabled={loading || page <= 1} onPress={() => void loadPayments(Math.max(1, page - 1))}>Previous</Button>
@@ -340,18 +382,22 @@ export default function PaymentsScreen() {
       </View>
 
       <Portal>
-        <Modal visible={modalOpen} onDismiss={() => setModalOpen(false)} contentContainerStyle={styles.modal}>
+        <Modal visible={modalOpen} onDismiss={closePaymentModal} contentContainerStyle={styles.modal}>
           <ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
-            <Text variant="titleLarge">Record Payment</Text>
-            <SelectButtons
-              label="Party Type"
-              value={form.partyKind}
-              options={[
-                { value: 'customer', label: 'Customer' },
-                { value: 'supplier', label: 'Supplier' },
-              ]}
-              onSelect={(value) => updatePartyKind(value as PartyKind)}
-            />
+            <Text variant="titleLarge">{editingPayment ? 'Edit Payment' : 'Record Payment'}</Text>
+            {editingPayment ? (
+              <TextInput mode="outlined" label="Party Type" value={form.partyKind === 'customer' ? 'Customer' : 'Supplier'} editable={false} />
+            ) : (
+              <SelectButtons
+                label="Party Type"
+                value={form.partyKind}
+                options={[
+                  { value: 'customer', label: 'Customer' },
+                  { value: 'supplier', label: 'Supplier' },
+                ]}
+                onSelect={(value) => updatePartyKind(value as PartyKind)}
+              />
+            )}
             <SelectButtons label="Payment Type" value={form.paymentType} options={typeOptions} onSelect={(value) => updatePaymentType(value as PaymentType)} />
             {form.partyKind === 'customer' ? (
               <SearchableSelectField label="Customer" valueLabel={form.customer?.name ?? 'Select customer'} placeholder="Search customers" search={searchCustomers} keyFor={(item) => item.id} labelFor={(item) => item.name} detailFor={(item) => item.phone_number} onSelect={(customer) => setForm((current) => ({ ...current, customer, invoice: null }))} />
@@ -360,7 +406,7 @@ export default function PaymentsScreen() {
             )}
             <SearchableSelectField label="Account" valueLabel={form.account ? `${form.account.name} (${form.account.account_no})` : 'Select account'} placeholder="Search accounts" search={searchAccounts} keyFor={(item) => item.id} labelFor={(item) => item.name} detailFor={(item) => item.account_no} onSelect={(account) => setForm((current) => ({ ...current, account }))} />
             {requiresInvoice(form.paymentType) ? (
-              <SearchableSelectField label="Reference Document" valueLabel={form.invoice?.reference_no ?? 'Optional invoice/return'} placeholder="Search by reference no" search={searchInvoices} keyFor={(item) => item.id} labelFor={(item) => item.reference_no} detailFor={invoiceDetail} onSelect={selectInvoice} disabled={(form.paymentType === 'purchase_payment' && !form.supplier) || (form.paymentType !== 'purchase_payment' && !form.customer)} />
+              <SearchableSelectField label="Reference Document" valueLabel={form.invoice?.reference_no ?? 'Optional invoice/return'} placeholder="Search by reference no" search={searchInvoices} keyFor={(item) => item.id} labelFor={(item) => item.reference_no} detailFor={invoiceDetail} onSelect={selectInvoice} disabled={isSupplierPaymentType(form.paymentType) ? !form.supplier : !form.customer} />
             ) : null}
             <TextInput mode="outlined" label="Direction" value={direction} editable={false} />
             <TextInput mode="outlined" label="Amount" keyboardType="decimal-pad" value={form.amount} onChangeText={updateAmount} />
@@ -385,8 +431,8 @@ export default function PaymentsScreen() {
             <TextInput mode="outlined" label="Payment Reference" value={form.paymentReference} onChangeText={(paymentReference) => setForm((current) => ({ ...current, paymentReference }))} placeholder="Auto generated if empty" />
             <TextInput mode="outlined" label="Payment Note" multiline value={form.paymentNote} onChangeText={(paymentNote) => setForm((current) => ({ ...current, paymentNote }))} />
             <View style={styles.actions}>
-              <Button mode="outlined" disabled={saving} onPress={() => setModalOpen(false)}>Cancel</Button>
-              <Button mode="contained" loading={saving} disabled={saving || Boolean(discountError)} onPress={submitPayment}>Save Payment</Button>
+              <Button mode="outlined" disabled={saving} onPress={closePaymentModal}>Cancel</Button>
+              <Button mode="contained" loading={saving} disabled={saving || Boolean(discountError)} onPress={submitPayment}>{editingPayment ? 'Update Payment' : 'Save Payment'}</Button>
             </View>
           </ScrollView>
         </Modal>
@@ -445,7 +491,7 @@ function FilterPanel(props: {
   );
 }
 
-function PaymentCard({ payment, saving, onApprove }: { payment: Payment; saving: boolean; onApprove: (id: number) => void }) {
+function PaymentCard({ payment, saving, onApprove, onEdit }: { payment: Payment; saving: boolean; onApprove: (id: number) => void; onEdit: (payment: Payment) => void }) {
   const incoming = payment.direction === 'in';
   return (
     <Card style={styles.card}>
@@ -468,6 +514,11 @@ function PaymentCard({ payment, saving, onApprove }: { payment: Payment; saving:
         <Button mode="text" onPress={() => router.push({ pathname: '/(drawer)/payments-detail', params: { id: String(payment.id) } })}>
           Details
         </Button>
+        {payment.can_edit ? (
+          <Button mode="text" disabled={saving} onPress={() => onEdit(payment)}>
+            Edit
+          </Button>
+        ) : null}
         {payment.can_approve ? (
           <Button mode="outlined" disabled={saving} onPress={() => onApprove(payment.id)}>
             Approve
@@ -579,7 +630,11 @@ function directionFor(type: PaymentType): PaymentDirection {
 }
 
 function requiresInvoice(type: PaymentType): boolean {
-  return ['sale_payment', 'purchase_payment', 'sale_return_refund'].includes(type);
+  return ['sale_payment', 'purchase_payment', 'sale_return_refund', 'purchase_return_refund'].includes(type);
+}
+
+function isSupplierPaymentType(type: PaymentType): boolean {
+  return ['purchase_payment', 'supplier_advance', 'purchase_return_refund'].includes(type);
 }
 
 function isInvoicePayment(type: PaymentType): boolean {
@@ -588,6 +643,14 @@ function isInvoicePayment(type: PaymentType): boolean {
 
 function documentLabel(payment: Payment): string {
   return payment.reference_document?.reference_no || payment.sale?.reference_no || payment.purchase?.reference_no || payment.sale_return?.reference_no || payment.purchase_return?.reference_no || paymentTypeLabels[payment.payment_type] || '-';
+}
+
+function paymentInvoice(payment: Payment): InvoiceOption | null {
+  if (payment.payment_type === 'sale_payment') return payment.sale ?? null;
+  if (payment.payment_type === 'purchase_payment') return payment.purchase ?? null;
+  if (payment.payment_type === 'sale_return_refund') return payment.sale_return ?? null;
+  if (payment.payment_type === 'purchase_return_refund') return payment.purchase_return ?? null;
+  return null;
 }
 
 function invoiceDetail(invoice: InvoiceOption): string {

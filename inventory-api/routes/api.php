@@ -185,6 +185,7 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/payments', [PaymentController::class, 'index'])->middleware('permission:sales-index|purchases-index|accounts-index');
     Route::post('/payments', [PaymentController::class, 'store'])->middleware('permission:sales-add|purchases-add|accounts-index');
     Route::get('/payments/{payment}', [PaymentController::class, 'show'])->middleware('permission:sales-index|purchases-index|accounts-index');
+    Route::match(['put', 'patch'], '/payments/{payment}', [PaymentController::class, 'update'])->middleware('permission:sales-edit|purchases-edit|accounts-edit');
     Route::post('/payments/{payment}/approve', [PaymentController::class, 'approve'])->middleware('permission:sales-index|purchases-index|accounts-index');
 
     Route::get('/reports/profit', ProfitReportController::class)->middleware('permission:reports-profit');

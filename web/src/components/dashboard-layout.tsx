@@ -15,6 +15,7 @@ import {
   Menu,
   Percent,
   ReceiptText,
+  Search,
   FileText,
   Ruler,
   Shield,
@@ -35,6 +36,7 @@ import { useAuth } from '@/context/auth-context';
 import { api } from '@/lib/api';
 import type { Branding } from '@/lib/types';
 import { Button } from './ui';
+import { filterMenuGroups } from './menu-search';
 import { clsx } from '@/lib/utils';
 
 type NavItem = {
@@ -52,7 +54,7 @@ const navItems: NavItem[] = [
   { href: '/transfers', label: 'Stock Transfers', icon: ArrowLeftRight, permission: 'transfers-index' },
   { href: '/expenses', label: 'Expenses', icon: ReceiptText, permission: 'expenses-index' },
   { href: '/expense-categories', label: 'Expense Categories', icon: Tags, permission: 'expenses-index' },
-  { href: '/reports/profit', label: 'Profit Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
+  { href: '/reports/profit', label: 'Profit Loss Report', icon: ChartNoAxesCombined, permission: 'reports-profit' },
   { href: '/sales-invoices', label: 'Sales Invoice', icon: ReceiptText, permission: 'sales-add' },
   { href: '/return-invoices', label: 'Sales Return', icon: ReceiptText, permission: 'returns-add' },
   { href: '/purchase-invoices', label: 'Purchase Invoice', icon: ReceiptText, permission: 'purchases-add' },
@@ -96,6 +98,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, loading, hasPermission, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuSearch, setMenuSearch] = useState('');
   const [branding, setBranding] = useState<Branding | null>(null);
 
   useEffect(() => {
@@ -139,6 +142,16 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
     () => settingsReportItems.filter((item) => !item.permission || hasPermission(item.permission)),
     [hasPermission]
   );
+  const filteredMenuGroups = useMemo(
+    () => filterMenuGroups<NavItem>([
+      { label: null, items: visibleNav },
+      { label: 'Payments', items: visiblePayments },
+      { label: 'People', items: visiblePeople },
+      { label: 'Settings', items: visibleSettings },
+      { label: 'Report', items: visibleSettingsReports },
+    ], menuSearch),
+    [menuSearch, visibleNav, visiblePayments, visiblePeople, visibleSettings, visibleSettingsReports]
+  );
 
   if (loading) {
     return <div className="grid min-h-screen place-items-center text-sm text-neutral-500">Loading inventory...</div>;
@@ -157,30 +170,30 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           )}
         </Link>
       </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        {renderLinks(visibleNav, pathname, setMobileOpen)}
-        {visiblePayments.length ? (
-          <div className="pt-3">
-            <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Payments</div>
-            {renderLinks(visiblePayments, pathname, setMobileOpen)}
-          </div>
-        ) : null}
-        {visiblePeople.length ? (
-          <div className="pt-3">
-            <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">People</div>
-            {renderLinks(visiblePeople, pathname, setMobileOpen)}
-          </div>
-        ) : null}
-        <div className="pt-3">
-          <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Settings</div>
-          {renderLinks(visibleSettings, pathname, setMobileOpen)}
-          {visibleSettingsReports.length ? (
-            <div className="pt-3">
-              <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">Report</div>
-              {renderLinks(visibleSettingsReports, pathname, setMobileOpen)}
-            </div>
-          ) : null}
+      <div className="px-3 pt-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <input
+            type="search"
+            value={menuSearch}
+            onChange={(event) => setMenuSearch(event.target.value)}
+            aria-label="Search menu"
+            placeholder="Search menu..."
+            className="h-10 w-full rounded-md border border-neutral-200 bg-white pl-9 pr-3 text-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-2 focus:ring-neutral-100"
+          />
         </div>
+      </div>
+      <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        {filteredMenuGroups.length ? filteredMenuGroups.map((group) => (
+          <div key={group.label ?? 'main'} className={group.label ? 'pt-3' : undefined}>
+            {group.label ? (
+              <div className="px-3 pb-1 text-xs font-semibold uppercase text-neutral-400">{group.label}</div>
+            ) : null}
+            {renderLinks(group.items, pathname, setMobileOpen)}
+          </div>
+        )) : (
+          <div className="px-3 py-6 text-center text-sm text-neutral-500">No menu items found</div>
+        )}
       </nav>
       <div className="border-t border-neutral-200 p-3">
         <div className="mb-3 truncate px-2 text-sm">

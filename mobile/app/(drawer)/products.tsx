@@ -21,6 +21,7 @@ import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ProductPayload } from '@/src/lib/api';
 import type { Brand, Category, PaginationMeta, Product, Tax, Unit, Warehouse } from '@/src/types';
+import { productBadgeTone, productTaxLabel, productUnitLabel, productVariantLabel } from '@/src/product-list-display';
 
 type ProductForm = {
   type: string;
@@ -870,6 +871,12 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                 <DataTable.Title style={styles.imageColumn}>Image</DataTable.Title>
                 <DataTable.Title style={styles.nameColumn}>Product</DataTable.Title>
                 <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
+                <DataTable.Title style={styles.badgeColumn}>Product Type</DataTable.Title>
+                <DataTable.Title style={styles.taxColumn}>Tax</DataTable.Title>
+                <DataTable.Title style={styles.variantColumn}>Is Variant</DataTable.Title>
+                <DataTable.Title style={styles.unitColumn}>Base Unit</DataTable.Title>
+                <DataTable.Title style={styles.unitColumn}>Sale Unit</DataTable.Title>
+                <DataTable.Title style={styles.unitColumn}>Purchase Unit</DataTable.Title>
                 <DataTable.Title style={styles.nameColumn}>Brand</DataTable.Title>
                 <DataTable.Title style={styles.nameColumn}>Category</DataTable.Title>
                 <DataTable.Title numeric style={styles.numberColumn}>Qty</DataTable.Title>
@@ -884,6 +891,12 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                   </DataTable.Cell>
                   <DataTable.Cell style={styles.nameColumn} onPress={() => openDetailPage(product)}>{product.name}</DataTable.Cell>
                   <DataTable.Cell style={styles.codeColumn}>{product.code}</DataTable.Cell>
+                  <DataTable.Cell style={styles.badgeColumn}><ProductValueBadge label={product.type || 'Unknown'} capitalize /></DataTable.Cell>
+                  <DataTable.Cell style={styles.taxColumn}>{productTaxLabel(product.tax)}</DataTable.Cell>
+                  <DataTable.Cell style={styles.variantColumn}><VariantBadge value={product.is_variant} /></DataTable.Cell>
+                  <DataTable.Cell style={styles.unitColumn}><ProductValueBadge label={productUnitLabel(product.unit)} /></DataTable.Cell>
+                  <DataTable.Cell style={styles.unitColumn}><ProductValueBadge label={productUnitLabel(product.sale_unit)} /></DataTable.Cell>
+                  <DataTable.Cell style={styles.unitColumn}><ProductValueBadge label={productUnitLabel(product.purchase_unit)} /></DataTable.Cell>
                   <DataTable.Cell style={styles.nameColumn}>{product.brand?.title ?? 'N/A'}</DataTable.Cell>
                   <DataTable.Cell style={styles.nameColumn}>{product.category?.name ?? 'N/A'}</DataTable.Cell>
                   <DataTable.Cell numeric style={styles.numberColumn}>{product.qty ?? 0}</DataTable.Cell>
@@ -1173,6 +1186,40 @@ function ProductThumb({ uri }: { uri?: string | null }) {
   return <Image source={{ uri }} style={styles.tableImage} onError={() => setFailed(true)} />;
 }
 
+const productBadgePalette = [
+  { backgroundColor: '#e0f2fe', borderColor: '#bae6fd', color: '#0369a1' },
+  { backgroundColor: '#f3e8ff', borderColor: '#e9d5ff', color: '#7e22ce' },
+  { backgroundColor: '#d1fae5', borderColor: '#a7f3d0', color: '#047857' },
+  { backgroundColor: '#fef3c7', borderColor: '#fde68a', color: '#b45309' },
+  { backgroundColor: '#ffe4e6', borderColor: '#fecdd3', color: '#be123c' },
+  { backgroundColor: '#cffafe', borderColor: '#a5f3fc', color: '#0e7490' },
+];
+
+function ProductValueBadge({ label, capitalize = false }: { label: string; capitalize?: boolean }) {
+  const tone = label === 'N/A'
+    ? { backgroundColor: '#f8fafc', borderColor: '#e2e8f0', color: '#64748b' }
+    : productBadgePalette[productBadgeTone(label, productBadgePalette.length)];
+
+  return (
+    <View style={[styles.valueBadge, { backgroundColor: tone.backgroundColor, borderColor: tone.borderColor }]}>
+      <Text variant="labelSmall" numberOfLines={1} style={[styles.valueBadgeText, { color: tone.color }, capitalize && styles.capitalizeText]}>{label}</Text>
+    </View>
+  );
+}
+
+function VariantBadge({ value }: { value: Product['is_variant'] }) {
+  const label = productVariantLabel(value);
+  const tone = label === 'Yes'
+    ? { backgroundColor: '#d1fae5', borderColor: '#a7f3d0', color: '#047857' }
+    : { backgroundColor: '#f8fafc', borderColor: '#e2e8f0', color: '#475569' };
+
+  return (
+    <View style={[styles.valueBadge, { backgroundColor: tone.backgroundColor, borderColor: tone.borderColor }]}>
+      <Text variant="labelSmall" style={[styles.valueBadgeText, { color: tone.color }]}>{label}</Text>
+    </View>
+  );
+}
+
 function SwitchRow({ label, value, onValueChange }: { label: string; value: boolean; onValueChange: (value: boolean) => void }) {
   return (
     <View style={styles.switchRow}>
@@ -1371,7 +1418,7 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   table: {
-    minWidth: 760,
+    minWidth: 1500,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: '#ffffff',
@@ -1385,12 +1432,37 @@ const styles = StyleSheet.create({
   codeColumn: {
     flex: 1,
   },
+  badgeColumn: {
+    flex: 1.1,
+  },
+  taxColumn: {
+    flex: 1.25,
+  },
+  variantColumn: {
+    flex: 0.9,
+  },
+  unitColumn: {
+    flex: 1.1,
+  },
   numberColumn: {
     flex: 0.8,
   },
   actionColumn: {
     flex: 0.8,
     justifyContent: 'center',
+  },
+  valueBadge: {
+    maxWidth: '100%',
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  valueBadgeText: {
+    fontWeight: '700',
+  },
+  capitalizeText: {
+    textTransform: 'capitalize',
   },
   tableImage: {
     width: 44,
