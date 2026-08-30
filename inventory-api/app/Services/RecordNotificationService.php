@@ -18,6 +18,8 @@ use Throwable;
 
 class RecordNotificationService
 {
+    public function __construct(private readonly SalesInvoiceRevisionService $salesInvoiceRevisions) {}
+
     public function salesInvoiceCreatedForCustomer(Sale $sale): void
     {
         $sale->loadMissing(['customer:id,name,email,phone_number', 'user:id,name']);
@@ -37,11 +39,17 @@ class RecordNotificationService
                 'amount' => $sale->grand_total,
                 'creator' => $sale->user?->name,
             ],
-            (bool) $setting->customer_sales_invoice_mail_notification_enabled,
+            false,
             (bool) $setting->customer_sales_invoice_sms_notification_enabled,
             $sale->customer?->email,
             $sale->customer?->phone_number
         );
+    }
+
+    public function salesInvoiceApprovedForCustomer(Sale $sale): void
+    {
+        $revision = $this->salesInvoiceRevisions->finalizeApproved($sale);
+        $this->salesInvoiceRevisions->queueCustomerDelivery($revision);
     }
 
     public function returnInvoiceCreatedForCustomer(ReturnInvoice $returnInvoice): void

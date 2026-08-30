@@ -2,10 +2,13 @@
 
 namespace App\Services;
 
+use App\Jobs\SendApprovedSalesInvoiceEmail;
+use App\Models\GeneralSetting;
 use App\Models\Sale;
 use App\Models\SalesInvoiceRevision;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use LogicException;
 
 class SalesInvoiceRevisionService
 {
@@ -77,6 +80,93 @@ class SalesInvoiceRevisionService
                 'delivery_status' => SalesInvoiceRevision::STATUS_PENDING,
             ]);
         });
+    }
+
+    public function finalizeApproved(Sale $sale): SalesInvoiceRevision
+    {
+        return DB::transaction(function () use ($sale): SalesInvoiceRevision {
+            $lockedSale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
+
+            if ($lockedSale->approval_status !== ApprovalService::APPROVED) {
+                throw new LogicException('Sales invoice must be approved before finalization.');
+            }
+
+            $revisions = $this->lockedRevisions($lockedSale);
+            $pending = $this->onlyPendingRevision($revisions);
+
+            if ($pending === null) {
+                $finalized = $revisions
+                    ->whereNotNull('approved_at')
+                    ->sortByDesc(fn (SalesInvoiceRevision $revision): string => sprintf(
+                        '%s:%010d',
+                        $revision->approved_at->format('Y-m-d H:i:s.u'),
+                        $revision->revision_number,
+                    ))
+                    ->first();
+
+                if ($finalized === null) {
+                    throw new LogicException('No pending sales invoice revision exists.');
+                }
+
+                return $finalized;
+            }
+
+            $after = $this->snapshots->snapshot($lockedSale->fresh());
+            $recipient = data_get($after, 'customer.email');
+
+            $pending->update([
+                'after_snapshot' => $after,
+                'changes' => $pending->before_snapshot === null
+                    ? null
+                    : $this->snapshots->diff($pending->before_snapshot, $after),
+                'recipient_email' => is_string($recipient) ? trim($recipient) : null,
+                'approved_at' => $lockedSale->approved_at ?? now(),
+                'failure_message' => null,
+            ]);
+
+            return $pending->fresh();
+        });
+    }
+
+    public function queueCustomerDelivery(SalesInvoiceRevision $revision): void
+    {
+        $setting = GeneralSetting::query()->latest('id')->first();
+
+        if (blank($revision->recipient_email)) {
+            SalesInvoiceRevision::query()
+                ->whereKey($revision->id)
+                ->where('delivery_status', SalesInvoiceRevision::STATUS_PENDING)
+                ->update([
+                    'delivery_status' => SalesInvoiceRevision::STATUS_SKIPPED,
+                    'failure_message' => 'Customer email missing.',
+                ]);
+
+            return;
+        }
+
+        if (! $setting?->customer_sales_invoice_mail_notification_enabled) {
+            SalesInvoiceRevision::query()
+                ->whereKey($revision->id)
+                ->where('delivery_status', SalesInvoiceRevision::STATUS_PENDING)
+                ->update([
+                    'delivery_status' => SalesInvoiceRevision::STATUS_SKIPPED,
+                    'failure_message' => 'Customer sales invoice email disabled.',
+                ]);
+
+            return;
+        }
+
+        $updated = SalesInvoiceRevision::query()
+            ->whereKey($revision->id)
+            ->where('delivery_status', SalesInvoiceRevision::STATUS_PENDING)
+            ->update([
+                'delivery_status' => SalesInvoiceRevision::STATUS_QUEUED,
+                'queued_at' => now(),
+            ]);
+
+        if ($updated === 1) {
+            SendApprovedSalesInvoiceEmail::dispatch($revision->id)->afterCommit();
+        }
     }
 
     /** @return Collection<int, SalesInvoiceRevision> */

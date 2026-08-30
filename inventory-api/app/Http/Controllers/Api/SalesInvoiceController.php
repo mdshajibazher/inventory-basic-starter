@@ -232,6 +232,7 @@ class SalesInvoiceController extends Controller
 
         $sale = $approvals->approveSale($sale, $request->user());
         $notifications->salesInvoiceApproved($sale);
+        $notifications->salesInvoiceApprovedForCustomer($sale);
 
         return response()->json([
             'message' => 'Sales invoice approved successfully.',
