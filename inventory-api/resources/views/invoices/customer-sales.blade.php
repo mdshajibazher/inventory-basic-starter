@@ -247,11 +247,11 @@
         <td class="closing-right">
             <table class="totals">
                 <tr><td class="totals-label">Subtotal</td><td class="totals-value">{{ $money($invoice['total_price'] ?? 0) }}</td></tr>
-                <tr><td class="totals-label">Line Discount</td><td class="totals-value">- {{ $money($invoice['total_discount'] ?? 0) }}</td></tr>
+                <tr><td class="totals-label">Line Discount (included in subtotal)</td><td class="totals-value">{{ $money($invoice['total_discount'] ?? 0) }}</td></tr>
                 <tr><td class="totals-label">Order Discount</td><td class="totals-value">- {{ $money($invoice['order_discount'] ?? 0) }}</td></tr>
                 <tr><td class="totals-label">Coupon Discount</td><td class="totals-value">- {{ $money($invoice['coupon_discount'] ?? 0) }}</td></tr>
-                <tr><td class="totals-label">Order Tax ({{ number_format((float) ($invoice['order_tax_rate'] ?? 0), 2) }}%)</td><td class="totals-value">{{ $money($invoice['order_tax'] ?? 0) }}</td></tr>
-                <tr><td class="totals-label">Carrying Cost</td><td class="totals-value">{{ $money($invoice['shipping_cost'] ?? 0) }}</td></tr>
+                <tr><td class="totals-label">Order Tax ({{ number_format((float) ($invoice['order_tax_rate'] ?? 0), 2) }}%)</td><td class="totals-value">+ {{ $money($invoice['order_tax'] ?? 0) }}</td></tr>
+                <tr><td class="totals-label">Carrying Cost</td><td class="totals-value">+ {{ $money($invoice['shipping_cost'] ?? 0) }}</td></tr>
                 <tr class="grand"><td>Grand Total</td><td class="totals-value">{{ $money($invoice['grand_total'] ?? 0) }}</td></tr>
             </table>
         </td>

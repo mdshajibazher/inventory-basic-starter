@@ -103,11 +103,31 @@ class SalesInvoiceCustomerPdfTest extends TestCase
             'Order Tax',
             'Carrying Cost',
             'Grand Total',
-            'Three Hundred Forty-Six Taka and Fifty Paisa Only',
+            'Three Hundred Fifty-One Taka and Forty-One Paisa Only',
             'Deliver before 5 PM.',
         ] as $customerVisibleText) {
             $this->assertStringContainsString($customerVisibleText, $html);
         }
+
+        $this->assertStringContainsString(
+            '<td class="totals-label">Line Discount (included in subtotal)</td><td class="totals-value">BDT 4.75</td>',
+            $html,
+        );
+        $this->assertStringNotContainsString(
+            '<td class="totals-label">Line Discount (included in subtotal)</td><td class="totals-value">- BDT 4.75</td>',
+            $html,
+        );
+        $this->assertStringContainsString(
+            '<td class="totals-label">Order Tax (2.50%)</td><td class="totals-value">+ BDT 8.66</td>',
+            $html,
+        );
+        $this->assertStringContainsString(
+            '<td class="totals-label">Carrying Cost</td><td class="totals-value">+ BDT 5.00</td>',
+            $html,
+        );
+
+        $displayedGrandTotal = 346.25 + 8.66 + 5.00 - 5.00 - 3.50;
+        $this->assertSame($snapshot['invoice']['grand_total'], round($displayedGrandTotal, 2));
 
         foreach (['unit_cost', 'total_cost', 'cost price', 'profit'] as $internalText) {
             $this->assertStringNotContainsString($internalText, strtolower($html));
@@ -179,15 +199,15 @@ class SalesInvoiceCustomerPdfTest extends TestCase
                 'warehouse' => ['id' => 3, 'name' => 'Dhaka Main'],
                 'currency' => 'BDT',
                 'total_qty' => 3.25,
-                'total_price' => 346.50,
-                'total_discount' => 5.00,
+                'total_price' => 346.25,
+                'total_discount' => 4.75,
                 'total_tax' => 7.50,
                 'order_tax_rate' => 2.50,
-                'order_tax' => 8.50,
+                'order_tax' => 8.66,
                 'order_discount' => 5.00,
                 'coupon_discount' => 3.50,
                 'shipping_cost' => 5.00,
-                'grand_total' => 346.50,
+                'grand_total' => 351.41,
                 'paid_amount' => 100.00,
                 'sale_note' => 'Deliver before 5 PM.',
                 'approval_status' => ApprovalService::APPROVED,
@@ -241,10 +261,10 @@ class SalesInvoiceCustomerPdfTest extends TestCase
                     'qty' => 1.25,
                     'unit' => 'kg',
                     'unit_price' => 80.0,
-                    'discount' => 5.0,
+                    'discount' => 4.75,
                     'tax_rate' => 0.0,
                     'tax' => 0.0,
-                    'total' => 95.50,
+                    'total' => 95.25,
                     'unit_cost' => 50.0,
                     'total_cost' => 62.5,
                 ],
