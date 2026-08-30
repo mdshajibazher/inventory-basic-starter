@@ -7,7 +7,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreSaleRequest;
 use App\Http\Resources\SaleResource;
 use App\Models\Account;
-use App\Models\GeneralSetting;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductSale;
@@ -18,8 +17,9 @@ use App\Services\ApprovalService;
 use App\Services\InvoiceLineActivityService;
 use App\Services\PaymentService;
 use App\Services\RecordNotificationService;
+use App\Services\SalesInvoicePdfRenderer;
 use App\Services\SalesInvoiceRevisionService;
-use Barryvdh\DomPDF\Facade\Pdf;
+use App\Services\SalesInvoiceSnapshotService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -277,22 +277,22 @@ class SalesInvoiceController extends Controller
         ]);
     }
 
-    public function pdf(Sale $sale, Request $request): Response
-    {
+    public function pdf(
+        Sale $sale,
+        Request $request,
+        SalesInvoiceSnapshotService $snapshots,
+        SalesInvoicePdfRenderer $renderer,
+    ): Response {
         $this->authorizeBranch($sale, $request);
         abort_unless($sale->approval_status === ApprovalService::APPROVED, 403, 'Sales invoice must be approved before printing.');
 
-        $sale->load(self::RELATIONS);
-        $settings = GeneralSetting::query()->latest('id')->first();
-        $filename = sprintf('sales-invoice-%s.pdf', $sale->reference_no ?: $sale->id);
+        $snapshot = $snapshots->snapshot($sale);
+        $bytes = $renderer->render($snapshot);
 
-        return Pdf::loadView('invoices.sales', [
-            'sale' => $sale,
-            'settings' => $settings,
-            'printedAt' => now(),
-        ])
-            ->setPaper('a4')
-            ->download($filename);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$renderer->filename($snapshot).'"',
+        ]);
     }
 
     private function calculateTotals(array $data): array
