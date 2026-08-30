@@ -95,7 +95,10 @@ class SalesInvoiceSnapshotService
                 'postal_code' => $customer?->postal_code,
                 'country' => $customer?->country,
             ],
-            'lines' => $sale->products->values()->map(function (ProductSale $line) use (&$occurrences): array {
+            'lines' => $sale->products
+                ->sortBy(fn (ProductSale $line): string => $this->lineIdentity($line).':'.$this->lineSortKey($line))
+                ->values()
+                ->map(function (ProductSale $line) use (&$occurrences): array {
                 $identity = $this->lineIdentity($line);
                 $occurrences[$identity] = ($occurrences[$identity] ?? 0) + 1;
 
@@ -229,6 +232,11 @@ class SalesInvoiceSnapshotService
             $this->integer($line->product_batch_id) ?? 'null',
             $this->integer($line->sale_unit_id) ?? 'null',
         ]);
+    }
+
+    private function lineSortKey(ProductSale $line): string
+    {
+        return json_encode($this->snapshotLine($line, 0), JSON_PRESERVE_ZERO_FRACTION);
     }
 
     private function date(mixed $value): ?string

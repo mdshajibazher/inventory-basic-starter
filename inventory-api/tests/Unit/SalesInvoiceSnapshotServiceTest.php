@@ -273,6 +273,37 @@ class SalesInvoiceSnapshotServiceTest extends TestCase
         $this->assertSame(['1:null:null:1:1', '4:null:null:1:1', '4:null:null:1:2'], array_column($snapshot['lines'], 'key'));
     }
 
+    public function test_diff_ignores_reversed_duplicate_lines_with_distinct_visible_values(): void
+    {
+        $first = $this->line(['product_id' => 4, 'qty' => 1, 'net_unit_price' => 100, 'total' => 100]);
+        $second = $this->line(['product_id' => 4, 'qty' => 2, 'net_unit_price' => 150, 'total' => 300]);
+        $service = new SalesInvoiceSnapshotService;
+
+        $before = $service->snapshot($this->saleWithProducts([$first, $second]));
+        $after = $service->snapshot($this->saleWithProducts([$second, $first]));
+
+        $this->assertSame($before['lines'], $after['lines']);
+        $this->assertSame([
+            'added_lines' => [],
+            'removed_lines' => [],
+            'modified_lines' => [],
+            'changed_totals' => [],
+        ], $service->diff($before, $after));
+    }
+
+    private function saleWithProducts(array $lines): Sale
+    {
+        $sale = Mockery::mock(Sale::class)->makePartial();
+        $sale->shouldReceive('loadMissing')->once()->andReturnSelf();
+        $sale->setRelation('customer', null);
+        $sale->setRelation('biller', null);
+        $sale->setRelation('warehouse', null);
+        $sale->setRelation('approver', null);
+        $sale->setRelation('products', collect($lines));
+
+        return $sale;
+    }
+
     private function line(array $attributes): ProductSale
     {
         $line = (new ProductSale)->forceFill($attributes + [
