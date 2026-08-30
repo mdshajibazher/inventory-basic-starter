@@ -63,8 +63,8 @@ class SendApprovedSalesInvoiceEmail implements ShouldQueue
             }
         } catch (Throwable $exception) {
             $this->markFailed($revision, $exception);
-            $this->writeErrorEmailLog($revision, $exception);
-            $this->logFailure($revision, $exception);
+            $this->writeErrorEmailLog($revision);
+            $this->logFailure($revision);
 
             throw $exception;
         }
@@ -82,7 +82,6 @@ class SendApprovedSalesInvoiceEmail implements ShouldQueue
             'sale_id' => $revision?->sale_id,
             'revision_id' => $this->revisionId,
             'recipient_email' => $revision?->recipient_email,
-            'exception' => $exception,
         ]);
     }
 
@@ -111,16 +110,15 @@ class SendApprovedSalesInvoiceEmail implements ShouldQueue
         ]);
     }
 
-    private function writeErrorEmailLog(SalesInvoiceRevision $revision, Throwable $exception): void
+    private function writeErrorEmailLog(SalesInvoiceRevision $revision): void
     {
         try {
-            $this->writeEmailLog($revision, 'error', $exception->getMessage());
-        } catch (Throwable $loggingException) {
+            $this->writeEmailLog($revision, 'error', 'Delivery failed; retry scheduled.');
+        } catch (Throwable) {
             Log::error('Approved sales invoice email log write failed.', [
                 'sale_id' => $revision->sale_id,
                 'revision_id' => $revision->id,
                 'recipient_email' => $revision->recipient_email,
-                'exception' => $loggingException,
             ]);
         }
     }
@@ -148,13 +146,12 @@ class SendApprovedSalesInvoiceEmail implements ShouldQueue
         return (string) (data_get($revision->after_snapshot, 'invoice.reference_no') ?: $revision->sale_id);
     }
 
-    private function logFailure(SalesInvoiceRevision $revision, Throwable $exception): void
+    private function logFailure(SalesInvoiceRevision $revision): void
     {
         Log::error('Approved sales invoice customer email failed.', [
             'sale_id' => $revision->sale_id,
             'revision_id' => $revision->id,
             'recipient_email' => $revision->recipient_email,
-            'exception' => $exception,
         ]);
     }
 }
