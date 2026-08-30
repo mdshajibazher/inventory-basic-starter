@@ -70,7 +70,7 @@ After `ApprovalService::approveSale` commits successfully, finalize the pending 
 - Successful delivery sets `sent`; exceptions set `failed`, preserve the error message, write Laravel error context, and allow normal queue retry behavior.
 - Repeated approval requests cannot resend because only pending invoices can be approved and only a `pending` revision can transition to `queued`.
 
-The existing internal `salesInvoiceApproved` notification remains separate and unchanged. The current create-time customer call is removed because customer delivery now occurs only after approval.
+The existing internal `salesInvoiceApproved` notification remains separate and unchanged. The current create-time customer notification remains active for SMS only, preserving `customer_sales_invoice_sms_notification_enabled`; its email branch moves to the approval workflow.
 
 ## Components and Interfaces
 
@@ -102,4 +102,3 @@ No API request or response shape changes. The existing general-setting field con
 - PDF output includes customer-visible invoice details and excludes unit cost, total cost, and profit text/values.
 - Approval commits even when mail delivery fails; the revision becomes `failed`, the existing email log records the failure, and retrying the queue job cannot create duplicate successful sends.
 - Existing internal approval notifications and invoice API responses continue to work.
-
