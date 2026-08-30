@@ -18,12 +18,15 @@ use App\Models\Sale;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\PaymentService;
+use App\Services\SalesInvoiceRevisionService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class StoreSalesInvoiceAction
 {
+    public function __construct(private readonly SalesInvoiceRevisionService $revisions) {}
+
     public function execute(array $data, User $user, ?UploadedFile $document = null): Sale
     {
         return DB::transaction(function () use ($data, $user, $document) {
@@ -101,6 +104,7 @@ class StoreSalesInvoiceAction
             }
 
             $this->createPaymentIfNeeded($sale, $data, $user, $cashRegister);
+            $this->revisions->syncPending($sale);
 
             return $sale->load($this->relations());
         });

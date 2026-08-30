@@ -18,6 +18,7 @@ use App\Services\ApprovalService;
 use App\Services\InvoiceLineActivityService;
 use App\Services\PaymentService;
 use App\Services\RecordNotificationService;
+use App\Services\SalesInvoiceRevisionService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -113,12 +114,13 @@ class SalesInvoiceController extends Controller
         }
     }
 
-    public function update(StoreSaleRequest $request, Sale $sale, PaymentService $payments, ApprovalService $approvals): JsonResponse
+    public function update(StoreSaleRequest $request, Sale $sale, PaymentService $payments, ApprovalService $approvals, SalesInvoiceRevisionService $revisions): JsonResponse
     {
         $this->authorizeBranch($sale, $request);
 
         try {
-            $sale = DB::transaction(function () use ($request, $sale, $payments) {
+            $sale = DB::transaction(function () use ($request, $sale, $payments, $revisions) {
+                $revisions->beginUpdate($sale);
                 app(ApprovalService::class)->resetSaleApproval($sale);
                 $data = $request->validated();
                 $billerId = $request->user()->requireCurrentBillerId();
@@ -200,6 +202,7 @@ class SalesInvoiceController extends Controller
                     $request->user()
                 );
                 $this->createPaymentIfNeeded($sale, $data, $request->user(), $payments);
+                $revisions->syncPending($sale);
 
                 return $sale->load(self::RELATIONS);
             });

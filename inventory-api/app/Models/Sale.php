@@ -101,6 +101,11 @@ class Sale extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function customerEmailRevisions(): HasMany
+    {
+        return $this->hasMany(SalesInvoiceRevision::class);
+    }
+
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
