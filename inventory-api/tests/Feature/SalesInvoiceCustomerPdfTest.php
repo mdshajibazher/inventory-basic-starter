@@ -139,6 +139,17 @@ class SalesInvoiceCustomerPdfTest extends TestCase
         $this->assertGreaterThan(5000, strlen($bytes));
     }
 
+    public function test_renderer_uses_the_application_timezone_for_approval_and_generation_timestamps(): void
+    {
+        $html = View::make('invoices.customer-sales', [
+            'snapshot' => $this->snapshot(),
+            'generatedAt' => now()->parse('2026-08-30T12:45:00+06:00'),
+        ])->render();
+
+        $this->assertStringContainsString('30 Aug 2026, 05:30 AM', $html);
+        $this->assertStringContainsString('Generated 30 Aug 2026, 06:45 AM', $html);
+    }
+
     public function test_pending_invoice_pdf_download_is_forbidden(): void
     {
         [$user, $sale] = $this->endpointFixture(ApprovalService::PENDING);

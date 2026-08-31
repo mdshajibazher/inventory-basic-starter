@@ -185,7 +185,7 @@
                 <tr><td class="meta-label">Invoice date</td><td class="meta-value">{{ $invoice['sale_date'] ?? '-' }}</td></tr>
                 <tr><td class="meta-label">Warehouse</td><td class="meta-value">{{ $invoice['warehouse']['name'] ?? '-' }}</td></tr>
                 <tr><td class="meta-label">Approved by</td><td class="meta-value">{{ $invoice['approver']['name'] ?? '-' }}</td></tr>
-                <tr><td class="meta-label">Approved on</td><td class="meta-value">{{ !empty($invoice['approved_at']) ? \Illuminate\Support\Carbon::parse($invoice['approved_at'])->format('d M Y, h:i A') : '-' }}</td></tr>
+                <tr><td class="meta-label">Approved on</td><td class="meta-value">{{ !empty($invoice['approved_at']) ? \Illuminate\Support\Carbon::parse($invoice['approved_at'])->setTimezone(config('app.timezone'))->format('d M Y, h:i A') : '-' }}</td></tr>
             </table>
         </td>
     </tr>
@@ -261,7 +261,7 @@
 <table class="footer">
     <tr>
         <td>Customer copy &nbsp;|&nbsp; Thank you for your business.</td>
-        <td class="footer-right">Generated {{ $generatedAt->format('d M Y, h:i A') }}</td>
+        <td class="footer-right">Generated {{ $generatedAt->setTimezone(config('app.timezone'))->format('d M Y, h:i A') }}</td>
     </tr>
 </table>
 </body>

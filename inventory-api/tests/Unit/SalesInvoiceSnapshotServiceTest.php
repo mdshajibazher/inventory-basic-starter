@@ -6,17 +6,15 @@ use App\Models\Biller;
 use App\Models\Customer;
 use App\Models\GeneralSetting;
 use App\Models\Product;
-use App\Models\ProductBatch;
 use App\Models\ProductSale;
 use App\Models\Sale;
 use App\Models\Unit;
 use App\Models\User;
-use App\Models\Variant;
 use App\Models\Warehouse;
 use App\Services\SalesInvoiceSnapshotService;
-use Mockery;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Mockery;
 use Tests\TestCase;
 
 class SalesInvoiceSnapshotServiceTest extends TestCase

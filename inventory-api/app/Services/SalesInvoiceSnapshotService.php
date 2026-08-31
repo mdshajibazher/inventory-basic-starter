@@ -99,11 +99,11 @@ class SalesInvoiceSnapshotService
                 ->sortBy(fn (ProductSale $line): string => $this->lineIdentity($line).':'.$this->lineSortKey($line))
                 ->values()
                 ->map(function (ProductSale $line) use (&$occurrences): array {
-                $identity = $this->lineIdentity($line);
-                $occurrences[$identity] = ($occurrences[$identity] ?? 0) + 1;
+                    $identity = $this->lineIdentity($line);
+                    $occurrences[$identity] = ($occurrences[$identity] ?? 0) + 1;
 
-                return $this->snapshotLine($line, $occurrences[$identity]);
-            })->all(),
+                    return $this->snapshotLine($line, $occurrences[$identity]);
+                })->all(),
         ];
     }
 
