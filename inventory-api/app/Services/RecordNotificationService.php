@@ -8,6 +8,7 @@ use App\Models\Payment;
 use App\Models\Purchase;
 use App\Models\ReturnInvoice;
 use App\Models\Sale;
+use App\Models\SalesInvoiceRevision;
 use App\Models\SmsLog;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
@@ -46,9 +47,8 @@ class RecordNotificationService
         );
     }
 
-    public function salesInvoiceApprovedForCustomer(Sale $sale): void
+    public function salesInvoiceApprovedForCustomer(SalesInvoiceRevision $revision): void
     {
-        $revision = $this->salesInvoiceRevisions->finalizeApproved($sale);
         $this->salesInvoiceRevisions->queueCustomerDelivery($revision);
     }
 

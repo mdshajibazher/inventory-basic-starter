@@ -6,9 +6,14 @@ use App\Jobs\SendApprovedSalesInvoiceEmail;
 use App\Models\GeneralSetting;
 use App\Models\Sale;
 use App\Models\SalesInvoiceRevision;
+use Carbon\CarbonInterface;
+use Illuminate\Bus\UniqueLock;
+use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use LogicException;
+use Throwable;
 
 class SalesInvoiceRevisionService
 {
@@ -162,11 +167,90 @@ class SalesInvoiceRevisionService
             ->update([
                 'delivery_status' => SalesInvoiceRevision::STATUS_QUEUED,
                 'queued_at' => now(),
+                'failure_message' => null,
             ]);
 
         if ($updated === 1) {
-            SendApprovedSalesInvoiceEmail::dispatch($revision->id)->afterCommit();
+            try {
+                $dispatch = SendApprovedSalesInvoiceEmail::dispatch($revision->id)->afterCommit();
+                unset($dispatch);
+            } catch (Throwable) {
+                (new UniqueLock(app(Cache::class)))
+                    ->release(new SendApprovedSalesInvoiceEmail($revision->id));
+
+                SalesInvoiceRevision::query()
+                    ->whereKey($revision->id)
+                    ->where('delivery_status', SalesInvoiceRevision::STATUS_QUEUED)
+                    ->update([
+                        'delivery_status' => SalesInvoiceRevision::STATUS_PENDING,
+                        'queued_at' => null,
+                        'failure_message' => 'Queue dispatch failed; recovery will retry.',
+                    ]);
+
+                Log::error('Approved sales invoice email queue dispatch failed.', [
+                    'sale_id' => $revision->sale_id,
+                    'revision_id' => $revision->id,
+                    'recipient_email' => $revision->recipient_email,
+                ]);
+            }
         }
+    }
+
+    public function recoverDeliveries(?CarbonInterface $now = null): int
+    {
+        $now ??= now();
+        $staleBefore = $now->copy()->subSeconds(SendApprovedSalesInvoiceEmail::LEASE_SECONDS);
+        $candidateIds = SalesInvoiceRevision::query()
+            ->whereNotNull('approved_at')
+            ->where(function ($query) use ($staleBefore): void {
+                $query->where('delivery_status', SalesInvoiceRevision::STATUS_PENDING)
+                    ->orWhere(function ($queued) use ($staleBefore): void {
+                        $queued->where('delivery_status', SalesInvoiceRevision::STATUS_QUEUED)
+                            ->where(function ($lease) use ($staleBefore): void {
+                                $lease->whereNull('queued_at')->orWhere('queued_at', '<=', $staleBefore);
+                            });
+                    });
+            })
+            ->orderBy('id')
+            ->pluck('id');
+
+        $recovered = 0;
+
+        foreach ($candidateIds as $candidateId) {
+            $revision = DB::transaction(function () use ($candidateId, $staleBefore): ?SalesInvoiceRevision {
+                $locked = SalesInvoiceRevision::query()->lockForUpdate()->find($candidateId);
+
+                if ($locked === null || $locked->approved_at === null) {
+                    return null;
+                }
+
+                if ($locked->delivery_status === SalesInvoiceRevision::STATUS_PENDING) {
+                    return $locked;
+                }
+
+                if ($locked->delivery_status !== SalesInvoiceRevision::STATUS_QUEUED
+                    || ($locked->queued_at !== null && $locked->queued_at->isAfter($staleBefore))) {
+                    return null;
+                }
+
+                $locked->forceFill([
+                    'delivery_status' => SalesInvoiceRevision::STATUS_PENDING,
+                    'queued_at' => null,
+                    'failure_message' => 'Stale queue lease recovered.',
+                ])->save();
+
+                return $locked->fresh();
+            });
+
+            if ($revision === null) {
+                continue;
+            }
+
+            $recovered++;
+            $this->queueCustomerDelivery($revision);
+        }
+
+        return $recovered;
     }
 
     /** @return Collection<int, SalesInvoiceRevision> */

@@ -56,7 +56,7 @@ class SalesInvoiceSnapshotServiceTest extends TestCase
             'biller:id,name,company_name,email,phone_number,address,city,state,postal_code,country',
             'warehouse:id,name',
             'approver:id,name',
-            'products.product:id,name,code',
+            'products.product:id,name,code,tax_method',
             'products.variant:id,name',
             'products.batch:id,batch_no',
             'products.unit:id,unit_code,unit_name',
@@ -271,6 +271,43 @@ class SalesInvoiceSnapshotServiceTest extends TestCase
         $this->assertSame(['1:null:null:1:1', '4:null:null:1:1', '4:null:null:1:2'], array_column($snapshot['lines'], 'key'));
     }
 
+    public function test_snapshot_uses_product_tax_method_for_an_inclusive_legacy_line_without_a_line_snapshot(): void
+    {
+        $sale = $this->saleWithProducts([
+            $this->line([
+                'product_id' => 4,
+                'qty' => 2,
+                'net_unit_price' => 100,
+                'discount' => 10,
+                'tax' => 20,
+                'total' => 210,
+            ], productTaxMethod: 2),
+        ]);
+
+        $snapshot = (new SalesInvoiceSnapshotService)->snapshot($sale);
+
+        $this->assertSame(110.0, $snapshot['lines'][0]['unit_price']);
+    }
+
+    public function test_snapshot_prefers_the_persisted_line_tax_method_over_the_current_product_method(): void
+    {
+        $sale = $this->saleWithProducts([
+            $this->line([
+                'product_id' => 4,
+                'qty' => 2,
+                'net_unit_price' => 100,
+                'discount' => 10,
+                'tax_method' => 1,
+                'tax' => 20,
+                'total' => 210,
+            ], productTaxMethod: 2),
+        ]);
+
+        $snapshot = (new SalesInvoiceSnapshotService)->snapshot($sale);
+
+        $this->assertSame(100.0, $snapshot['lines'][0]['unit_price']);
+    }
+
     public function test_diff_ignores_reversed_duplicate_lines_with_distinct_visible_values(): void
     {
         $first = $this->line(['product_id' => 4, 'qty' => 1, 'net_unit_price' => 100, 'total' => 100]);
@@ -302,14 +339,19 @@ class SalesInvoiceSnapshotServiceTest extends TestCase
         return $sale;
     }
 
-    private function line(array $attributes): ProductSale
+    private function line(array $attributes, int $productTaxMethod = 1): ProductSale
     {
         $line = (new ProductSale)->forceFill($attributes + [
             'variant_id' => null,
             'product_batch_id' => null,
             'sale_unit_id' => 1,
         ]);
-        $line->setRelation('product', (new Product)->forceFill(['id' => 4, 'name' => 'Face Wash', 'code' => 'FW-101']));
+        $line->setRelation('product', (new Product)->forceFill([
+            'id' => 4,
+            'name' => 'Face Wash',
+            'code' => 'FW-101',
+            'tax_method' => $productTaxMethod,
+        ]));
         $line->setRelation('variant', null);
         $line->setRelation('batch', null);
         $line->setRelation('unit', (new Unit)->forceFill(['id' => 1, 'unit_code' => 'pc', 'unit_name' => 'Piece']));

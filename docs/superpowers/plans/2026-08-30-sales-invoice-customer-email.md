@@ -4,7 +4,7 @@
 
 **Goal:** Email customers a branded, PDF-attached sales invoice after first approval and an accurate visual product/amount comparison after approval of an edited invoice.
 
-**Architecture:** Persist customer-safe before/after invoice snapshots in immutable revision records, update one pending revision through any number of pre-approval edits, and finalize it on approval. After commit, an idempotent queued job sends a Blade Mailable and a PDF rendered from the approved snapshot, then records delivery without coupling SMTP success to invoice approval.
+**Architecture:** Persist customer-safe before/after invoice snapshots in immutable revision records, update one pending revision through any number of pre-approval edits, and finalize it on approval. After commit, an at-least-once queued job sends a Blade Mailable and a PDF rendered from the approved snapshot, then records delivery without coupling SMTP success to invoice approval. Final-review amendments require transactional finalization under the sale lock, durable outbox recovery, deterministic message identity, and an explicit rare duplicate window after SMTP acceptance but before `sent` persistence.
 
 **Tech Stack:** Laravel 12, PHP 8.2, Eloquent/MySQL, Laravel database queues, Blade Mailables, Barryvdh DomPDF 3.1, PHPUnit 11, React/Next.js, React Native/Expo.
 
@@ -210,7 +210,7 @@ git commit -m "feat: track approved sales invoice revisions"
 
 ---
 
-### Task 3: Finalize approval and dispatch idempotent delivery
+### Task 3: Finalize approval and dispatch at-least-once delivery
 
 **Files:**
 - Create: `inventory-api/app/Jobs/SendApprovedSalesInvoiceEmail.php`
@@ -439,7 +439,7 @@ Expected before integration fixes: at least one lifecycle assertion fails. Make 
 
 - [ ] **Step 3: Change settings labels without changing payloads**
 
-In web and mobile, rename the customer notification section from `Customer Notifications On Create` to `Customer Notifications On Approval`. Rename the toggle label to `Email Approved Sales Invoices to Customers`. Leave the state key and API field unchanged.
+In web and mobile, rename the customer notification section from `Customer Notifications On Create` to the neutral `Customer Notifications`. Rename the toggle label to `Email Approved Sales Invoices to Customers`. Leave the state key and API field unchanged.
 
 - [ ] **Step 4: Run backend regression tests**
 

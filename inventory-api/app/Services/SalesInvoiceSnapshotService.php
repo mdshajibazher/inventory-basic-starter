@@ -29,7 +29,7 @@ class SalesInvoiceSnapshotService
             'biller:id,name,company_name,email,phone_number,address,city,state,postal_code,country',
             'warehouse:id,name',
             'approver:id,name',
-            'products.product:id,name,code',
+            'products.product:id,name,code,tax_method',
             'products.variant:id,name',
             'products.batch:id,batch_no',
             'products.unit:id,unit_code,unit_name',
@@ -156,8 +156,9 @@ class SalesInvoiceSnapshotService
         $productId = $this->integer($line->product_id);
         $qty = $this->quantity($line->qty);
         $discount = $this->money($line->discount);
+        $taxMethod = $line->getAttribute('tax_method') ?? $line->product?->tax_method;
 
-        $unitPrice = (int) $line->tax_method === 2 && $qty > 0
+        $unitPrice = (int) $taxMethod === 2 && $qty > 0
             ? $this->money(($this->money($line->total) + $discount) / $qty)
             : $this->money($line->net_unit_price);
 

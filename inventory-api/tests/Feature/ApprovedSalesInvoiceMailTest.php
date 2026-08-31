@@ -40,7 +40,7 @@ namespace Tests\Feature {
             parent::setUp();
 
             Schema::create('sales', function (Blueprint $table): void {
-                $table->id();
+                $table->increments('id');
                 $table->string('reference_no');
                 $table->timestamps();
             });
@@ -129,6 +129,20 @@ namespace Tests\Feature {
             $this->assertStringNotContainsString('pcs → pcs', $html);
             $this->assertStringContainsString('BDT 346.50 → BDT 495.00', $html);
             $this->assertCustomerSafe($html);
+        }
+
+        public function test_mail_uses_a_deterministic_message_id_for_the_immutable_revision(): void
+        {
+            $revision = $this->revision(SalesInvoiceRevision::KIND_CREATED);
+
+            $first = new ApprovedSalesInvoiceMail($revision, '%PDF-first', 'first.pdf');
+            $retry = new ApprovedSalesInvoiceMail($revision->fresh(), '%PDF-retry', 'retry.pdf');
+
+            $this->assertSame(
+                "sales-invoice-revision-{$revision->id}@inventory.local",
+                $first->headers()->messageId,
+            );
+            $this->assertSame($first->headers()->messageId, $retry->headers()->messageId);
         }
 
         public function test_job_sends_the_real_mailable_synchronously_and_records_success(): void
@@ -232,6 +246,66 @@ namespace Tests\Feature {
             $this->assertSame(0, EmailLog::query()->count());
         }
 
+        public function test_job_exits_before_rendering_or_sending_a_revision_marked_skipped(): void
+        {
+            Mail::fake();
+            $revision = $this->revision(SalesInvoiceRevision::KIND_CREATED, [
+                'delivery_status' => SalesInvoiceRevision::STATUS_SKIPPED,
+            ]);
+            $renderer = $this->mock(SalesInvoicePdfRenderer::class, function (MockInterface $mock): void {
+                $mock->shouldNotReceive('render');
+                $mock->shouldNotReceive('filename');
+            });
+
+            (new SendApprovedSalesInvoiceEmail($revision->id))->handle($renderer);
+
+            Mail::assertNothingSent();
+            $this->assertSame(0, EmailLog::query()->count());
+        }
+
+        public function test_retry_after_smtp_acceptance_before_sent_status_can_repeat_the_same_message_id(): void
+        {
+            Mail::fake();
+            $revision = $this->revision(SalesInvoiceRevision::KIND_CREATED, [
+                'delivery_status' => SalesInvoiceRevision::STATUS_QUEUED,
+            ]);
+            $renderer = $this->mockRenderer($revision, 2);
+            Schema::getConnection()->unprepared(<<<'SQL'
+                CREATE TRIGGER fail_sales_invoice_revision_sent
+                BEFORE UPDATE OF delivery_status ON sales_invoice_revisions
+                WHEN NEW.delivery_status = 'sent'
+                BEGIN
+                    SELECT RAISE(FAIL, 'simulated crash after SMTP acceptance');
+                END
+                SQL);
+
+            try {
+                (new SendApprovedSalesInvoiceEmail($revision->id))->handle($renderer);
+                $this->fail('The simulated post-acceptance status failure was not raised.');
+            } catch (\Throwable) {
+                // SMTP has already accepted the first message, while durable sent state was not recorded.
+            }
+
+            Mail::assertSentCount(1);
+            $this->assertSame(SalesInvoiceRevision::STATUS_FAILED, $revision->fresh()->delivery_status);
+
+            Schema::getConnection()->unprepared('DROP TRIGGER fail_sales_invoice_revision_sent');
+            (new SendApprovedSalesInvoiceEmail($revision->id))->handle($renderer);
+
+            Mail::assertSentCount(2);
+            $messageIds = [];
+            Mail::assertSent(ApprovedSalesInvoiceMail::class, function (ApprovedSalesInvoiceMail $mail) use (&$messageIds): bool {
+                $messageIds[] = $mail->headers()->messageId;
+
+                return true;
+            });
+            $this->assertSame([
+                "sales-invoice-revision-{$revision->id}@inventory.local",
+                "sales-invoice-revision-{$revision->id}@inventory.local",
+            ], $messageIds);
+            $this->assertSame(SalesInvoiceRevision::STATUS_SENT, $revision->fresh()->delivery_status);
+        }
+
         private function revision(string $kind, array $attributes = []): SalesInvoiceRevision
         {
             $saleId = Schema::getConnection()->table('sales')->insertGetId([
@@ -255,15 +329,15 @@ namespace Tests\Feature {
             ]);
         }
 
-        private function mockRenderer(SalesInvoiceRevision $revision): SalesInvoicePdfRenderer
+        private function mockRenderer(SalesInvoiceRevision $revision, int $times = 1): SalesInvoicePdfRenderer
         {
-            return $this->mock(SalesInvoicePdfRenderer::class, function (MockInterface $mock) use ($revision): void {
+            return $this->mock(SalesInvoicePdfRenderer::class, function (MockInterface $mock) use ($revision, $times): void {
                 $mock->shouldReceive('render')
-                    ->once()
+                    ->times($times)
                     ->with($revision->after_snapshot)
                     ->andReturn('%PDF-test');
                 $mock->shouldReceive('filename')
-                    ->once()
+                    ->times($times)
                     ->with($revision->after_snapshot)
                     ->andReturn('sales-invoice-SR-2026-1042.pdf');
             });

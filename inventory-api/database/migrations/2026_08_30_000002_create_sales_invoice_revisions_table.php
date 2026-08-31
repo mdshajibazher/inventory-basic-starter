@@ -10,7 +10,8 @@ return new class extends Migration
     {
         Schema::create('sales_invoice_revisions', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('sale_id')->constrained('sales')->cascadeOnDelete();
+            $table->unsignedInteger('sale_id');
+            $table->foreign('sale_id')->references('id')->on('sales')->cascadeOnDelete();
             $table->unsignedInteger('revision_number');
             $table->string('kind', 16);
             $table->json('before_snapshot')->nullable();

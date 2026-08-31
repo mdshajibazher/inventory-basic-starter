@@ -8,6 +8,7 @@ use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
+use Illuminate\Mail\Mailables\Headers;
 use Illuminate\Queue\SerializesModels;
 
 class ApprovedSalesInvoiceMail extends Mailable
@@ -35,6 +36,13 @@ class ApprovedSalesInvoiceMail extends Mailable
     {
         return new Content(
             view: 'emails.sales-invoice-approved',
+        );
+    }
+
+    public function headers(): Headers
+    {
+        return new Headers(
+            messageId: "sales-invoice-revision-{$this->revision->id}@inventory.local",
         );
     }
 

@@ -62,20 +62,21 @@ On creation, create or update the sale's single pending `created` revision after
 
 ### Approval and delivery
 
-After `ApprovalService::approveSale` commits successfully, finalize the pending revision from the just-approved invoice, capture the current customer email, and evaluate the existing customer-email setting.
+`ApprovalService::approveSale` finalizes the pending revision from the just-approved invoice and captures the current customer email while it still holds the sale row lock inside the approval transaction. After that transaction commits, delivery evaluates the existing customer-email setting using that exact immutable revision.
 
 - Missing email or disabled setting marks the revision `skipped` without queueing.
-- Otherwise, atomically transition the revision from `pending` to `queued` and dispatch one job after commit. The status transition prevents duplicate sends.
+- Otherwise, atomically transition the revision from `pending` to `queued` and dispatch one job after commit. A dispatch exception returns the durable outbox row to `pending`, is logged without snapshot contents, and never changes the successful approval response.
 - The queued job loads the immutable revision, renders the branded Mailable and customer PDF from `after_snapshot`, sends to `recipient_email`, and records the result in both the revision and the existing `email_logs` table.
 - Successful delivery sets `sent`; exceptions set `failed`, preserve the error message, write Laravel error context, and allow normal queue retry behavior.
-- Repeated approval requests cannot resend because only pending invoices can be approved and only a `pending` revision can transition to `queued`.
+- Delivery is explicitly **at least once**. Each revision uses a deterministic `Message-ID`, a unique queued-job identity, a non-overlap execution lock, and a 15-minute lease. `sent` and `skipped` revisions exit before rendering or SMTP.
+- A scheduled recovery command runs every minute and reclaims approved `pending` revisions plus `queued` revisions whose 15-minute lease is stale. Repeated approval requests do not create another revision delivery, but lease recovery may intentionally redeliver when completion cannot be proven.
 
 The existing internal `salesInvoiceApproved` notification remains separate and unchanged. The current create-time customer notification remains active for SMS only, preserving `customer_sales_invoice_sms_notification_enabled`; its email branch moves to the approval workflow.
 
 ## Components and Interfaces
 
 - A focused snapshot/diff service builds customer-safe immutable data and normalized added/removed/modified changes.
-- A revision service owns pending-revision creation, refresh, approval finalization, and idempotent queue dispatch.
+- A revision service owns pending-revision creation, refresh, transactional approval finalization, and durable outbox scheduling/recovery.
 - A queued customer-invoice Mailable owns subject selection, branded HTML rendering, and PDF attachment.
 - A shared customer PDF renderer returns the PDF bytes and filename for both the Mailable and controller download.
 - `RecordNotificationService` remains the integration point invoked by the sales approval controller; its customer approval method delegates revision delivery rather than using `Mail::raw`.
@@ -86,8 +87,9 @@ No API request or response shape changes. The existing general-setting field con
 
 - Invoice creation, update, and approval responses are not delayed by SMTP or PDF rendering.
 - Queue dispatch happens only after commit, so jobs cannot observe uncommitted invoice data.
+- SMTP has no atomic handshake with the revision status update. If SMTP accepts a message and the worker crashes before recording `sent`, retry or stale-lease recovery can send the same revision again. The deterministic `Message-ID` gives downstream systems a stable deduplication key, but does not guarantee deduplication.
 - A failed send is logged with sale ID, revision ID, recipient, and exception; no sensitive snapshot is written to Laravel logs.
-- Existing deployment requirements apply: configured SMTP, migrated database tables, and an active Laravel queue worker.
+- Existing deployment requirements apply: configured SMTP, migrated database tables, `QUEUE_CONNECTION=database`, an active Laravel queue worker, and a scheduler invoking `php artisan schedule:run` every minute.
 - Existing historical approved invoices have no revision baseline. Their first edit captures the currently approved invoice as `before_snapshot`, and their next approval sends a correct update email. Merely deploying the feature does not email historical invoices.
 
 ## Test and Acceptance Criteria
@@ -100,5 +102,5 @@ No API request or response shape changes. The existing general-setting field con
 - Multiple pending edits produce one email showing the net difference from the last approved revision.
 - Editing before first approval still sends the created-invoice email without a revision comparison.
 - PDF output includes customer-visible invoice details and excludes unit cost, total cost, and profit text/values.
-- Approval commits even when mail delivery fails; the revision becomes `failed`, the existing email log records the failure, and retrying the queue job cannot create duplicate successful sends.
+- Approval commits even when queue scheduling or mail delivery fails. Scheduling failure leaves a recoverable `pending` revision; delivery failure becomes `failed` and records an error email log. A sent/skipped guard suppresses ordinary repeats, while the SMTP-accepted-before-`sent` crash boundary remains an explicitly tested rare duplicate window under at-least-once delivery.
 - Existing internal approval notifications and invoice API responses continue to work.

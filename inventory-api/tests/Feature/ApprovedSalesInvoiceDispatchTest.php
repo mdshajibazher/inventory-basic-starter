@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Api\SalesInvoiceController;
 use App\Jobs\SendApprovedSalesInvoiceEmail;
 use App\Mail\ApprovedSalesInvoiceMail;
 use App\Models\Customer;
@@ -10,14 +11,21 @@ use App\Models\ProductSale;
 use App\Models\Sale;
 use App\Models\SalesInvoiceRevision;
 use App\Models\User;
+use App\Services\ApprovalService;
 use App\Services\RecordNotificationService;
 use App\Services\SalesInvoicePdfRenderer;
 use App\Services\SalesInvoiceRevisionService;
 use App\Services\SalesInvoiceSnapshotService;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Request;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -69,7 +77,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             $table->timestamps();
         });
         Schema::create('sales', function (Blueprint $table): void {
-            $table->id();
+            $table->increments('id');
             $table->string('reference_no');
             $table->date('sale_date')->nullable();
             $table->foreignId('customer_id')->nullable();
@@ -120,6 +128,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             $table->string('company_phone')->nullable();
             $table->boolean('customer_sales_invoice_mail_notification_enabled')->default(false);
             $table->boolean('customer_sales_invoice_sms_notification_enabled')->default(false);
+            $table->json('sales_invoice_approver_ids')->nullable();
             $table->string('bulksmsbd_api_url')->nullable();
             $table->string('bulksmsbd_api_key')->nullable();
             $table->string('bulksmsbd_sender_id')->nullable();
@@ -194,7 +203,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'approved_at' => $approvedAt,
         ]);
 
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
 
         $revision = $pending->fresh();
         $this->assertSame(SalesInvoiceRevision::STATUS_QUEUED, $revision->delivery_status);
@@ -217,7 +226,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         [$sale, $pending] = $this->pendingRevision('customer@example.test');
         $this->approve($sale);
 
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
 
         $this->assertSame(SalesInvoiceRevision::STATUS_SKIPPED, $pending->fresh()->delivery_status);
         $this->assertSame('Customer sales invoice email disabled.', $pending->fresh()->failure_message);
@@ -232,7 +241,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         [$sale, $pending] = $this->pendingRevision($email);
         $this->approve($sale);
 
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
 
         $this->assertSame(SalesInvoiceRevision::STATUS_SKIPPED, $pending->fresh()->delivery_status);
         $this->assertSame('Customer email missing.', $pending->fresh()->failure_message);
@@ -256,8 +265,8 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         [$sale] = $this->pendingRevision('customer@example.test');
         $this->approve($sale);
 
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
+        $this->notifyApproved($sale);
 
         Queue::assertPushedTimes(SendApprovedSalesInvoiceEmail::class, 1);
         $this->assertSame(1, SalesInvoiceRevision::query()->count());
@@ -269,7 +278,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $this->setting(emailEnabled: true);
         [$sale, $pending] = $this->pendingRevision('original@example.test', 100);
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         $finalized = $pending->fresh();
 
         $sale->update([
@@ -277,7 +286,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'approved_at' => now()->addDay(),
         ]);
         $sale->customer()->update(['email' => 'changed@example.test']);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
 
         $revision = $pending->fresh();
         $this->assertSame($finalized->after_snapshot, $revision->after_snapshot);
@@ -319,9 +328,252 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $job = new SendApprovedSalesInvoiceEmail(123);
 
         $this->assertInstanceOf(ShouldQueue::class, $job);
+        $this->assertInstanceOf(ShouldBeUnique::class, $job);
         $this->assertSame(123, $job->revisionId);
         $this->assertSame(3, $job->tries);
         $this->assertSame([60, 300], $job->backoff());
+        $this->assertSame(900, $job->uniqueFor);
+        $this->assertSame('sales-invoice-revision:123', $job->uniqueId());
+
+        $middleware = $job->middleware();
+
+        $this->assertCount(1, $middleware);
+        $this->assertInstanceOf(WithoutOverlapping::class, $middleware[0]);
+        $this->assertSame('sales-invoice-revision:123', $middleware[0]->key);
+        $this->assertSame(60, $middleware[0]->releaseAfter);
+        $this->assertSame(900, $middleware[0]->expiresAfter);
+    }
+
+    public function test_dispatch_failure_leaves_the_approved_revision_pending_for_recovery(): void
+    {
+        $this->setting(emailEnabled: true);
+        [$sale] = $this->pendingRevision('customer@example.test');
+        $this->approve($sale);
+        $revision = $this->revisions->finalizeApproved($sale->fresh());
+        $realDispatcher = $this->app->make(Dispatcher::class);
+        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher->shouldReceive('dispatch')
+            ->once()
+            ->andThrow(new RuntimeException('Database queue unavailable'));
+        $this->app->instance(Dispatcher::class, $dispatcher);
+        Log::spy();
+
+        $this->revisions->queueCustomerDelivery($revision);
+
+        $fresh = $revision->fresh();
+        $this->assertSame(SalesInvoiceRevision::STATUS_PENDING, $fresh->delivery_status);
+        $this->assertNull($fresh->queued_at);
+        $this->assertSame('Queue dispatch failed; recovery will retry.', $fresh->failure_message);
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->with('Approved sales invoice email queue dispatch failed.', Mockery::on(fn (array $context): bool => $context === [
+                'sale_id' => $revision->sale_id,
+                'revision_id' => $revision->id,
+                'recipient_email' => 'customer@example.test',
+            ]));
+
+        $this->app->instance(Dispatcher::class, $realDispatcher);
+        Queue::fake();
+
+        $this->assertSame(1, $this->revisions->recoverDeliveries());
+        Queue::assertPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $revision->id);
+    }
+
+    public function test_recovery_queues_approved_pending_and_stale_queued_revisions_but_leaves_a_fresh_lease_alone(): void
+    {
+        Queue::fake();
+        $this->setting(emailEnabled: true);
+        $now = now()->startOfSecond();
+
+        [$pendingSale] = $this->pendingRevision('pending@example.test');
+        $this->approve($pendingSale);
+        $pending = $this->revisions->finalizeApproved($pendingSale->fresh());
+
+        [$staleSale] = $this->pendingRevision('stale@example.test');
+        $this->approve($staleSale);
+        $stale = $this->revisions->finalizeApproved($staleSale->fresh());
+        $stale->update([
+            'delivery_status' => SalesInvoiceRevision::STATUS_QUEUED,
+            'queued_at' => $now->copy()->subSeconds(901),
+        ]);
+
+        [$freshSale] = $this->pendingRevision('fresh@example.test');
+        $this->approve($freshSale);
+        $fresh = $this->revisions->finalizeApproved($freshSale->fresh());
+        $freshQueuedAt = $now->copy()->subSeconds(899);
+        $fresh->update([
+            'delivery_status' => SalesInvoiceRevision::STATUS_QUEUED,
+            'queued_at' => $freshQueuedAt,
+        ]);
+
+        $recovered = $this->revisions->recoverDeliveries($now);
+
+        $this->assertSame(2, $recovered);
+        Queue::assertPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $pending->id);
+        Queue::assertPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $stale->id);
+        Queue::assertNotPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $fresh->id);
+        $this->assertSame(SalesInvoiceRevision::STATUS_QUEUED, $pending->fresh()->delivery_status);
+        $this->assertSame(SalesInvoiceRevision::STATUS_QUEUED, $stale->fresh()->delivery_status);
+        $this->assertTrue($freshQueuedAt->equalTo($fresh->fresh()->queued_at));
+    }
+
+    public function test_recovery_command_is_scheduled_every_minute_without_overlap(): void
+    {
+        Queue::fake();
+        $this->setting(emailEnabled: true);
+        [$sale] = $this->pendingRevision('customer@example.test');
+        $this->approve($sale);
+        $revision = $this->revisions->finalizeApproved($sale->fresh());
+
+        $this->artisan('sales-invoice-emails:recover')
+            ->expectsOutput('Recovered 1 approved sales invoice email delivery.')
+            ->assertSuccessful();
+
+        Queue::assertPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $revision->id);
+        $event = collect(app(Schedule::class)->events())
+            ->first(fn ($scheduled): bool => str_contains($scheduled->command, 'sales-invoice-emails:recover'));
+        $this->assertNotNull($event);
+        $this->assertSame('* * * * *', $event->expression);
+        $this->assertTrue($event->withoutOverlapping);
+    }
+
+    public function test_approval_service_finalizes_the_exact_revision_inside_the_sale_lock_transaction(): void
+    {
+        [$sale] = $this->pendingRevision('customer@example.test', 125);
+        $this->setting(emailEnabled: true, approverIds: [$sale->user_id]);
+        $snapshots = new class extends SalesInvoiceSnapshotService
+        {
+            /** @var list<int> */
+            public array $transactionLevels = [];
+
+            public function snapshot(Sale $sale): array
+            {
+                $this->transactionLevels[] = DB::transactionLevel();
+
+                return [
+                    'schema_version' => 1,
+                    'invoice' => [
+                        'reference_no' => $sale->reference_no,
+                        'grand_total' => round((float) $sale->grand_total, 2),
+                        'approval_status' => $sale->approval_status,
+                    ],
+                    'customer' => ['email' => $sale->customer?->email],
+                    'lines' => [],
+                ];
+            }
+        };
+        $approvals = new ApprovalService(new SalesInvoiceRevisionService($snapshots));
+        $user = User::query()->findOrFail($sale->user_id);
+
+        $approved = $approvals->approveSale($sale, $user);
+
+        $this->assertTrue($approved->relationLoaded('approvedCustomerEmailRevision'));
+        $revision = $approved->getRelation('approvedCustomerEmailRevision');
+        $this->assertInstanceOf(SalesInvoiceRevision::class, $revision);
+        $this->assertNotEmpty($snapshots->transactionLevels);
+        $this->assertGreaterThan(0, min($snapshots->transactionLevels));
+        $this->assertSame('approved', $revision->after_snapshot['invoice']['approval_status']);
+        $this->assertEquals(125.0, $revision->after_snapshot['invoice']['grand_total']);
+
+        $approved->update(['grand_total' => 999]);
+
+        $this->assertEquals(125.0, $revision->fresh()->after_snapshot['invoice']['grand_total']);
+    }
+
+    public function test_controller_queues_the_finalized_revision_even_when_the_live_sale_changes_after_approval(): void
+    {
+        Queue::fake();
+        $this->setting(emailEnabled: true);
+        [$sale] = $this->pendingRevision('customer@example.test', 125);
+        $this->approve($sale);
+        $revision = $this->revisions->finalizeApproved($sale->fresh());
+        $approved = $sale->fresh()->setRelation('approvedCustomerEmailRevision', $revision);
+        $requestUser = $this->controllerUser();
+        $request = Request::create("/api/sales-invoices/{$sale->id}/approve", 'POST');
+        $request->setUserResolver(fn (): User => $requestUser);
+        $approvals = Mockery::mock(ApprovalService::class);
+        $approvals->shouldReceive('approveSale')->once()->with($sale, $requestUser)->andReturn($approved);
+        $approvals->shouldReceive('canApprove')->andReturn(false);
+        $this->app->instance(ApprovalService::class, $approvals);
+        $notifications = Mockery::mock(RecordNotificationService::class);
+        $notifications->shouldReceive('salesInvoiceApproved')
+            ->once()
+            ->with($approved)
+            ->andReturnUsing(function (Sale $liveSale): void {
+                $liveSale->update(['grand_total' => 999]);
+            });
+        $notifications->shouldReceive('salesInvoiceApprovedForCustomer')
+            ->once()
+            ->with(Mockery::on(fn ($queued): bool => $queued instanceof SalesInvoiceRevision && $queued->is($revision)))
+            ->andReturnUsing(fn (SalesInvoiceRevision $queued) => $this->revisions->queueCustomerDelivery($queued));
+
+        $response = (new SalesInvoiceController)->approve($sale, $request, $approvals, $notifications);
+
+        $this->assertSame(200, $response->status());
+        Queue::assertPushed(SendApprovedSalesInvoiceEmail::class, fn (SendApprovedSalesInvoiceEmail $job): bool => $job->revisionId === $revision->id);
+        $this->assertEquals(125.0, $revision->fresh()->after_snapshot['invoice']['grand_total']);
+        $this->assertEquals(999.0, $sale->fresh()->grand_total);
+    }
+
+    public function test_controller_keeps_a_successful_approval_response_when_customer_queue_scheduling_throws(): void
+    {
+        [$sale] = $this->pendingRevision('customer@example.test', 125);
+        $this->approve($sale);
+        $revision = $this->revisions->finalizeApproved($sale->fresh());
+        $approved = $sale->fresh()->setRelation('approvedCustomerEmailRevision', $revision);
+        $requestUser = $this->controllerUser();
+        $request = Request::create("/api/sales-invoices/{$sale->id}/approve", 'POST');
+        $request->setUserResolver(fn (): User => $requestUser);
+        $approvals = Mockery::mock(ApprovalService::class);
+        $approvals->shouldReceive('approveSale')->once()->with($sale, $requestUser)->andReturn($approved);
+        $approvals->shouldReceive('canApprove')->andReturn(false);
+        $this->app->instance(ApprovalService::class, $approvals);
+        $notifications = Mockery::mock(RecordNotificationService::class);
+        $notifications->shouldReceive('salesInvoiceApproved')->once()->with($approved);
+        $notifications->shouldReceive('salesInvoiceApprovedForCustomer')
+            ->once()
+            ->with(Mockery::on(fn ($queued): bool => $queued instanceof SalesInvoiceRevision && $queued->is($revision)))
+            ->andThrow(new RuntimeException('Database queue unavailable'));
+        Log::spy();
+
+        $response = (new SalesInvoiceController)->approve($sale, $request, $approvals, $notifications);
+
+        $this->assertSame(200, $response->status());
+        $this->assertSame('approved', $sale->fresh()->approval_status);
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->with('Approved sales invoice customer email scheduling failed.', [
+                'sale_id' => $sale->id,
+                'revision_id' => $revision->id,
+                'recipient_email' => 'customer@example.test',
+            ]);
+    }
+
+    public function test_controller_leaves_recovery_to_the_outbox_when_the_revision_handoff_is_missing(): void
+    {
+        [$sale] = $this->pendingRevision('customer@example.test', 125);
+        $this->approve($sale);
+        $approved = $sale->fresh();
+        $requestUser = $this->controllerUser();
+        $request = Request::create("/api/sales-invoices/{$sale->id}/approve", 'POST');
+        $request->setUserResolver(fn (): User => $requestUser);
+        $approvals = Mockery::mock(ApprovalService::class);
+        $approvals->shouldReceive('approveSale')->once()->with($sale, $requestUser)->andReturn($approved);
+        $approvals->shouldReceive('canApprove')->andReturn(false);
+        $this->app->instance(ApprovalService::class, $approvals);
+        $notifications = Mockery::mock(RecordNotificationService::class);
+        $notifications->shouldReceive('salesInvoiceApproved')->once()->with($approved);
+        $notifications->shouldNotReceive('salesInvoiceApprovedForCustomer');
+        Log::spy();
+
+        $response = (new SalesInvoiceController)->approve($sale, $request, $approvals, $notifications);
+
+        $this->assertSame(200, $response->status());
+        Log::shouldHaveReceived('error')
+            ->once()
+            ->with('Approved sales invoice customer email revision was not attached.', [
+                'sale_id' => $sale->id,
+            ]);
     }
 
     public function test_first_approval_after_pending_edits_sends_one_created_email_with_latest_full_lines_and_no_diff(): void
@@ -349,7 +601,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $pending = $this->revisions->syncPending($sale->fresh());
 
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         Queue::assertPushedTimes(SendApprovedSalesInvoiceEmail::class, 1);
         (new SendApprovedSalesInvoiceEmail($pending->id))->handle($this->pdfRenderer());
 
@@ -381,7 +633,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             [$lotion, 1, 300],
         ]);
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         $created = SalesInvoiceRevision::query()->sole();
         (new SendApprovedSalesInvoiceEmail($created->id))->handle($this->pdfRenderer());
 
@@ -405,7 +657,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $updated = $this->revisions->syncPending($sale->fresh());
 
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         Queue::assertPushedTimes(SendApprovedSalesInvoiceEmail::class, 1);
         (new SendApprovedSalesInvoiceEmail($updated->id))->handle($this->pdfRenderer());
 
@@ -442,7 +694,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             [$soap, 1, 200],
         ]);
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         $created = SalesInvoiceRevision::query()->sole();
         (new SendApprovedSalesInvoiceEmail($created->id))->handle($this->pdfRenderer());
 
@@ -475,7 +727,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $finalPending = $this->revisions->syncPending($sale->fresh());
 
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         (new SendApprovedSalesInvoiceEmail($finalPending->id))->handle($this->pdfRenderer());
 
         Mail::assertSentCount(1);
@@ -500,7 +752,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $faceWash = $this->product('Face Wash', 'FW-101');
         [$sale] = $this->pendingRevision('customer@example.test', 100, [[$faceWash, 1, 100]]);
         $this->approve($sale);
-        $this->notifications->salesInvoiceApprovedForCustomer($sale->fresh());
+        $this->notifyApproved($sale);
         $revision = SalesInvoiceRevision::query()->sole();
         $renderer = $this->pdfRenderer();
         $exception = new RuntimeException('SMTP unavailable');
@@ -622,11 +874,12 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         };
     }
 
-    private function setting(bool $emailEnabled, bool $smsEnabled = false): GeneralSetting
+    private function setting(bool $emailEnabled, bool $smsEnabled = false, array $approverIds = []): GeneralSetting
     {
         return GeneralSetting::query()->create([
             'customer_sales_invoice_mail_notification_enabled' => $emailEnabled,
             'customer_sales_invoice_sms_notification_enabled' => $smsEnabled,
+            'sales_invoice_approver_ids' => $approverIds,
             'bulksmsbd_api_url' => 'https://sms.example.test/send',
             'bulksmsbd_api_key' => 'test-key',
             'bulksmsbd_sender_id' => 'INV',
@@ -639,5 +892,22 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'approval_status' => 'approved',
             'approved_at' => now()->startOfSecond(),
         ]);
+    }
+
+    private function notifyApproved(Sale $sale): SalesInvoiceRevision
+    {
+        $revision = $this->revisions->finalizeApproved($sale->fresh());
+        $this->notifications->salesInvoiceApprovedForCustomer($revision);
+
+        return $revision;
+    }
+
+    private function controllerUser(): User
+    {
+        $user = Mockery::mock(User::class)->makePartial();
+        $user->forceFill(['id' => 999]);
+        $user->shouldReceive('requireCurrentBillerId')->andReturn(0);
+
+        return $user;
     }
 }

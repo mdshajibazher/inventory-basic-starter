@@ -22,7 +22,7 @@ class SalesInvoiceRevisionServiceTest extends TestCase
         parent::setUp();
 
         Schema::create('sales', function (Blueprint $table): void {
-            $table->id();
+            $table->increments('id');
             $table->string('reference_no');
             $table->decimal('grand_total', 15, 2)->default(0);
             $table->string('approval_status', 16)->default('pending');

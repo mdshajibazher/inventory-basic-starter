@@ -221,7 +221,7 @@ export default function GeneralSettingsScreen() {
             <TextInput mode="outlined" label="Sender ID" autoCapitalize="none" value={form.bulksmsbdSenderId} onChangeText={(value) => updateForm('bulksmsbdSenderId', value)} />
           </View>
           <View style={styles.notificationBox}>
-            <Text variant="titleSmall">Customer Notifications On Approval</Text>
+            <Text variant="titleSmall">Customer Notifications</Text>
             <ToggleRow label="Enable Customer Sales Invoice SMS Notification" value={form.customerSalesInvoiceSmsNotificationEnabled} onValueChange={(value) => updateForm('customerSalesInvoiceSmsNotificationEnabled', value)} />
             <ToggleRow label="Email Approved Sales Invoices to Customers" value={form.customerSalesInvoiceMailNotificationEnabled} onValueChange={(value) => updateForm('customerSalesInvoiceMailNotificationEnabled', value)} />
             <ToggleRow label="Enable Customer Return Invoice SMS Notification" value={form.customerReturnInvoiceSmsNotificationEnabled} onValueChange={(value) => updateForm('customerReturnInvoiceSmsNotificationEnabled', value)} />

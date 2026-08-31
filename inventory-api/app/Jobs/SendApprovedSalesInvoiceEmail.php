@@ -6,18 +6,24 @@ use App\Mail\ApprovedSalesInvoiceMail;
 use App\Models\EmailLog;
 use App\Models\SalesInvoiceRevision;
 use App\Services\SalesInvoicePdfRenderer;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Throwable;
 
-class SendApprovedSalesInvoiceEmail implements ShouldQueue
+class SendApprovedSalesInvoiceEmail implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
+    public const LEASE_SECONDS = 900;
+
     public int $tries = 3;
+
+    public int $uniqueFor = self::LEASE_SECONDS;
 
     public function __construct(public int $revisionId) {}
 
@@ -25,6 +31,21 @@ class SendApprovedSalesInvoiceEmail implements ShouldQueue
     public function backoff(): array
     {
         return [60, 300];
+    }
+
+    public function uniqueId(): string
+    {
+        return "sales-invoice-revision:{$this->revisionId}";
+    }
+
+    /** @return list<WithoutOverlapping> */
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping($this->uniqueId()))
+                ->releaseAfter(60)
+                ->expireAfter($this->uniqueFor),
+        ];
     }
 
     public function handle(SalesInvoicePdfRenderer $renderer): void

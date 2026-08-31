@@ -27,6 +27,8 @@ class ApprovalService
 
     private const PURCHASE_STATUS_PENDING = 3;
 
+    public function __construct(private readonly SalesInvoiceRevisionService $salesInvoiceRevisions) {}
+
     public function canApprove(User $user, string $type): bool
     {
         return in_array($user->id, $this->approverIds($type), true);
@@ -83,8 +85,11 @@ class ApprovalService
             }
 
             $this->markApproved($sale, $user);
+            $revision = $this->salesInvoiceRevisions->finalizeApproved($sale);
+            $sale = $sale->load(['customer:id,name,email,phone_number', 'warehouse:id,name', 'biller:id,name,company_name', 'user:id,name,email', 'approver:id,name,email', 'products']);
+            $sale->setRelation('approvedCustomerEmailRevision', $revision);
 
-            return $sale->load(['customer:id,name,email,phone_number', 'warehouse:id,name', 'biller:id,name,company_name', 'user:id,name,email', 'approver:id,name,email', 'products']);
+            return $sale;
         });
     }
 

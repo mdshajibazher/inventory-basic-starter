@@ -1,13 +1,26 @@
 <?php
 
+use App\Services\SalesInvoiceRevisionService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Schema;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('sales-invoice-emails:recover', function (SalesInvoiceRevisionService $revisions) {
+    $count = $revisions->recoverDeliveries();
+    $noun = $count === 1 ? 'delivery' : 'deliveries';
+
+    $this->info("Recovered {$count} approved sales invoice email {$noun}.");
+
+    return 0;
+})->purpose('Recover approved sales invoice emails that were not durably queued');
+
+Schedule::command('sales-invoice-emails:recover')->everyMinute()->withoutOverlapping(15);
 
 Artisan::command('stock:backfill-movements', function () {
     $convert = function (float $qty, mixed $unit): float {

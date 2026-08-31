@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\ProductSale;
 use App\Models\ProductVariant;
 use App\Models\Sale;
+use App\Models\SalesInvoiceRevision;
 use App\Models\Unit;
 use App\Services\ApprovalService;
 use App\Services\InvoiceLineActivityService;
@@ -232,7 +233,25 @@ class SalesInvoiceController extends Controller
 
         $sale = $approvals->approveSale($sale, $request->user());
         $notifications->salesInvoiceApproved($sale);
-        $notifications->salesInvoiceApprovedForCustomer($sale);
+        $revision = $sale->relationLoaded('approvedCustomerEmailRevision')
+            ? $sale->getRelation('approvedCustomerEmailRevision')
+            : null;
+
+        if ($revision instanceof SalesInvoiceRevision) {
+            try {
+                $notifications->salesInvoiceApprovedForCustomer($revision);
+            } catch (Throwable) {
+                Log::error('Approved sales invoice customer email scheduling failed.', [
+                    'sale_id' => $sale->id,
+                    'revision_id' => $revision->id,
+                    'recipient_email' => $revision->recipient_email,
+                ]);
+            }
+        } else {
+            Log::error('Approved sales invoice customer email revision was not attached.', [
+                'sale_id' => $sale->id,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Sales invoice approved successfully.',
