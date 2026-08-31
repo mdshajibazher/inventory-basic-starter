@@ -15,6 +15,13 @@ export function productTaxLabel(tax?: TaxLike | null) {
   return Number.isFinite(rate) ? `${tax.name} (${rate}%)` : tax.name;
 }
 
+export function productTaxMethodLabel(value: number | null | undefined) {
+  if (value === 1) return 'Exclusive';
+  if (value === 2) return 'Inclusive';
+
+  return 'N/A';
+}
+
 export function productUnitLabel(unit?: UnitLike | null) {
   return unit?.unit_name?.trim() || unit?.unit_code?.trim() || 'N/A';
 }
@@ -32,4 +39,3 @@ export function productBadgeTone(label: string, paletteSize: number) {
     0
   );
 }
-

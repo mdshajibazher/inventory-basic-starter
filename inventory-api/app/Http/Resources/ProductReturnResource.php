@@ -21,6 +21,8 @@ class ProductReturnResource extends JsonResource
             'net_unit_price' => $this->net_unit_price,
             'discount' => $this->discount,
             'tax_rate' => $this->tax_rate,
+            'tax_method' => $this->tax_method,
+            'entered_unit_price' => $this->enteredUnitPrice(),
             'tax' => $this->tax,
             'total' => $this->total,
             'product' => $this->whenLoaded('product'),
@@ -30,5 +32,16 @@ class ProductReturnResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+
+    private function enteredUnitPrice(): float
+    {
+        $qty = (float) $this->qty;
+
+        if ((int) $this->tax_method === 2 && $qty > 0) {
+            return round(((float) $this->total + (float) $this->discount) / $qty, 2);
+        }
+
+        return round((float) $this->net_unit_price, 2);
     }
 }

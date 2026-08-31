@@ -11,6 +11,7 @@ import { useAuth } from '@/context/auth-context';
 import { api } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
+import { productTaxMethodLabel } from './product-list-display';
 
 export function ProductDetailPage({ productId }: { productId: number }) {
   const { hasPermission } = useAuth();
@@ -76,6 +77,7 @@ export function ProductDetailPage({ productId }: { productId: number }) {
                 <Summary label="Base Unit Price" value={money(product.price)} strong />
                 <Summary label="Alert Quantity" value={product.alert_quantity == null ? '-' : quantity(product.alert_quantity)} />
                 <Summary label="Tax" value={product.tax ? `${product.tax.name} (${product.tax.rate}%)` : '-'} />
+                <Summary label="Tax Method" value={productTaxMethodLabel(product.tax_method)} />
                 <Summary label="Base Unit" value={product.unit?.unit_name ?? '-'} />
                 <Summary label="Sale Unit" value={product.sale_unit?.unit_name ?? '-'} />
                 <Summary label="Purchase Unit" value={product.purchase_unit?.unit_name ?? '-'} />

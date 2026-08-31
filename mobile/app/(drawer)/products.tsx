@@ -21,7 +21,7 @@ import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ProductPayload } from '@/src/lib/api';
 import type { Brand, Category, PaginationMeta, Product, Tax, Unit, Warehouse } from '@/src/types';
-import { productBadgeTone, productTaxLabel, productUnitLabel, productVariantLabel } from '@/src/product-list-display';
+import { productBadgeTone, productTaxLabel, productTaxMethodLabel, productUnitLabel, productVariantLabel } from '@/src/product-list-display';
 
 type ProductForm = {
   type: string;
@@ -873,6 +873,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                 <DataTable.Title style={styles.codeColumn}>Code</DataTable.Title>
                 <DataTable.Title style={styles.badgeColumn}>Product Type</DataTable.Title>
                 <DataTable.Title style={styles.taxColumn}>Tax</DataTable.Title>
+                <DataTable.Title style={styles.taxColumn}>Tax Method</DataTable.Title>
                 <DataTable.Title style={styles.variantColumn}>Is Variant</DataTable.Title>
                 <DataTable.Title style={styles.unitColumn}>Base Unit</DataTable.Title>
                 <DataTable.Title style={styles.unitColumn}>Sale Unit</DataTable.Title>
@@ -893,6 +894,7 @@ export default function ProductsScreen({ mode = 'index', productId }: { mode?: P
                   <DataTable.Cell style={styles.codeColumn}>{product.code}</DataTable.Cell>
                   <DataTable.Cell style={styles.badgeColumn}><ProductValueBadge label={product.type || 'Unknown'} capitalize /></DataTable.Cell>
                   <DataTable.Cell style={styles.taxColumn}>{productTaxLabel(product.tax)}</DataTable.Cell>
+                  <DataTable.Cell style={styles.taxColumn}>{productTaxMethodLabel(product.tax_method)}</DataTable.Cell>
                   <DataTable.Cell style={styles.variantColumn}><VariantBadge value={product.is_variant} /></DataTable.Cell>
                   <DataTable.Cell style={styles.unitColumn}><ProductValueBadge label={productUnitLabel(product.unit)} /></DataTable.Cell>
                   <DataTable.Cell style={styles.unitColumn}><ProductValueBadge label={productUnitLabel(product.sale_unit)} /></DataTable.Cell>

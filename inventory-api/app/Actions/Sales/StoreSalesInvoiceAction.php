@@ -92,10 +92,11 @@ class StoreSalesInvoiceAction
                     'product_batch_id' => $batchId,
                     'qty' => $qty,
                     'sale_unit_id' => $unit?->id ?? 0,
-                    'net_unit_price' => (float) $data['net_unit_price'][$index],
-                    'discount' => (float) $data['discount'][$index],
-                    'tax_rate' => (float) ($data['tax_rate'][$index] ?? 0),
-                    'tax' => (float) $data['tax'][$index],
+                    'net_unit_price' => $totals['line_values'][$index]['net_unit_price'],
+                    'discount' => $totals['line_values'][$index]['discount'],
+                    'tax_rate' => $totals['line_values'][$index]['tax_rate'],
+                    'tax_method' => $totals['line_values'][$index]['tax_method'],
+                    'tax' => $totals['line_values'][$index]['tax'],
                     'total' => $totals['lines'][$index],
                     'unit_cost' => $cost['unit_cost'],
                     'total_cost' => $cost['total_cost'],
@@ -117,14 +118,24 @@ class StoreSalesInvoiceAction
         $totalDiscount = 0.0;
         $totalTax = 0.0;
         $totalPrice = 0.0;
+        $lineValues = [];
 
         foreach ($data['product_id'] as $index => $productId) {
+            $product = Product::query()->with('tax')->findOrFail($productId);
+            $line = app(\App\Services\InvoiceLineTaxCalculator::class)->calculateForProduct(
+                $product,
+                (float) ($data['unit_price'][$index] ?? $data['net_unit_price'][$index]),
+                (float) $data['qty'][$index],
+                (float) $data['discount'][$index],
+                (float) ($data['tax_rate'][$index] ?? 0),
+            );
             $qty = (float) $data['qty'][$index];
-            $discount = (float) $data['discount'][$index];
-            $tax = (float) $data['tax'][$index];
-            $lineTotal = $this->round(((float) $data['net_unit_price'][$index] * $qty) - $discount + $tax);
+            $discount = $line['discount'];
+            $tax = $line['tax'];
+            $lineTotal = $line['subtotal'];
 
             $lines[$index] = $lineTotal;
+            $lineValues[$index] = $line;
             $totalQty += $qty;
             $totalDiscount += $discount;
             $totalTax += $tax;
@@ -139,6 +150,7 @@ class StoreSalesInvoiceAction
 
         return [
             'lines' => $lines,
+            'line_values' => $lineValues,
             'item' => count($data['product_id']),
             'total_qty' => $this->round($totalQty),
             'total_discount' => $this->round($totalDiscount),
@@ -454,7 +466,7 @@ class StoreSalesInvoiceAction
             'warehouse:id,name',
             'biller:id,name,company_name',
             'user:id,name,email',
-            'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,is_batch,is_variant',
+            'products.product:id,name,code,type,purchase_unit_id,sale_unit_id,cost,price,tax_id,tax_method,is_batch,is_variant',
             'products.product.variants.variant:id,name',
             'products.unit:id,unit_code,unit_name',
             'products.batch:id,batch_no,expired_date',

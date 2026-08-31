@@ -7,6 +7,7 @@ import { ActivityIndicator, Button, Card, DataTable, Text } from 'react-native-p
 import { ActivityLogTimeline } from '@/src/components/ActivityLogTimeline';
 import { api } from '@/src/lib/api';
 import type { Product } from '@/src/types';
+import { productTaxMethodLabel } from '@/src/product-list-display';
 
 export default function ProductsDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -66,6 +67,7 @@ export default function ProductsDetailScreen() {
                 <Summary label="Base Unit Price" value={money(product.price)} strong />
                 <Summary label="Alert Quantity" value={product.alert_quantity == null ? '-' : quantity(product.alert_quantity)} />
                 <Summary label="Tax" value={product.tax ? `${product.tax.name} (${product.tax.rate}%)` : '-'} />
+                <Summary label="Tax Method" value={productTaxMethodLabel(product.tax_method)} />
                 <Summary label="Base Unit" value={product.unit?.unit_name ?? '-'} />
                 <Summary label="Sale Unit" value={product.sale_unit?.unit_name ?? '-'} />
                 <Summary label="Purchase Unit" value={product.purchase_unit?.unit_name ?? '-'} />

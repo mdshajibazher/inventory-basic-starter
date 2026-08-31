@@ -12,7 +12,7 @@ import { errorMessage, toNullableNumber, toNumber } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActionButton, Button, Checkbox, Field, Input, Select, Switch, Textarea } from '@/components/ui';
 import { EmptyState } from '@/components/resource-shell';
-import { productBadgeTone, productTaxLabel, productUnitLabel, productVariantLabel } from './product-list-display';
+import { productBadgeTone, productTaxLabel, productTaxMethodLabel, productUnitLabel, productVariantLabel } from './product-list-display';
 import { VariantRemoveButton } from './variant-remove-button';
 
 type ProductForm = {
@@ -787,10 +787,10 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
 
         <div className="relative overflow-x-auto" aria-busy={loading}>
           {visibleProducts.length ? (
-            <table className="w-full min-w-[1940px] text-left text-sm">
+            <table className="w-full min-w-[2060px] text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold text-slate-500">
                 <tr>
-                  {['Product', 'SKU / Code', 'Product Type', 'Tax', 'Is Variant', 'Base Unit', 'Sale Unit', 'Purchase Unit', 'Brand', 'Category', 'Stock Qty', 'Unit Price (৳)', 'Status', 'Updated'].map((header) => <th key={header} className="whitespace-nowrap px-5 py-3"><span className="inline-flex items-center gap-1">{header}<ChevronsUpDown className="h-3 w-3 text-slate-300" /></span></th>)}
+                  {['Product', 'SKU / Code', 'Product Type', 'Tax', 'Tax Method', 'Is Variant', 'Base Unit', 'Sale Unit', 'Purchase Unit', 'Brand', 'Category', 'Stock Qty', 'Unit Price (৳)', 'Status', 'Updated'].map((header) => <th key={header} className="whitespace-nowrap px-5 py-3"><span className="inline-flex items-center gap-1">{header}<ChevronsUpDown className="h-3 w-3 text-slate-300" /></span></th>)}
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -803,6 +803,7 @@ export function ProductsPage({ mode = 'index', productId }: { mode?: ProductsPag
                       <td className="px-5 py-2.5 font-medium text-slate-700">{product.code}</td>
                       <td className="px-5 py-2.5"><ProductValueBadge label={product.type || 'Unknown'} capitalize /></td>
                       <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{productTaxLabel(product.tax)}</td>
+                      <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{productTaxMethodLabel(product.tax_method)}</td>
                       <td className="px-5 py-2.5"><VariantBadge value={product.is_variant} /></td>
                       <td className="px-5 py-2.5"><ProductValueBadge label={productUnitLabel(product.unit)} /></td>
                       <td className="px-5 py-2.5"><ProductValueBadge label={productUnitLabel(product.sale_unit)} /></td>

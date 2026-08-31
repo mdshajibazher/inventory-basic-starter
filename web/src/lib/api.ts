@@ -294,9 +294,11 @@ export type SalesInvoiceLinePayload = {
   batch_no?: string | null;
   qty: number;
   sale_unit?: number | string | null;
+  unit_price: number;
   net_unit_price: number;
   discount: number;
   tax_rate?: number | null;
+  tax_method?: number | null;
   tax: number;
   subtotal: number;
 };
@@ -584,9 +586,11 @@ function salesInvoiceFormData(payload: SalesInvoicePayload) {
   appendNullableNumberArray(formData, 'product_batch_id', payload.lines.map((line) => line.product_batch_id));
   appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
   appendNullableStringArray(formData, 'sale_unit', payload.lines.map((line) => line.sale_unit));
+  appendNumberArray(formData, 'unit_price', payload.lines.map((line) => line.unit_price));
   appendNumberArray(formData, 'net_unit_price', payload.lines.map((line) => line.net_unit_price));
   appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
   appendNullableNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNullableNumberArray(formData, 'tax_method', payload.lines.map((line) => line.tax_method));
   appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
   appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
   appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);
@@ -619,9 +623,11 @@ function returnInvoiceFormData(payload: ReturnInvoicePayload) {
   appendNullableStringArray(formData, 'batch_no', payload.lines.map((line) => line.batch_no));
   appendNumberArray(formData, 'qty', payload.lines.map((line) => line.qty));
   appendNullableStringArray(formData, 'sale_unit', payload.lines.map((line) => line.sale_unit));
+  appendNumberArray(formData, 'unit_price', payload.lines.map((line) => line.unit_price));
   appendNumberArray(formData, 'net_unit_price', payload.lines.map((line) => line.net_unit_price));
   appendNumberArray(formData, 'discount', payload.lines.map((line) => line.discount));
   appendNullableNumberArray(formData, 'tax_rate', payload.lines.map((line) => line.tax_rate));
+  appendNullableNumberArray(formData, 'tax_method', payload.lines.map((line) => line.tax_method));
   appendNumberArray(formData, 'tax', payload.lines.map((line) => line.tax));
   appendNumberArray(formData, 'subtotal', payload.lines.map((line) => line.subtotal));
   appendNullableNumber(formData, 'order_tax_rate', payload.order_tax_rate ?? 0);

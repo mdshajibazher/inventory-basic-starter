@@ -13,6 +13,7 @@ import { useAuth } from '@/context/auth-context';
 import { ActivityLogTimeline } from '@/components/activity-log';
 import { Pagination, TableWrap } from '@/components/resource-shell';
 import { ActionButton, Button, Field, Input, Modal, Select, Textarea } from '@/components/ui';
+import { calculateInvoiceLine, invoiceTaxRateEditable } from './invoice-line-calculation';
 
 type ProductOptions = {
   taxes?: Tax[];
@@ -29,6 +30,7 @@ type InvoiceLine = {
   price: string;
   discount: string;
   taxRate: string;
+  taxMethod: number;
 };
 
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
@@ -70,6 +72,7 @@ const emptyLine = (): InvoiceLine => ({
   price: '0',
   discount: '0',
   taxRate: '0',
+  taxMethod: 1,
 });
 
 const emptyForm = (kind: InvoiceKind = 'sales'): FormState => ({
@@ -282,6 +285,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
           batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, warehouseId) ?? '' : '',
           price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
           taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+          taxMethod: product.tax_method === 2 ? 2 : 1,
         };
       })
     );
@@ -434,9 +438,10 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
         batchNo: line.batch?.batch_no ?? '',
         variantId: idValue(line.variant_id ?? line.variant?.id),
         qty: String(line.qty ?? '1'),
-        price: String(line.net_unit_price ?? '0'),
+        price: String(line.entered_unit_price ?? line.net_unit_price ?? '0'),
         discount: String(line.discount ?? '0'),
         taxRate: String(line.tax_rate ?? '0'),
+        taxMethod: Number(line.tax_method ?? product?.tax_method) === 2 ? 2 : 1,
       };
     });
     setLines(nextLines.length ? nextLines : [emptyLine()]);
@@ -688,7 +693,7 @@ export function SalesInvoicesPage({ mode = 'index', invoiceId, kind = 'sales' }:
                     <Field label="Discount (৳)"><Input type="number" step="0.01" min="0" value={line.discount} onChange={(event) => updateLine(line.key, 'discount', event.target.value)} /></Field>
                   </div>
                   <div className={lineRequiresBatch ? 'xl:col-span-1' : 'xl:col-span-1'}>
-                    <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
+                    <Field label="Tax %"><Input type="number" step="0.01" min="0" value={line.taxRate} disabled={!invoiceTaxRateEditable(line.taxMethod)} onChange={(event) => updateLine(line.key, 'taxRate', event.target.value)} /></Field>
                   </div>
                   <div className={lineRequiresBatch ? 'xl:col-span-1' : 'xl:col-span-1'}>
                     <Field label="Line Total (৳)">
@@ -1200,9 +1205,11 @@ function buildPayload(
         batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
         qty: values.qty,
         sale_unit: product?.type === 'combo' ? 'n/a' : nullableId(line.unitId),
-        net_unit_price: values.price,
+        unit_price: values.unitPrice,
+        net_unit_price: values.netUnitPrice,
         discount: values.discount,
         tax_rate: values.taxRate,
+        tax_method: values.taxMethod,
         tax: values.tax,
         subtotal: values.subtotal,
       };
@@ -1249,14 +1256,15 @@ function calculateTotals(lines: InvoiceLine[], form: FormState) {
 }
 
 function calculateLine(line: InvoiceLine) {
-  const qty = numberValue(line.qty);
-  const price = numberValue(line.price);
-  const discount = numberValue(line.discount);
-  const taxRate = numberValue(line.taxRate);
-  const taxable = Math.max(0, price * qty - discount);
-  const tax = round2(taxable * taxRate / 100);
-  const subtotal = round2(taxable + tax);
-  return { qty, price, discount, taxRate, tax, subtotal };
+  const result = calculateInvoiceLine({
+    qty: numberValue(line.qty),
+    unitPrice: numberValue(line.price),
+    discount: numberValue(line.discount),
+    taxRate: numberValue(line.taxRate),
+    taxMethod: line.taxMethod,
+  });
+
+  return { ...result, price: result.unitPrice };
 }
 
 function paymentStatus(mode: PaymentMode) {

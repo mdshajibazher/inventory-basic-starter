@@ -8,6 +8,7 @@ import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type ReturnInvoicePayload, type SalesInvoicePayload } from '@/src/lib/api';
 import type { Customer, Product, ProductVariant, Tax, Unit, Warehouse } from '@/src/types';
+import { calculateInvoiceLine, invoiceTaxRateEditable } from '@/src/invoice-line-calculation';
 
 type ProductOptions = {
   taxes?: Tax[];
@@ -24,6 +25,7 @@ type InvoiceLine = {
   price: string;
   discount: string;
   taxRate: string;
+  taxMethod: number;
 };
 
 type PaymentMode = 'unpaid' | 'partial' | 'paid';
@@ -62,6 +64,7 @@ const emptyLine = (): InvoiceLine => ({
   price: '0',
   discount: '0',
   taxRate: '0',
+  taxMethod: 1,
 });
 
 type InvoiceScreenMode = 'index' | 'create' | 'details' | 'edit';
@@ -245,6 +248,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
           batchNo: isBatchProduct(product) ? firstBatchNoForProduct(product, form.warehouseId) ?? '' : '',
           price: kind === 'sales' ? String(unitPriceForProductUnit(product, unitId, units)) : line.price,
           taxRate: String(product.tax?.rate ?? taxForProduct(product, taxes)),
+          taxMethod: product.tax_method === 2 ? 2 : 1,
         };
       })
     );
@@ -383,9 +387,10 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
         unitId: normalizeId(line.sale_unit_id ?? line.unit?.id) ?? defaultProductUnit(product, productOptionsForFamily(product, units), 'sale'),
         qty: String(line.qty ?? '1'),
         batchNo: line.batch?.batch_no ?? '',
-        price: String(line.net_unit_price ?? '0'),
+        price: String(line.entered_unit_price ?? line.net_unit_price ?? '0'),
         discount: String(line.discount ?? '0'),
         taxRate: String(line.tax_rate ?? '0'),
+        taxMethod: Number(line.tax_method ?? product?.tax_method) === 2 ? 2 : 1,
       };
     });
     setLines(nextLines.length ? nextLines : [emptyLine()]);
@@ -565,7 +570,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
                 ) : null}
                 <TextInput mode="outlined" label="Unit price" keyboardType="numeric" value={line.price} onChangeText={(value) => updateLine(line.key, 'price', value)} style={styles.formField} />
                 <TextInput mode="outlined" label="Discount" keyboardType="numeric" value={line.discount} onChangeText={(value) => updateLine(line.key, 'discount', value)} style={styles.formField} />
-                <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
+                <TextInput mode="outlined" label="Tax %" keyboardType="numeric" value={line.taxRate} disabled={!invoiceTaxRateEditable(line.taxMethod)} onChangeText={(value) => updateLine(line.key, 'taxRate', value)} style={styles.formField} />
               </View>
               <Text variant="bodyMedium" style={styles.lineTotal}>Line total: {money(lineTotal)}</Text>
             </View>
@@ -1099,9 +1104,11 @@ function buildPayload(
         batch_no: isBatchProduct(product) ? nullableText(line.batchNo) : null,
         qty: values.qty,
         sale_unit: product?.type === 'combo' ? 'n/a' : line.unitId,
-        net_unit_price: values.price,
+        unit_price: values.unitPrice,
+        net_unit_price: values.netUnitPrice,
         discount: values.discount,
         tax_rate: values.taxRate,
+        tax_method: values.taxMethod,
         tax: values.tax,
         subtotal: values.subtotal,
       };
@@ -1149,14 +1156,15 @@ function calculateTotals(lines: InvoiceLine[], form: FormState) {
 }
 
 function calculateLine(line: InvoiceLine) {
-  const qty = numberValue(line.qty);
-  const price = numberValue(line.price);
-  const discount = numberValue(line.discount);
-  const taxRate = numberValue(line.taxRate);
-  const taxable = Math.max(0, price * qty - discount);
-  const tax = round2(taxable * taxRate / 100);
-  const subtotal = round2(taxable + tax);
-  return { qty, price, discount, taxRate, tax, subtotal };
+  const result = calculateInvoiceLine({
+    qty: numberValue(line.qty),
+    unitPrice: numberValue(line.price),
+    discount: numberValue(line.discount),
+    taxRate: numberValue(line.taxRate),
+    taxMethod: line.taxMethod,
+  });
+
+  return { ...result, price: result.unitPrice };
 }
 
 function paymentStatus(mode: PaymentMode) {

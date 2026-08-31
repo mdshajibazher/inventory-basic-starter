@@ -47,12 +47,16 @@ class StoreSaleRequest extends FormRequest
             'qty.*' => ['required', 'numeric', 'gt:0'],
             'sale_unit' => ['nullable', 'array'],
             'sale_unit.*' => ['nullable'],
+            'unit_price' => ['nullable', 'array'],
+            'unit_price.*' => ['nullable', 'numeric', 'min:0'],
             'net_unit_price' => ['required', 'array', 'min:1'],
             'net_unit_price.*' => ['required', 'numeric', 'min:0'],
             'discount' => ['required', 'array', 'min:1'],
             'discount.*' => ['required', 'numeric', 'min:0'],
             'tax_rate' => ['nullable', 'array'],
             'tax_rate.*' => ['nullable', 'numeric', 'min:0'],
+            'tax_method' => ['nullable', 'array'],
+            'tax_method.*' => ['nullable', 'integer', Rule::in([1, 2])],
             'tax' => ['required', 'array', 'min:1'],
             'tax.*' => ['required', 'numeric', 'min:0'],
             'subtotal' => ['required', 'array', 'min:1'],
@@ -124,7 +128,7 @@ class StoreSaleRequest extends FormRequest
                 }
             }
 
-            foreach (['product_code', 'variant_id', 'product_batch_id', 'batch_no', 'sale_unit', 'tax_rate'] as $field) {
+            foreach (['product_code', 'variant_id', 'product_batch_id', 'batch_no', 'sale_unit', 'unit_price', 'tax_rate', 'tax_method'] as $field) {
                 if (! $this->has($field)) {
                     continue;
                 }
