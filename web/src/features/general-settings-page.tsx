@@ -227,10 +227,10 @@ export function GeneralSettingsPage() {
             </Field>
           </div>
           <div className="grid gap-3 rounded-md border border-neutral-200 p-3">
-            <h3 className="text-sm font-semibold text-neutral-900">Customer Notifications On Create</h3>
+            <h3 className="text-sm font-semibold text-neutral-900">Customer Notifications On Approval</h3>
             <div className="grid gap-3 sm:grid-cols-2">
               <ToggleRow label="Enable Customer Sales Invoice SMS Notification" checked={form.customerSalesInvoiceSmsNotificationEnabled} onChange={(value) => setValue('customerSalesInvoiceSmsNotificationEnabled', value)} />
-              <ToggleRow label="Enable Customer Sales Invoice Email Notification" checked={form.customerSalesInvoiceMailNotificationEnabled} onChange={(value) => setValue('customerSalesInvoiceMailNotificationEnabled', value)} />
+              <ToggleRow label="Email Approved Sales Invoices to Customers" checked={form.customerSalesInvoiceMailNotificationEnabled} onChange={(value) => setValue('customerSalesInvoiceMailNotificationEnabled', value)} />
               <ToggleRow label="Enable Customer Return Invoice SMS Notification" checked={form.customerReturnInvoiceSmsNotificationEnabled} onChange={(value) => setValue('customerReturnInvoiceSmsNotificationEnabled', value)} />
               <ToggleRow label="Enable Customer Return Invoice Email Notification" checked={form.customerReturnInvoiceMailNotificationEnabled} onChange={(value) => setValue('customerReturnInvoiceMailNotificationEnabled', value)} />
             </div>

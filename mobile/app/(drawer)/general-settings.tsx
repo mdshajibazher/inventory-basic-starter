@@ -221,9 +221,9 @@ export default function GeneralSettingsScreen() {
             <TextInput mode="outlined" label="Sender ID" autoCapitalize="none" value={form.bulksmsbdSenderId} onChangeText={(value) => updateForm('bulksmsbdSenderId', value)} />
           </View>
           <View style={styles.notificationBox}>
-            <Text variant="titleSmall">Customer Notifications On Create</Text>
+            <Text variant="titleSmall">Customer Notifications On Approval</Text>
             <ToggleRow label="Enable Customer Sales Invoice SMS Notification" value={form.customerSalesInvoiceSmsNotificationEnabled} onValueChange={(value) => updateForm('customerSalesInvoiceSmsNotificationEnabled', value)} />
-            <ToggleRow label="Enable Customer Sales Invoice Email Notification" value={form.customerSalesInvoiceMailNotificationEnabled} onValueChange={(value) => updateForm('customerSalesInvoiceMailNotificationEnabled', value)} />
+            <ToggleRow label="Email Approved Sales Invoices to Customers" value={form.customerSalesInvoiceMailNotificationEnabled} onValueChange={(value) => updateForm('customerSalesInvoiceMailNotificationEnabled', value)} />
             <ToggleRow label="Enable Customer Return Invoice SMS Notification" value={form.customerReturnInvoiceSmsNotificationEnabled} onValueChange={(value) => updateForm('customerReturnInvoiceSmsNotificationEnabled', value)} />
             <ToggleRow label="Enable Customer Return Invoice Email Notification" value={form.customerReturnInvoiceMailNotificationEnabled} onValueChange={(value) => updateForm('customerReturnInvoiceMailNotificationEnabled', value)} />
           </View>
