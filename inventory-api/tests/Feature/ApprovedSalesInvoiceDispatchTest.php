@@ -480,6 +480,42 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         $this->assertEquals(125.0, $revision->fresh()->after_snapshot['invoice']['grand_total']);
     }
 
+    public function test_approval_service_creates_a_first_revision_for_a_legacy_pending_sale_without_one(): void
+    {
+        $customer = Customer::query()->create([
+            'name' => 'Legacy Customer',
+            'email' => ' legacy@example.test ',
+        ]);
+        $user = User::query()->create([
+            'name' => 'Legacy Creator',
+            'email' => 'legacy-creator@example.test',
+            'password' => 'unused',
+        ]);
+        $sale = Sale::query()->create([
+            'reference_no' => 'SI-2026-LEGACY',
+            'customer_id' => $customer->id,
+            'user_id' => $user->id,
+            'grand_total' => 125,
+            'total_price' => 125,
+            'sale_date' => '2026-08-30',
+            'approval_status' => 'pending',
+        ]);
+        $this->setting(emailEnabled: true, approverIds: [$user->id]);
+
+        $approved = (new ApprovalService($this->revisions))->approveSale($sale, $user);
+
+        $revision = $approved->getRelation('approvedCustomerEmailRevision');
+        $this->assertInstanceOf(SalesInvoiceRevision::class, $revision);
+        $this->assertSame(1, $revision->revision_number);
+        $this->assertSame(SalesInvoiceRevision::KIND_CREATED, $revision->kind);
+        $this->assertNull($revision->before_snapshot);
+        $this->assertSame('legacy@example.test', $revision->recipient_email);
+        $this->assertNull($revision->changes);
+        $this->assertSame(SalesInvoiceRevision::STATUS_PENDING, $revision->delivery_status);
+        $this->assertTrue($approved->approved_at->equalTo($revision->approved_at));
+        $this->assertSame('approved', $revision->after_snapshot['invoice']['approval_status']);
+    }
+
     public function test_controller_queues_the_finalized_revision_even_when_the_live_sale_changes_after_approval(): void
     {
         Queue::fake();

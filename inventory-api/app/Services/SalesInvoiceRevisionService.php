@@ -110,7 +110,19 @@ class SalesInvoiceRevisionService
                     ->first();
 
                 if ($finalized === null) {
-                    throw new LogicException('No pending sales invoice revision exists.');
+                    $after = $this->snapshots->snapshot($lockedSale->fresh());
+                    $recipient = data_get($after, 'customer.email');
+
+                    return $lockedSale->customerEmailRevisions()->create([
+                        'revision_number' => 1,
+                        'kind' => SalesInvoiceRevision::KIND_CREATED,
+                        'before_snapshot' => null,
+                        'after_snapshot' => $after,
+                        'changes' => null,
+                        'recipient_email' => is_string($recipient) ? trim($recipient) : null,
+                        'approved_at' => $lockedSale->approved_at ?? now(),
+                        'delivery_status' => SalesInvoiceRevision::STATUS_PENDING,
+                    ]);
                 }
 
                 return $finalized;
