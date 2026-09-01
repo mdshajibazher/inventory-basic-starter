@@ -6,6 +6,7 @@ use App\Models\Biller;
 use App\Models\Category;
 use App\Models\CustomerGroup;
 use App\Models\User;
+use App\Services\SensitivePermissionCatalog;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
@@ -18,7 +19,9 @@ class DatabaseSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $inventoryPermissions = [
+        $permissionCatalog = app(SensitivePermissionCatalog::class);
+
+        $inventoryPermissions = $permissionCatalog->filterOrdinaryPermissions([
             'products-index',
             'products-add',
             'products-edit',
@@ -94,14 +97,14 @@ class DatabaseSeeder extends Seeder
             'transfers-edit',
             'transfers-delete',
             'reports-profit',
-        ];
+        ]);
 
-        $userPermissions = [
+        $userPermissions = $permissionCatalog->filterOrdinaryPermissions([
             'users-index',
             'users-add',
             'users-edit',
             'users-delete',
-        ];
+        ]);
 
         $this->call(BillerSeeder::class);
         Permission::query()
