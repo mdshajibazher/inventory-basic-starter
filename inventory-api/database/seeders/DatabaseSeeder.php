@@ -128,6 +128,7 @@ class DatabaseSeeder extends Seeder
         );
         $adminRole->forceFill(['guard_name' => 'web', 'is_active' => true])->save();
         $adminRole->permissions()->sync($permissions->pluck('id')->all());
+        $this->call(SensitivePermissionSeeder::class);
 
         $dummyRole = Role::query()->firstOrCreate(
             ['name' => 'Dummy'],
@@ -152,12 +153,12 @@ class DatabaseSeeder extends Seeder
         );
 
         $user_data = [
-                'name' => 'Inventory Admin',
-                'password' => Hash::make('password'),
-                'phone' => '01700817934',
-                'biller_id' => Biller::first()?->id,
-                'role_id' => $adminRole->id,
-                'is_active' => 1,
+            'name' => 'Inventory Admin',
+            'password' => Hash::make('password'),
+            'phone' => '01700817934',
+            'biller_id' => Biller::first()?->id,
+            'role_id' => $adminRole->id,
+            'is_active' => 1,
         ];
         $user = User::query()->firstOrCreate(
             ['email' => 'admin@example.com'],
