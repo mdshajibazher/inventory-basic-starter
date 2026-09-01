@@ -25,10 +25,6 @@ type FormState = {
   bulksmsbdApiUrl: string;
   bulksmsbdApiKey: string;
   bulksmsbdSenderId: string;
-  salesInvoiceApproverIds: number[];
-  returnInvoiceApproverIds: number[];
-  purchaseInvoiceApproverIds: number[];
-  paymentApproverIds: number[];
   salesInvoiceMailNotificationEnabled: boolean;
   salesInvoiceMailNotificationUserIds: number[];
   salesInvoiceSmsNotificationEnabled: boolean;
@@ -66,10 +62,6 @@ const emptyForm: FormState = {
   bulksmsbdApiUrl: 'http://bulksmsbd.net/api/smsapi',
   bulksmsbdApiKey: '',
   bulksmsbdSenderId: '',
-  salesInvoiceApproverIds: [],
-  returnInvoiceApproverIds: [],
-  purchaseInvoiceApproverIds: [],
-  paymentApproverIds: [],
   salesInvoiceMailNotificationEnabled: false,
   salesInvoiceMailNotificationUserIds: [],
   salesInvoiceSmsNotificationEnabled: false,
@@ -101,9 +93,7 @@ export function GeneralSettingsPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const canAdd = hasPermission('general-settings-add');
-  const canEdit = hasPermission('general-settings-edit');
-  const canSave = setting ? canEdit : canAdd;
+  const canSave = hasPermission('super-user');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,7 +112,7 @@ export function GeneralSettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!hasPermission('general-settings-index')) router.replace('/dashboard');
+    if (!hasPermission('super-user')) router.replace('/dashboard');
   }, [hasPermission, router]);
 
   useEffect(() => {
@@ -202,16 +192,6 @@ export function GeneralSettingsPage() {
             }}
           />
         </div>
-
-        <section className="grid gap-4 border-t border-neutral-200 pt-4">
-          <h2 className="text-base font-semibold">Approvals</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <ApproverPicker label="Who can approve sales invoice" users={users} selectedIds={form.salesInvoiceApproverIds} onChange={(ids) => setValue('salesInvoiceApproverIds', ids)} />
-            <ApproverPicker label="Who can approve return invoice" users={users} selectedIds={form.returnInvoiceApproverIds} onChange={(ids) => setValue('returnInvoiceApproverIds', ids)} />
-            <ApproverPicker label="Who can approve purchase invoice" users={users} selectedIds={form.purchaseInvoiceApproverIds} onChange={(ids) => setValue('purchaseInvoiceApproverIds', ids)} />
-            <ApproverPicker label="Who can approve payments" users={users} selectedIds={form.paymentApproverIds} onChange={(ids) => setValue('paymentApproverIds', ids)} />
-          </div>
-        </section>
 
         <section className="grid gap-4 border-t border-neutral-200 pt-4">
           <h2 className="text-base font-semibold">Notifications</h2>
@@ -326,10 +306,6 @@ function toForm(setting: GeneralSetting): FormState {
     bulksmsbdApiUrl: setting.bulksmsbd_api_url ?? 'http://bulksmsbd.net/api/smsapi',
     bulksmsbdApiKey: setting.bulksmsbd_api_key ?? '',
     bulksmsbdSenderId: setting.bulksmsbd_sender_id ?? '',
-    salesInvoiceApproverIds: setting.sales_invoice_approver_ids ?? [],
-    returnInvoiceApproverIds: setting.return_invoice_approver_ids ?? [],
-    purchaseInvoiceApproverIds: setting.purchase_invoice_approver_ids ?? [],
-    paymentApproverIds: setting.payment_approver_ids ?? [],
     salesInvoiceMailNotificationEnabled: Boolean(setting.sales_invoice_mail_notification_enabled),
     salesInvoiceMailNotificationUserIds: setting.sales_invoice_mail_notification_user_ids ?? [],
     salesInvoiceSmsNotificationEnabled: Boolean(setting.sales_invoice_sms_notification_enabled),
@@ -367,10 +343,6 @@ function payload(form: FormState): GeneralSettingPayload {
     bulksmsbd_api_url: nullableText(form.bulksmsbdApiUrl),
     bulksmsbd_api_key: nullableText(form.bulksmsbdApiKey),
     bulksmsbd_sender_id: nullableText(form.bulksmsbdSenderId),
-    sales_invoice_approver_ids: form.salesInvoiceApproverIds,
-    return_invoice_approver_ids: form.returnInvoiceApproverIds,
-    purchase_invoice_approver_ids: form.purchaseInvoiceApproverIds,
-    payment_approver_ids: form.paymentApproverIds,
     sales_invoice_mail_notification_enabled: form.salesInvoiceMailNotificationEnabled,
     sales_invoice_mail_notification_user_ids: form.salesInvoiceMailNotificationUserIds,
     sales_invoice_sms_notification_enabled: form.salesInvoiceSmsNotificationEnabled,
@@ -476,12 +448,12 @@ function NotificationChannel({
         <span>{label}</span>
         <Switch checked={enabled} onCheckedChange={onEnabled} />
       </label>
-      {enabled ? <ApproverPicker label={pickerLabel} users={users} selectedIds={selectedIds} onChange={onUsers} /> : null}
+      {enabled ? <UserPicker label={pickerLabel} users={users} selectedIds={selectedIds} onChange={onUsers} /> : null}
     </div>
   );
 }
 
-function ApproverPicker({
+function UserPicker({
   label,
   users,
   selectedIds,
@@ -537,7 +509,7 @@ function ApproverPicker({
             </span>
           ))
         ) : (
-          <span className="px-1 text-neutral-400">{users.length ? 'Select approvers' : 'No active users found'}</span>
+          <span className="px-1 text-neutral-400">{users.length ? 'Select recipients' : 'No active users found'}</span>
         )}
       </button>
       {open ? (

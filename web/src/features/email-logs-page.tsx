@@ -36,7 +36,7 @@ export function EmailLogsPage() {
   }, [debouncedSearch, page, perPage]);
 
   useEffect(() => {
-    if (!hasPermission('general-settings-index')) router.replace('/dashboard');
+    if (!hasPermission('super-user')) router.replace('/dashboard');
   }, [hasPermission, router]);
 
   useEffect(() => {

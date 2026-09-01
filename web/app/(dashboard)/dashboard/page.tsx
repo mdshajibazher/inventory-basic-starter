@@ -61,7 +61,7 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="mt-1 text-sm text-neutral-500">Overview of the current inventory.</p>
         </div>
-        {hasPermission('general-settings-edit') ? (
+        {hasPermission('super-user') ? (
           <Button type="button" variant="danger" className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={() => setClearOpen(true)}>
             <Trash2 className="h-4 w-4" />
             Clear Transactions

@@ -69,13 +69,13 @@ const paymentItems: NavItem[] = [
 const peopleItems: NavItem[] = [
   { href: '/customers', label: 'Customers', icon: Users, permission: 'customers-index' },
   { href: '/suppliers', label: 'Suppliers', icon: Building2, permission: 'suppliers-index' },
-  { href: '/users', label: 'Users', icon: Users, permission: 'users-index' },
+  { href: '/users', label: 'Users', icon: Users, permission: ['users-index', 'super-user'] },
 ];
 
 const settingsItems: NavItem[] = [
-  { href: '/general-settings', label: 'General Settings', icon: Settings, permission: 'general-settings-index' },
-  { href: '/email-logs', label: 'Email Logs', icon: Mail, permission: 'general-settings-index' },
-  { href: '/sms-logs', label: 'SMS Logs', icon: MessageSquareText, permission: 'general-settings-index' },
+  { href: '/general-settings', label: 'General Settings', icon: Settings, permission: 'super-user' },
+  { href: '/email-logs', label: 'Email Logs', icon: Mail, permission: 'super-user' },
+  { href: '/sms-logs', label: 'SMS Logs', icon: MessageSquareText, permission: 'super-user' },
   { href: '/brands', label: 'Brands', icon: Tags, permission: 'brands-index' },
   { href: '/branches', label: 'Branches', icon: Building2, permission: 'branches-index' },
   { href: '/categories', label: 'Categories', icon: ChevronRight, permission: 'categories-index' },
@@ -84,7 +84,7 @@ const settingsItems: NavItem[] = [
   { href: '/currencies', label: 'Currencies', icon: CircleDollarSign, permission: 'currencies-index' },
   { href: '/accounts', label: 'Accounts', icon: CircleDollarSign, permission: 'accounts-index' },
   { href: '/warehouses', label: 'Warehouses', icon: Warehouse, permission: 'warehouses-index' },
-  { href: '/roles', label: 'Roles', icon: Shield, permission: 'users-index' },
+  { href: '/roles', label: 'Roles', icon: Shield, permission: ['users-index', 'super-user'] },
   { href: '/profile', label: 'Profile', icon: UserCircle },
 ];
 

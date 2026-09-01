@@ -1,5 +1,5 @@
 import { tokenStorage } from './storage';
-import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, Product, ProductSummary, ProfitReport, ProfitReportDetail, SmsLog, StockTransfer } from './types';
+import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, Product, ProductSummary, ProfitReport, ProfitReportDetail, SensitivePermissionCatalog, SmsLog, StockTransfer } from './types';
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -169,10 +169,6 @@ export type GeneralSettingPayload = {
   bulksmsbd_api_url?: string | null;
   bulksmsbd_api_key?: string | null;
   bulksmsbd_sender_id?: string | null;
-  sales_invoice_approver_ids?: number[];
-  return_invoice_approver_ids?: number[];
-  purchase_invoice_approver_ids?: number[];
-  payment_approver_ids?: number[];
   sales_invoice_mail_notification_enabled?: boolean;
   sales_invoice_mail_notification_user_ids?: number[];
   sales_invoice_sms_notification_enabled?: boolean;
@@ -485,10 +481,6 @@ function generalSettingFormData(payload: GeneralSettingPayload) {
   appendNullableString(formData, 'bulksmsbd_api_url', payload.bulksmsbd_api_url);
   appendNullableString(formData, 'bulksmsbd_api_key', payload.bulksmsbd_api_key);
   appendNullableString(formData, 'bulksmsbd_sender_id', payload.bulksmsbd_sender_id);
-  appendNumberPayloadArray(formData, 'sales_invoice_approver_ids', payload.sales_invoice_approver_ids);
-  appendNumberPayloadArray(formData, 'return_invoice_approver_ids', payload.return_invoice_approver_ids);
-  appendNumberPayloadArray(formData, 'purchase_invoice_approver_ids', payload.purchase_invoice_approver_ids);
-  appendNumberPayloadArray(formData, 'payment_approver_ids', payload.payment_approver_ids);
   appendBoolean(formData, 'sales_invoice_mail_notification_enabled', payload.sales_invoice_mail_notification_enabled);
   appendNumberPayloadArray(formData, 'sales_invoice_mail_notification_user_ids', payload.sales_invoice_mail_notification_user_ids);
   appendBoolean(formData, 'sales_invoice_sms_notification_enabled', payload.sales_invoice_sms_notification_enabled);
@@ -819,12 +811,17 @@ export const api = {
   updateUser: (id: number, payload: UserPayload) => request<{ data: unknown }>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   updateUserRoles: (id: number, payload: { roles: number[] }) => request<{ data: unknown }>(`/users/${id}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
   updateUserPermissions: (id: number, payload: { permissions: string[] }) => request<{ data: unknown }>(`/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(payload) }),
+  sensitivePermissions: () => request<SensitivePermissionCatalog>('/sensitive-permissions'),
+  updateUserSensitivePermissions: (id: number, payload: { permissions: string[]; acknowledged?: true }) =>
+    request<{ data: unknown }>(`/users/${id}/sensitive-permissions`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteUser: (id: number) => request<{ message: string }>(`/users/${id}`, { method: 'DELETE' }),
   roles: (params: { page?: number; perPage?: number; search?: string } = {}) =>
     request<PaginatedResponse<unknown>>(`/roles${queryString({ page: params.page, per_page: params.perPage, search: params.search })}`),
   permissions: () => request<{ data: unknown[] }>('/roles/permissions'),
   createRole: (payload: RolePayload) => request<{ data: unknown }>('/roles', { method: 'POST', body: JSON.stringify(payload) }),
   updateRole: (id: number, payload: RolePayload) => request<{ data: unknown }>(`/roles/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  updateRoleSensitivePermissions: (id: number, payload: { permissions: string[]; acknowledged?: true }) =>
+    request<{ data: unknown }>(`/roles/${id}/sensitive-permissions`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteRole: (id: number) => request<{ message: string }>(`/roles/${id}`, { method: 'DELETE' }),
   brands: (params: { page?: number; perPage?: number; search?: string; activeOnly?: boolean } = {}) =>
     request<PaginatedResponse<unknown>>(`/brands${queryString({ page: params.page, per_page: params.perPage, search: params.search, active_only: params.activeOnly })}`),
