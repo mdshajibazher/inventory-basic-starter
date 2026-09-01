@@ -32,4 +32,25 @@ class EffectivePermissionService
 
         return false;
     }
+
+    public function permissionNames(User $user): array
+    {
+        if (! $user->canAccessSystem()) {
+            return [];
+        }
+
+        $direct = $user->permissions()->pluck('name');
+        $inherited = $user->roles()
+            ->where('roles.is_active', true)
+            ->with('permissions:id,name')
+            ->get()
+            ->flatMap(fn ($role) => $role->permissions->pluck('name'));
+
+        return $direct
+            ->merge($inherited)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
 }

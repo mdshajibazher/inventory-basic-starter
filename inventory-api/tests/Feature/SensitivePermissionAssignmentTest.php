@@ -5,9 +5,11 @@ namespace Tests\Feature;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\SensitivePermissionAssignmentService;
 use App\Services\SensitivePermissionCatalog;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\PermissionRegistrar;
@@ -128,6 +130,31 @@ class SensitivePermissionAssignmentTest extends TestCase
         $this->assertFalse($target->fresh()->hasDirectPermission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
     }
 
+    public function test_assignment_service_rechecks_additions_after_locking_the_target(): void
+    {
+        $actor = $this->superUser();
+        $target = $this->user();
+        $permission = $this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS);
+        $target->givePermissionTo($permission);
+        $requestedPermissions = [SensitivePermissionCatalog::APPROVAL_PAYMENTS];
+
+        $target->revokePermissionTo($permission);
+
+        try {
+            app(SensitivePermissionAssignmentService::class)->syncUser(
+                $target,
+                $requestedPermissions,
+                $actor,
+                false,
+            );
+            $this->fail('An addition created after the request snapshot was accepted without acknowledgment.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('acknowledged', $exception->errors());
+        }
+
+        $this->assertFalse($target->fresh()->hasDirectPermission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+    }
+
     public function test_user_update_returns_direct_inherited_and_effective_sensitive_permissions(): void
     {
         $actor = $this->superUser();
@@ -158,6 +185,25 @@ class SensitivePermissionAssignmentTest extends TestCase
             ->assertJsonPath('data.effective_permissions.0', SensitivePermissionCatalog::APPROVAL_SALES_INVOICE)
             ->assertJsonPath('data.effective_permissions.1', SensitivePermissionCatalog::APPROVAL_PAYMENTS)
             ->assertJsonCount(2, 'data.effective_permissions');
+    }
+
+    #[DataProvider('inactiveUserStates')]
+    public function test_inactive_or_deleted_user_payload_has_no_effective_sensitive_permissions(
+        bool $isActive,
+        bool $isDeleted,
+    ): void {
+        $target = $this->user();
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $role = $this->role('Sales approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_SALES_INVOICE));
+        $target->assignRole($role);
+        $target->forceFill(['is_active' => $isActive, 'is_deleted' => $isDeleted])->save();
+
+        $payload = app(SensitivePermissionAssignmentService::class)->userPayload($target->fresh());
+
+        $this->assertSame([SensitivePermissionCatalog::APPROVAL_PAYMENTS], $payload['direct_permissions']);
+        $this->assertSame(SensitivePermissionCatalog::APPROVAL_SALES_INVOICE, $payload['inherited_permissions'][0]['name']);
+        $this->assertSame([], $payload['effective_permissions']);
     }
 
     public function test_role_sensitive_changes_are_audited_with_actor_target_and_diff(): void
@@ -215,6 +261,14 @@ class SensitivePermissionAssignmentTest extends TestCase
         return [
             'user' => ['/api/users/{user}/sensitive-permissions'],
             'role' => ['/api/roles/{role}/sensitive-permissions'],
+        ];
+    }
+
+    public static function inactiveUserStates(): array
+    {
+        return [
+            'inactive' => [false, false],
+            'deleted' => [true, true],
         ];
     }
 

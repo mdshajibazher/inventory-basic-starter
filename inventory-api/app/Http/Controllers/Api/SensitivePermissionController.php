@@ -10,7 +10,6 @@ use App\Services\SensitivePermissionCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 
 class SensitivePermissionController extends Controller
 {
@@ -32,39 +31,45 @@ class SensitivePermissionController extends Controller
 
     public function updateRole(Request $request, Role $role): JsonResponse
     {
-        $permissions = $this->validatedPermissions($request, $this->assignments->directPermissionNames($role));
+        $data = $this->validatedData($request);
 
         return response()->json([
             'message' => 'Sensitive permissions updated successfully.',
-            'data' => $this->assignments->syncRole($role, $permissions, $request->user()),
+            'data' => $this->assignments->syncRole(
+                $role,
+                $data['permissions'],
+                $request->user(),
+                $data['acknowledged'],
+            ),
         ]);
     }
 
     public function updateUser(Request $request, User $user): JsonResponse
     {
-        $permissions = $this->validatedPermissions($request, $this->assignments->directPermissionNames($user));
+        $data = $this->validatedData($request);
 
         return response()->json([
             'message' => 'Sensitive permissions updated successfully.',
-            'data' => $this->assignments->syncUser($user, $permissions, $request->user()),
+            'data' => $this->assignments->syncUser(
+                $user,
+                $data['permissions'],
+                $request->user(),
+                $data['acknowledged'],
+            ),
         ]);
     }
 
-    private function validatedPermissions(Request $request, array $current): array
+    private function validatedData(Request $request): array
     {
         $data = $request->validate([
             'permissions' => ['present', 'array'],
             'permissions.*' => ['string', 'distinct', Rule::in($this->catalog->all())],
             'acknowledged' => ['nullable', 'boolean'],
         ]);
-        $permissions = $this->catalog->ordered($data['permissions']);
 
-        if (array_diff($permissions, $current) !== [] && ! ($data['acknowledged'] ?? false)) {
-            throw ValidationException::withMessages([
-                'acknowledged' => ['Sensitive permission additions must be acknowledged.'],
-            ]);
-        }
-
-        return $permissions;
+        return [
+            'permissions' => $this->catalog->ordered($data['permissions']),
+            'acknowledged' => (bool) ($data['acknowledged'] ?? false),
+        ];
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Biller;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\EffectivePermissionService;
 use App\Services\OrdinaryPermissionService;
 use App\Services\SensitivePermissionCatalog;
 use App\Services\SuperUserInvariantService;
@@ -21,27 +22,35 @@ class UserController extends Controller
         private readonly SensitivePermissionCatalog $catalog,
         private readonly OrdinaryPermissionService $ordinaryPermissions,
         private readonly SuperUserInvariantService $superUsers,
+        private readonly EffectivePermissionService $effectivePermissions,
     ) {}
 
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
+        $canSearchSensitive = $request->user()
+            && $this->effectivePermissions->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER);
+        $excludedPermissionNames = [...$this->catalog->all(), ...$this->catalog->retiredGeneralSettingsPermissions()];
 
         return UserResource::collection(
             User::query()
                 ->with('roles:id,name', 'currentBiller:id,name')
                 ->where('is_deleted', false)
-                ->when($request->filled('search'), function ($query) use ($request) {
+                ->when($request->filled('search'), function ($query) use ($request, $canSearchSensitive, $excludedPermissionNames) {
                     $terms = preg_split('/\s+/', trim((string) $request->string('search')), -1, PREG_SPLIT_NO_EMPTY);
 
                     foreach ($terms as $term) {
-                        $query->where(function ($subQuery) use ($term) {
+                        $query->where(function ($subQuery) use ($term, $canSearchSensitive, $excludedPermissionNames) {
                             $subQuery->where('name', 'like', "%{$term}%")
                                 ->orWhere('email', 'like', "%{$term}%")
                                 ->orWhere('phone', 'like', "%{$term}%")
                                 ->orWhereHas('roles', fn ($roleQuery) => $roleQuery->where('name', 'like', "%{$term}%"))
-                                ->orWhereHas('roles.permissions', fn ($permissionQuery) => $permissionQuery->where('name', 'like', "%{$term}%"))
-                                ->orWhereHas('permissions', fn ($permissionQuery) => $permissionQuery->where('name', 'like', "%{$term}%"));
+                                ->orWhereHas('roles.permissions', fn ($permissionQuery) => $permissionQuery
+                                    ->where('name', 'like', "%{$term}%")
+                                    ->when(! $canSearchSensitive, fn ($filteredQuery) => $filteredQuery->whereNotIn('name', $excludedPermissionNames)))
+                                ->orWhereHas('permissions', fn ($permissionQuery) => $permissionQuery
+                                    ->where('name', 'like', "%{$term}%")
+                                    ->when(! $canSearchSensitive, fn ($filteredQuery) => $filteredQuery->whereNotIn('name', $excludedPermissionNames)));
                         });
                     }
                 })
@@ -51,11 +60,21 @@ class UserController extends Controller
         );
     }
 
-    public function options()
+    public function options(Request $request)
     {
+        $canManageSensitive = $request->user()
+            && $this->effectivePermissions->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER);
+
         return response()->json([
             'data' => [
-                'roles' => Role::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
+                'roles' => Role::query()
+                    ->where('is_active', true)
+                    ->when(! $canManageSensitive, fn ($query) => $query->whereDoesntHave(
+                        'permissions',
+                        fn ($permissionQuery) => $permissionQuery->whereIn('name', $this->catalog->all()),
+                    ))
+                    ->orderBy('name')
+                    ->get(['id', 'name']),
                 'permissions' => Permission::query()
                     ->whereNotIn('name', [...$this->catalog->all(), ...$this->catalog->retiredGeneralSettingsPermissions()])
                     ->orderBy('name')
@@ -69,12 +88,14 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $user = DB::transaction(function () use ($request) {
+            $this->superUsers->lockState();
             $data = $this->validatedData($request);
             $roleIds = $data['roles'] ?? [];
             $permissions = $data['permissions'] ?? [];
             unset($data['roles'], $data['permissions']);
 
             $this->ordinaryPermissions->assertOrdinary($permissions);
+            $this->ordinaryPermissions->assertNoSensitiveRoleAdditions([], $roleIds);
 
             $user = User::create($data + ['is_active' => true, 'is_deleted' => false]);
             $this->syncAccess($user, $roleIds, $permissions);
@@ -107,6 +128,13 @@ class UserController extends Controller
 
             if ($permissions !== null) {
                 $this->ordinaryPermissions->assertOrdinary($permissions);
+            }
+
+            if ($roleIds !== null) {
+                $this->ordinaryPermissions->assertNoSensitiveRoleAdditions(
+                    $user->roles()->pluck('roles.id')->all(),
+                    $roleIds,
+                );
             }
 
             if (empty($data['password'])) {
@@ -143,6 +171,10 @@ class UserController extends Controller
         $user = DB::transaction(function () use ($data, $user): User {
             $this->superUsers->lockState();
             $user = User::query()->lockForUpdate()->findOrFail($user->id);
+            $this->ordinaryPermissions->assertNoSensitiveRoleAdditions(
+                $user->roles()->pluck('roles.id')->all(),
+                $data['roles'] ?? [],
+            );
             $roles = Role::query()
                 ->whereIn('id', $data['roles'] ?? [])
                 ->get(['id', 'name']);

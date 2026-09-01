@@ -6,6 +6,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\SensitivePermissionCatalog;
+use App\Services\SuperUserInvariantService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -78,6 +79,145 @@ class OrdinaryPermissionIsolationTest extends TestCase
         $this->assertSame(['products-index', 'sales-index', 'users-index'], $names);
     }
 
+    public function test_ordinary_user_options_hide_sensitive_bearing_roles_while_super_users_can_see_them(): void
+    {
+        $actor = $this->usersAdministrator();
+        $ordinaryRole = $this->role('Ordinary role');
+        $ordinaryRole->givePermissionTo($this->permission('products-index'));
+        $sensitiveRole = $this->role('Sensitive role');
+        $sensitiveRole->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $ordinaryResponse = $this->actingAs($actor)->getJson('/api/users/options')->assertOk();
+
+        $this->assertSame(
+            ['Ordinary role'],
+            collect($ordinaryResponse->json('data.roles'))->pluck('name')->all(),
+        );
+
+        $actor->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+
+        $superResponse = $this->actingAs($actor->fresh())->getJson('/api/users/options')->assertOk();
+
+        $this->assertSame(
+            ['Ordinary role', 'Sensitive role'],
+            collect($superResponse->json('data.roles'))->pluck('name')->all(),
+        );
+    }
+
+    public function test_ordinary_user_creation_cannot_assign_a_sensitive_bearing_role(): void
+    {
+        $actor = $this->usersAdministrator();
+        $role = $this->role('Super administrators');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+
+        $this->actingAs($actor)
+            ->postJson('/api/users', [
+                'name' => 'Forged Administrator',
+                'email' => 'forged-admin@example.test',
+                'phone' => '01700000001',
+                'password' => 'password',
+                'biller_ids' => [1],
+                'roles' => [$role->id],
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseMissing('users', ['email' => 'forged-admin@example.test']);
+    }
+
+    public function test_ordinary_full_user_update_cannot_add_a_sensitive_bearing_role(): void
+    {
+        $actor = $this->usersAdministrator();
+        $guardian = $this->user();
+        $guardian->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+        $target = $this->user();
+        $role = $this->role('Payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'roles' => [$role->id],
+            ])
+            ->assertForbidden();
+
+        $this->assertFalse($target->fresh()->hasRole($role));
+    }
+
+    public function test_ordinary_dedicated_role_reassignment_cannot_add_a_sensitive_bearing_role(): void
+    {
+        $actor = $this->usersAdministrator();
+        $guardian = $this->user();
+        $guardian->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+        $target = $this->user();
+        $role = $this->role('Sales approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_SALES_INVOICE));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/roles", ['roles' => [$role->id]])
+            ->assertForbidden();
+
+        $this->assertFalse($target->fresh()->hasRole($role));
+    }
+
+    public function test_current_user_permissions_use_direct_and_active_role_grants_only(): void
+    {
+        $user = $this->user();
+        $user->givePermissionTo($this->permission('products-index'));
+        $activeRole = $this->role('Active sales role');
+        $activeRole->givePermissionTo($this->permission('sales-index'));
+        $inactiveRole = $this->role('Inactive administrator role', false);
+        $inactiveRole->givePermissionTo([
+            $this->permission('users-index'),
+            $this->permission(SensitivePermissionCatalog::SUPER_USER),
+        ]);
+        $user->assignRole([$activeRole, $inactiveRole]);
+
+        $this->actingAs($user)
+            ->getJson('/api/me')
+            ->assertOk()
+            ->assertJsonPath('data.permissions', ['products-index', 'sales-index']);
+    }
+
+    public function test_ordinary_user_search_does_not_match_sensitive_or_retired_permissions(): void
+    {
+        $actor = $this->usersAdministrator();
+        $directSensitive = $this->user();
+        $directSensitive->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+        $retired = $this->user();
+        $retired->givePermissionTo($this->permission('general-settings-index'));
+        $roleSensitive = $this->user();
+        $role = $this->role('Financial approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $roleSensitive->assignRole($role);
+        $ordinary = $this->user();
+        $ordinary->givePermissionTo($this->permission('products-index'));
+
+        foreach ([
+            SensitivePermissionCatalog::SUPER_USER => $directSensitive,
+            'general-settings-index' => $retired,
+            SensitivePermissionCatalog::APPROVAL_PAYMENTS => $roleSensitive,
+        ] as $search => $target) {
+            $response = $this->actingAs($actor)->getJson('/api/users?search='.urlencode($search))->assertOk();
+
+            $this->assertNotContains($target->id, collect($response->json('data'))->pluck('id')->all());
+        }
+
+        $ordinaryResponse = $this->actingAs($actor)->getJson('/api/users?search=products-index')->assertOk();
+        $this->assertContains($ordinary->id, collect($ordinaryResponse->json('data'))->pluck('id')->all());
+
+        $actor->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+
+        foreach ([
+            SensitivePermissionCatalog::SUPER_USER => $directSensitive,
+            'general-settings-index' => $retired,
+            SensitivePermissionCatalog::APPROVAL_PAYMENTS => $roleSensitive,
+        ] as $search => $target) {
+            $response = $this->actingAs($actor->fresh())->getJson('/api/users?search='.urlencode($search))->assertOk();
+
+            $this->assertContains($target->id, collect($response->json('data'))->pluck('id')->all());
+        }
+    }
+
     public function test_dedicated_user_ordinary_sync_preserves_sensitive_permissions(): void
     {
         $actor = $this->ordinaryAdministrator();
@@ -86,6 +226,36 @@ class OrdinaryPermissionIsolationTest extends TestCase
             $this->permission('sales-index'),
             $this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS),
         ]);
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/permissions", ['permissions' => ['products-index']])
+            ->assertOk();
+
+        $this->assertSame(
+            ['approvals-payments', 'products-index'],
+            $target->fresh()->getDirectPermissions()->sortBy('name')->pluck('name')->values()->all(),
+        );
+    }
+
+    public function test_dedicated_user_ordinary_sync_locks_before_reading_sensitive_grants(): void
+    {
+        $actor = $this->usersAdministrator();
+        $target = $this->user();
+        $sensitive = $this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS);
+        $locker = new class($target, $sensitive) extends SuperUserInvariantService
+        {
+            public function __construct(
+                private readonly User $target,
+                private readonly Permission $permission,
+            ) {}
+
+            public function lockState(): void
+            {
+                parent::lockState();
+                $this->target->givePermissionTo($this->permission);
+            }
+        };
+        $this->app->instance(SuperUserInvariantService::class, $locker);
 
         $this->actingAs($actor)
             ->putJson("/api/users/{$target->id}/permissions", ['permissions' => ['products-index']])
@@ -272,6 +442,14 @@ class OrdinaryPermissionIsolationTest extends TestCase
         return $user;
     }
 
+    private function usersAdministrator(): User
+    {
+        $user = $this->user();
+        $user->givePermissionTo($this->permission('users-index'));
+
+        return $user;
+    }
+
     private function user(): User
     {
         return User::factory()->create([
@@ -284,13 +462,24 @@ class OrdinaryPermissionIsolationTest extends TestCase
         ]);
     }
 
-    private function role(string $name): Role
+    private function role(string $name, bool $active = true): Role
     {
         return Role::create([
             'name' => $name,
             'guard_name' => 'web',
-            'is_active' => true,
+            'is_active' => $active,
         ]);
+    }
+
+    private function userWritePayload(User $user): array
+    {
+        return [
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'is_active' => true,
+            'biller_ids' => [1],
+        ];
     }
 
     private function permission(string $name): Permission

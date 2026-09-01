@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Biller;
 use App\Models\User;
+use App\Services\EffectivePermissionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -110,7 +111,7 @@ class AuthController extends Controller
             'current_biller' => $user->currentBiller,
             'biller_ids' => $user->biller_ids ?? [],
             'roles' => $user->getRoleNames()->values()->all(),
-            'permissions' => $user->permissionNames(),
+            'permissions' => app(EffectivePermissionService::class)->permissionNames($user),
         ];
     }
 }

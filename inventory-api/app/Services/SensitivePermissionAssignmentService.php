@@ -6,6 +6,7 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SensitivePermissionAssignmentService
 {
@@ -14,13 +15,14 @@ class SensitivePermissionAssignmentService
         private readonly SuperUserInvariantService $superUsers,
     ) {}
 
-    public function syncRole(Role $role, array $permissions, User $actor): array
+    public function syncRole(Role $role, array $permissions, User $actor, bool $acknowledged): array
     {
-        return DB::transaction(function () use ($role, $permissions, $actor): array {
+        return DB::transaction(function () use ($role, $permissions, $actor, $acknowledged): array {
             $this->superUsers->lockState();
             $role = Role::query()->lockForUpdate()->findOrFail($role->id);
             $current = $this->directPermissionNames($role);
             $desired = $this->catalog->ordered($permissions);
+            $this->assertAdditionsAcknowledged($current, $desired, $acknowledged);
             $ordinary = $role->permissions()
                 ->pluck('name')
                 ->reject(fn (string $permission): bool => $this->catalog->isSensitive($permission))
@@ -34,13 +36,14 @@ class SensitivePermissionAssignmentService
         });
     }
 
-    public function syncUser(User $user, array $permissions, User $actor): array
+    public function syncUser(User $user, array $permissions, User $actor, bool $acknowledged): array
     {
-        return DB::transaction(function () use ($user, $permissions, $actor): array {
+        return DB::transaction(function () use ($user, $permissions, $actor, $acknowledged): array {
             $this->superUsers->lockState();
             $user = User::query()->lockForUpdate()->findOrFail($user->id);
             $current = $this->directPermissionNames($user);
             $desired = $this->catalog->ordered($permissions);
+            $this->assertAdditionsAcknowledged($current, $desired, $acknowledged);
             $ordinary = $user->permissions()
                 ->pluck('name')
                 ->reject(fn (string $permission): bool => $this->catalog->isSensitive($permission))
@@ -77,12 +80,13 @@ class SensitivePermissionAssignmentService
     public function userPayload(User $user): array
     {
         $direct = $this->directPermissionNames($user);
+        $canAccessSystem = $user->canAccessSystem();
         $roles = $user->roles()
             ->with(['permissions' => fn ($query) => $query->whereIn('name', $this->catalog->all())])
             ->orderBy('name')
             ->get();
         $inherited = [];
-        $effective = $direct;
+        $effective = $canAccessSystem ? $direct : [];
 
         foreach ($this->catalog->all() as $permission) {
             $sources = $roles
@@ -103,7 +107,7 @@ class SensitivePermissionAssignmentService
                 'roles' => $sources->all(),
             ];
 
-            if ($sources->contains('is_active', true)) {
+            if ($canAccessSystem && $sources->contains('is_active', true)) {
                 $effective[] = $permission;
             }
         }
@@ -139,5 +143,14 @@ class SensitivePermissionAssignmentService
                 'removed' => $removed,
             ])
             ->log('Sensitive permissions updated');
+    }
+
+    private function assertAdditionsAcknowledged(array $current, array $desired, bool $acknowledged): void
+    {
+        if (array_diff($desired, $current) !== [] && ! $acknowledged) {
+            throw ValidationException::withMessages([
+                'acknowledged' => ['Sensitive permission additions must be acknowledged.'],
+            ]);
+        }
     }
 }
