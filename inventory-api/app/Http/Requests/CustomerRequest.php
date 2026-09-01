@@ -44,6 +44,7 @@ class CustomerRequest extends FormRequest
             'create_user' => ['nullable', 'boolean'],
             'username' => [$creatingUser ? 'required' : 'nullable', 'string', 'max:255'],
             'password' => [$creatingUser ? 'required' : 'nullable', 'string', 'min:6'],
+            'acknowledged' => ['nullable', 'boolean'],
         ];
     }
 }

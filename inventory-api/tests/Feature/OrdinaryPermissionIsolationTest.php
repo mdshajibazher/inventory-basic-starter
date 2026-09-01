@@ -5,11 +5,14 @@ namespace Tests\Feature;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\SensitivePermissionAssignmentService;
 use App\Services\SensitivePermissionCatalog;
 use App\Services\SuperUserInvariantService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
@@ -45,6 +48,7 @@ class OrdinaryPermissionIsolationTest extends TestCase
     protected function tearDown(): void
     {
         foreach ([
+            'personal_access_tokens',
             'model_has_roles',
             'model_has_permissions',
             'role_has_permissions',
@@ -93,6 +97,7 @@ class OrdinaryPermissionIsolationTest extends TestCase
             ['Ordinary role'],
             collect($ordinaryResponse->json('data.roles'))->pluck('name')->all(),
         );
+        $this->assertArrayNotHasKey('sensitive_permissions', $ordinaryResponse->json('data.roles.0'));
 
         $actor->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
 
@@ -102,6 +107,29 @@ class OrdinaryPermissionIsolationTest extends TestCase
             ['Ordinary role', 'Sensitive role'],
             collect($superResponse->json('data.roles'))->pluck('name')->all(),
         );
+        $this->assertSame([], $superResponse->json('data.roles.0.sensitive_permissions'));
+        $this->assertSame(
+            [SensitivePermissionCatalog::APPROVAL_PAYMENTS],
+            $superResponse->json('data.roles.1.sensitive_permissions'),
+        );
+    }
+
+    public function test_super_user_without_ordinary_mutation_authority_cannot_see_sensitive_role_options(): void
+    {
+        $actor = $this->user();
+        $actor->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+        $ordinaryRole = $this->role('Ordinary role');
+        $ordinaryRole->givePermissionTo($this->permission('products-index'));
+        $sensitiveRole = $this->role('Sensitive role');
+        $sensitiveRole->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $response = $this->actingAs($actor)->getJson('/api/users/options')->assertOk();
+
+        $this->assertSame(
+            ['Ordinary role'],
+            collect($response->json('data.roles'))->pluck('name')->all(),
+        );
+        $this->assertArrayNotHasKey('sensitive_permissions', $response->json('data.roles.0'));
     }
 
     public function test_ordinary_user_creation_cannot_assign_a_sensitive_bearing_role(): void
@@ -159,6 +187,173 @@ class OrdinaryPermissionIsolationTest extends TestCase
         $this->assertFalse($target->fresh()->hasRole($role));
     }
 
+    public function test_sensitive_role_addition_on_user_creation_requires_acknowledgment(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $role = $this->role('Payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->postJson('/api/users', [
+                'name' => 'Acknowledgment Required',
+                'email' => 'ack-required@example.test',
+                'phone' => '01700000001',
+                'password' => 'password',
+                'biller_ids' => [1],
+                'roles' => [$role->id],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('acknowledged');
+
+        $this->assertDatabaseMissing('users', ['email' => 'ack-required@example.test']);
+    }
+
+    public function test_acknowledged_sensitive_role_addition_on_user_creation_is_audited(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $role = $this->role('Payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $response = $this->actingAs($actor)
+            ->postJson('/api/users', [
+                'name' => 'Acknowledged User',
+                'email' => 'acknowledged@example.test',
+                'phone' => '01700000001',
+                'password' => 'password',
+                'biller_ids' => [1],
+                'roles' => [$role->id],
+                'acknowledged' => true,
+            ])
+            ->assertCreated();
+
+        $target = User::query()->findOrFail($response->json('data.id'));
+        $this->assertTrue($target->hasRole($role));
+        $this->assertSensitiveRoleAudit($actor, $target, [$role->id], [], [SensitivePermissionCatalog::APPROVAL_PAYMENTS], []);
+    }
+
+    public function test_acknowledged_sensitive_role_addition_on_full_user_update_is_audited(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $target = $this->user();
+        $role = $this->role('Sales approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_SALES_INVOICE));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'roles' => [$role->id],
+                'acknowledged' => true,
+            ])
+            ->assertOk();
+
+        $this->assertTrue($target->fresh()->hasRole($role));
+        $this->assertSensitiveRoleAudit($actor, $target, [$role->id], [], [SensitivePermissionCatalog::APPROVAL_SALES_INVOICE], []);
+    }
+
+    public function test_acknowledged_sensitive_role_addition_on_dedicated_role_update_is_audited(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $target = $this->user();
+        $role = $this->role('Purchase approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PURCHASE_INVOICE));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/roles", [
+                'roles' => [$role->id],
+                'acknowledged' => true,
+            ])
+            ->assertOk();
+
+        $this->assertTrue($target->fresh()->hasRole($role));
+        $this->assertSensitiveRoleAudit($actor, $target, [$role->id], [], [SensitivePermissionCatalog::APPROVAL_PURCHASE_INVOICE], []);
+    }
+
+    public function test_sensitive_role_removal_does_not_require_acknowledgment_and_is_audited(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $target = $this->user();
+        $role = $this->role('Sales approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_SALES_INVOICE));
+        $target->assignRole($role);
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/roles", ['roles' => []])
+            ->assertOk();
+
+        $this->assertFalse($target->fresh()->hasRole($role));
+        $this->assertSensitiveRoleAudit($actor, $target, [], [$role->id], [], [SensitivePermissionCatalog::APPROVAL_SALES_INVOICE]);
+    }
+
+    public function test_ordinary_administrator_cannot_remove_a_sensitive_role_membership(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user();
+        $role = $this->role('Payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $target->assignRole($role);
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/roles", ['roles' => []])
+            ->assertForbidden();
+
+        $this->assertTrue($target->fresh()->hasRole($role));
+    }
+
+    public function test_ordinary_administrator_cannot_change_membership_of_a_directly_sensitive_user(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user();
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $ordinaryRole = $this->role('Stock clerk');
+        $ordinaryRole->givePermissionTo($this->permission('products-index'));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}/roles", ['roles' => [$ordinaryRole->id]])
+            ->assertForbidden();
+
+        $this->assertFalse($target->fresh()->hasRole($ordinaryRole));
+    }
+
+    public function test_full_user_update_preserves_an_existing_sensitive_role_when_roles_are_omitted(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user();
+        $role = $this->role('Existing sensitive role');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $target->assignRole($role);
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'name' => 'Profile only change',
+            ])
+            ->assertOk();
+
+        $this->assertTrue($target->fresh()->hasRole($role));
+    }
+
+    public function test_full_user_update_allows_an_unchanged_sensitive_membership_without_acknowledgment(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user();
+        $role = $this->role('Existing sensitive role');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $target->assignRole($role);
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'roles' => [$role->id],
+            ])
+            ->assertOk();
+
+        $this->assertTrue($target->fresh()->hasRole($role));
+    }
+
     public function test_current_user_permissions_use_direct_and_active_role_grants_only(): void
     {
         $user = $this->user();
@@ -176,6 +371,177 @@ class OrdinaryPermissionIsolationTest extends TestCase
             ->getJson('/api/me')
             ->assertOk()
             ->assertJsonPath('data.permissions', ['products-index', 'sales-index']);
+    }
+
+    public function test_inactive_role_ordinary_authority_cannot_reactivate_that_role(): void
+    {
+        $actor = $this->user();
+        $role = $this->role('Inactive self-service administrator', false);
+        $role->givePermissionTo([
+            $this->permission('users-index'),
+            $this->permission(SensitivePermissionCatalog::SUPER_USER),
+        ]);
+        $actor->assignRole($role);
+
+        $this->actingAs($actor)
+            ->putJson("/api/roles/{$role->id}", [
+                'name' => $role->name,
+                'is_active' => true,
+            ])
+            ->assertForbidden();
+
+        $this->assertFalse($role->fresh()->is_active);
+    }
+
+    public function test_ordinary_administrator_cannot_reset_an_active_super_user_password(): void
+    {
+        $actor = $this->usersAdministrator();
+        $target = $this->user();
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+        $originalPassword = $target->password;
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'password' => 'taken-over-password',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame($originalPassword, $target->fresh()->password);
+        $this->assertFalse(Hash::check('taken-over-password', $target->fresh()->password));
+    }
+
+    public function test_ordinary_administrator_cannot_reactivate_an_inactive_sensitive_user(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user(false);
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'is_active' => true,
+            ])
+            ->assertForbidden();
+
+        $this->assertFalse($target->fresh()->is_active);
+    }
+
+    public function test_ordinary_administrator_cannot_reactivate_an_inactive_sensitive_role(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $role = $this->role('Inactive payment approvers', false);
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->putJson("/api/roles/{$role->id}", [
+                'name' => $role->name,
+                'is_active' => true,
+            ])
+            ->assertForbidden();
+
+        $this->assertFalse($role->fresh()->is_active);
+    }
+
+    public function test_ordinary_administrator_cannot_delete_a_sensitive_user_or_role(): void
+    {
+        $actor = $this->usersAdministrator();
+        $this->activeSuperUserGuardian();
+        $target = $this->user();
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+        $role = $this->role('Unassigned payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)->deleteJson("/api/users/{$target->id}")->assertForbidden();
+        $this->actingAs($actor)->deleteJson("/api/roles/{$role->id}")->assertForbidden();
+
+        $target->refresh();
+        $this->assertTrue($target->is_active);
+        $this->assertFalse($target->is_deleted);
+        $this->assertDatabaseHas('roles', ['id' => $role->id]);
+    }
+
+    public function test_super_user_reactivation_of_a_sensitive_user_audits_the_effective_transition(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $target = $this->user(false);
+        $target->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->putJson("/api/users/{$target->id}", [
+                ...$this->userWritePayload($target),
+                'is_active' => true,
+            ])
+            ->assertOk();
+
+        $activity = Activity::query()->where('log_name', 'sensitive_permissions')->latest('id')->first();
+        $this->assertNotNull($activity);
+        if (! $activity) {
+            return;
+        }
+        $this->assertSame($actor->id, (int) $activity->causer_id);
+        $this->assertSame($target->id, (int) $activity->subject_id);
+        $this->assertSame('status_changed', $activity->properties->get('action'));
+        $this->assertSame([], $activity->properties->get('before_effective_sensitive_permissions'));
+        $this->assertSame(
+            [SensitivePermissionCatalog::APPROVAL_PAYMENTS],
+            $activity->properties->get('after_effective_sensitive_permissions'),
+        );
+    }
+
+    public function test_super_user_reactivation_of_a_sensitive_role_audits_the_effective_transition(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $role = $this->role('Inactive payment approvers', false);
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->putJson("/api/roles/{$role->id}", [
+                'name' => $role->name,
+                'is_active' => true,
+            ])
+            ->assertOk();
+
+        $activity = Activity::query()->where('log_name', 'sensitive_permissions')->latest('id')->first();
+        $this->assertNotNull($activity);
+        if (! $activity) {
+            return;
+        }
+        $this->assertSame($actor->id, (int) $activity->causer_id);
+        $this->assertSame($role->id, (int) $activity->subject_id);
+        $this->assertSame('status_changed', $activity->properties->get('action'));
+        $this->assertSame([], $activity->properties->get('before_effective_sensitive_permissions'));
+        $this->assertSame(
+            [SensitivePermissionCatalog::APPROVAL_PAYMENTS],
+            $activity->properties->get('after_effective_sensitive_permissions'),
+        );
+    }
+
+    public function test_super_user_deletion_of_an_unassigned_sensitive_role_audits_the_effective_transition(): void
+    {
+        $actor = $this->ordinaryAdministrator();
+        $role = $this->role('Retired payment approvers');
+        $role->givePermissionTo($this->permission(SensitivePermissionCatalog::APPROVAL_PAYMENTS));
+
+        $this->actingAs($actor)
+            ->deleteJson("/api/roles/{$role->id}")
+            ->assertOk();
+
+        $activity = Activity::query()->where('log_name', 'sensitive_permissions')->latest('id')->first();
+        $this->assertNotNull($activity);
+        if (! $activity) {
+            return;
+        }
+        $this->assertSame($actor->id, (int) $activity->causer_id);
+        $this->assertSame($role->id, (int) $activity->subject_id);
+        $this->assertSame('deleted', $activity->properties->get('action'));
+        $this->assertSame(
+            [SensitivePermissionCatalog::APPROVAL_PAYMENTS],
+            $activity->properties->get('before_effective_sensitive_permissions'),
+        );
+        $this->assertSame([], $activity->properties->get('after_effective_sensitive_permissions'));
     }
 
     public function test_ordinary_user_search_does_not_match_sensitive_or_retired_permissions(): void
@@ -431,6 +797,26 @@ class OrdinaryPermissionIsolationTest extends TestCase
         $this->assertCount(1, $response->json('data.permissions'));
     }
 
+    public function test_unauthorized_user_payload_does_not_resolve_sensitive_data(): void
+    {
+        $actor = $this->usersAdministrator();
+        $target = $this->user();
+        $this->app->instance(SensitivePermissionAssignmentService::class, new class extends SensitivePermissionAssignmentService
+        {
+            public function __construct() {}
+
+            public function userPayload(User $user): array
+            {
+                throw new \RuntimeException('Sensitive payload must be resolved lazily.');
+            }
+        });
+
+        $this->actingAs($actor)
+            ->getJson("/api/users/{$target->id}")
+            ->assertOk()
+            ->assertJsonMissingPath('data.sensitive_permissions');
+    }
+
     private function ordinaryAdministrator(): User
     {
         $user = $this->user();
@@ -450,14 +836,22 @@ class OrdinaryPermissionIsolationTest extends TestCase
         return $user;
     }
 
-    private function user(): User
+    private function activeSuperUserGuardian(): User
+    {
+        $user = $this->user();
+        $user->givePermissionTo($this->permission(SensitivePermissionCatalog::SUPER_USER));
+
+        return $user;
+    }
+
+    private function user(bool $active = true): User
     {
         return User::factory()->create([
             'phone' => '01700000000',
             'biller_id' => 1,
             'current_biller_id' => 1,
             'biller_ids' => [1],
-            'is_active' => true,
+            'is_active' => $active,
             'is_deleted' => false,
         ]);
     }
@@ -488,6 +882,29 @@ class OrdinaryPermissionIsolationTest extends TestCase
             'name' => $name,
             'guard_name' => 'web',
         ]);
+    }
+
+    private function assertSensitiveRoleAudit(
+        User $actor,
+        User $target,
+        array $addedRoleIds,
+        array $removedRoleIds,
+        array $addedSensitivePermissions,
+        array $removedSensitivePermissions,
+    ): void {
+        $activity = Activity::query()->where('log_name', 'sensitive_permissions')->latest('id')->first();
+        $this->assertNotNull($activity);
+        if (! $activity) {
+            return;
+        }
+
+        $this->assertSame($actor->id, (int) $activity->causer_id);
+        $this->assertSame($target->id, (int) $activity->subject_id);
+        $this->assertSame($target->id, $activity->properties->get('target_user_id'));
+        $this->assertSame($addedRoleIds, collect($activity->properties->get('added_roles'))->pluck('id')->all());
+        $this->assertSame($removedRoleIds, collect($activity->properties->get('removed_roles'))->pluck('id')->all());
+        $this->assertSame($addedSensitivePermissions, $activity->properties->get('added_sensitive_permissions'));
+        $this->assertSame($removedSensitivePermissions, $activity->properties->get('removed_sensitive_permissions'));
     }
 
     private function createTables(): void
@@ -549,6 +966,16 @@ class OrdinaryPermissionIsolationTest extends TestCase
             $table->string('model_type');
             $table->unsignedBigInteger('model_id');
             $table->primary(['role_id', 'model_id', 'model_type']);
+        });
+        Schema::create('personal_access_tokens', function (Blueprint $table): void {
+            $table->id();
+            $table->morphs('tokenable');
+            $table->text('name');
+            $table->string('token', 64)->unique();
+            $table->text('abilities')->nullable();
+            $table->timestamp('last_used_at')->nullable();
+            $table->timestamp('expires_at')->nullable()->index();
+            $table->timestamps();
         });
     }
 }

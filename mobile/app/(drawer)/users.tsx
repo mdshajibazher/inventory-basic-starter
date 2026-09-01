@@ -14,7 +14,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
-import { SensitiveAccessPanel, sensitiveAdditionMessage } from '@/src/components/SensitiveAccessPanel';
+import { SensitiveAccessPanel, sensitiveAdditionMessage, sensitiveRoleAdditionMessage } from '@/src/components/SensitiveAccessPanel';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
 import type { Branch, PaginationMeta, Permission, Role, SensitivePermissionCatalog, User } from '@/src/types';
@@ -311,12 +311,29 @@ export default function UsersScreen() {
     }
   }
 
-  async function saveRoles() {
+  async function saveRoles(acknowledged = false) {
     if (!editingUser) return;
+
+    const currentRoleIds = userRoles(editingUser).map((role) => role.id);
+    const sensitiveAdditions = options.roles.filter((role) =>
+      selectedRoles.includes(role.id)
+      && !currentRoleIds.includes(role.id)
+      && Boolean(role.sensitive_permissions?.length));
+
+    if (sensitiveAdditions.length && !acknowledged) {
+      Alert.alert('Confirm sensitive roles', sensitiveRoleAdditionMessage(sensitiveAdditions), [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Assign roles', style: 'destructive', onPress: () => { void saveRoles(true); } },
+      ]);
+      return;
+    }
 
     setSaving(true);
     try {
-      await api.updateUserRoles(editingUser.id, { roles: selectedRoles });
+      await api.updateUserRoles(
+        editingUser.id,
+        acknowledged ? { roles: selectedRoles, acknowledged: true } : { roles: selectedRoles }
+      );
       const currentUser = await refreshUser();
       closeRoleModal();
       if (currentUser?.permissions?.some((permission) => permission === 'users-index' || permission === 'super-user')) {
@@ -616,7 +633,7 @@ export default function UsersScreen() {
               {options.roles.map((role) => (
                 <Checkbox.Item
                   key={role.id}
-                  label={role.name}
+                  label={`${role.name}${role.sensitive_permissions?.length ? ' • Sensitive access' : ''}`}
                   status={selectedRoles.includes(role.id) ? 'checked' : 'unchecked'}
                   onPress={() => toggleRole(role.id)}
                   disabled={saving}
@@ -628,7 +645,7 @@ export default function UsersScreen() {
               <Button mode="outlined" onPress={closeRoleModal} disabled={saving}>
                 Cancel
               </Button>
-              <Button mode="contained" onPress={saveRoles} loading={saving} disabled={saving}>
+              <Button mode="contained" onPress={() => { void saveRoles(); }} loading={saving} disabled={saving}>
                 Save
               </Button>
             </View>

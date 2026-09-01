@@ -2,7 +2,7 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 import { Checkbox } from '@/components/ui';
-import type { SensitivePermissionCatalog, UserSensitivePermissions } from '@/lib/types';
+import type { Role, SensitivePermissionCatalog, UserSensitivePermissions } from '@/lib/types';
 
 export function SensitiveAccessPanel({
   catalog,
@@ -74,4 +74,8 @@ export function SensitiveAccessConfirmation({
       <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-950">This confirmation records that you acknowledge each added permission.</p>
     </div>
   );
+}
+
+export function sensitiveRoleAdditionMessage(roles: Array<Pick<Role, 'name'>>) {
+  return `You are about to assign the following sensitive-bearing roles:\n\n${roles.map((role) => `• ${role.name}`).join('\n')}\n\nThis confirmation records that you acknowledge each added role and its sensitive access.`;
 }

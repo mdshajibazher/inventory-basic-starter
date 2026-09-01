@@ -242,6 +242,12 @@ export type CustomerPayload = {
   create_user?: boolean;
   username?: string | null;
   password?: string | null;
+  acknowledged?: true;
+};
+
+export type UserRoleAssignmentPayload = {
+  roles: number[];
+  acknowledged?: true;
 };
 
 type RolePayload = {
@@ -843,7 +849,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  updateUserRoles: (id: number, payload: { roles: number[] }) =>
+  updateUserRoles: (id: number, payload: UserRoleAssignmentPayload) =>
     request<{ data: unknown }>(`/users/${id}/roles`, {
       method: 'PUT',
       body: JSON.stringify(payload),

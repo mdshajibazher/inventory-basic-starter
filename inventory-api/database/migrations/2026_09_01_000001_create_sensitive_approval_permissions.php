@@ -26,21 +26,21 @@ return new class extends Migration
             ->get()
             ->each(fn (Role $role) => $role->givePermissionTo(SensitivePermissionCatalog::SUPER_USER));
 
-        GeneralSetting::query()
-            ->get()
-            ->each(function (GeneralSetting $setting) use ($catalog) {
-                foreach ($catalog->legacyApproverPermissionMap() as $field => $permissions) {
-                    $userIds = array_values(array_unique(array_filter(array_map(
-                        'intval',
-                        $setting->{$field} ?? []
-                    ))));
+        $setting = GeneralSetting::query()->latest('id')->first();
 
-                    User::query()
-                        ->whereKey($userIds)
-                        ->get()
-                        ->each(fn (User $user) => $user->givePermissionTo($permissions));
-                }
-            });
+        if ($setting) {
+            foreach ($catalog->legacyApproverPermissionMap() as $field => $permissions) {
+                $userIds = array_values(array_unique(array_filter(array_map(
+                    'intval',
+                    $setting->{$field} ?? []
+                ))));
+
+                User::query()
+                    ->whereKey($userIds)
+                    ->get()
+                    ->each(fn (User $user) => $user->givePermissionTo($permissions));
+            }
+        }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
     }

@@ -280,6 +280,12 @@ export type CustomerPayload = {
   create_user?: boolean;
   username?: string | null;
   password?: string | null;
+  acknowledged?: true;
+};
+
+export type UserRoleAssignmentPayload = {
+  roles: number[];
+  acknowledged?: true;
 };
 
 export type SalesInvoiceLinePayload = {
@@ -809,7 +815,7 @@ export const api = {
   userOptions: () => request<{ data: unknown }>('/users/options'),
   createUser: (payload: UserPayload) => request<{ data: unknown }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUser: (id: number, payload: UserPayload) => request<{ data: unknown }>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
-  updateUserRoles: (id: number, payload: { roles: number[] }) => request<{ data: unknown }>(`/users/${id}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
+  updateUserRoles: (id: number, payload: UserRoleAssignmentPayload) => request<{ data: unknown }>(`/users/${id}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
   updateUserPermissions: (id: number, payload: { permissions: string[] }) => request<{ data: unknown }>(`/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(payload) }),
   sensitivePermissions: () => request<SensitivePermissionCatalog>('/sensitive-permissions'),
   updateUserSensitivePermissions: (id: number, payload: { permissions: string[]; acknowledged?: true }) =>

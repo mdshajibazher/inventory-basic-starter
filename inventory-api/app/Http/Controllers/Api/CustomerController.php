@@ -7,14 +7,24 @@ use App\Http\Requests\CustomerRequest;
 use App\Http\Resources\CustomerResource;
 use App\Models\Customer;
 use App\Models\CustomerGroup;
+use App\Models\Role;
 use App\Models\User;
+use App\Services\EffectivePermissionService;
+use App\Services\OrdinaryPermissionService;
+use App\Services\SensitivePermissionCatalog;
+use App\Services\SuperUserInvariantService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Spatie\Permission\Models\Role;
 
 class CustomerController extends Controller
 {
+    public function __construct(
+        private readonly OrdinaryPermissionService $ordinaryPermissions,
+        private readonly SuperUserInvariantService $superUsers,
+        private readonly EffectivePermissionService $effectivePermissions,
+    ) {}
+
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
@@ -49,14 +59,25 @@ class CustomerController extends Controller
         );
     }
 
-    public function options()
+    public function options(Request $request)
     {
+        $customerRole = Role::query()->where('name', 'Customer')->where('guard_name', 'web')->first();
+        $customerRoleOption = $customerRole ? [
+            'id' => $customerRole->id,
+            'name' => $customerRole->name,
+        ] : null;
+
+        if ($customerRoleOption && $this->effectivePermissions->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER)) {
+            $customerRoleOption['sensitive_permissions'] = $this->ordinaryPermissions->directSensitivePermissionNames($customerRole);
+        }
+
         return response()->json([
             'data' => [
                 'customer_groups' => CustomerGroup::query()
                     ->where('is_active', true)
                     ->orderBy('name')
                     ->get(['id', 'name', 'percentage']),
+                'customer_user_role' => $customerRoleOption,
             ],
         ]);
     }
@@ -64,14 +85,24 @@ class CustomerController extends Controller
     public function store(CustomerRequest $request)
     {
         $customer = DB::transaction(function () use ($request) {
+            $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'customers-add');
             $data = $request->validated();
             $customerData = $this->customerData($data);
+            $customer = Customer::create($customerData);
 
             if ($request->boolean('create_user')) {
-                $customerData['user_id'] = $this->createLinkedUser($data)->id;
+                $user = $this->createLinkedUser(
+                    $data,
+                    $customer,
+                    $actor,
+                    'customers-add',
+                    (bool) ($data['acknowledged'] ?? false),
+                );
+                $customer->update(['user_id' => $user->id]);
             }
 
-            return Customer::create($customerData)->load(['customerGroup:id,name,percentage', 'user:id,name,email']);
+            return $customer->load(['customerGroup:id,name,percentage', 'user:id,name,email']);
         });
 
         return response()->json([
@@ -90,11 +121,20 @@ class CustomerController extends Controller
     public function update(CustomerRequest $request, Customer $customer)
     {
         $customer = DB::transaction(function () use ($request, $customer) {
+            $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'customers-edit');
+            $customer = Customer::query()->lockForUpdate()->findOrFail($customer->id);
             $data = $request->validated();
             $customerData = $this->customerData($data);
 
             if ($request->boolean('create_user') && ! $customer->user_id) {
-                $customerData['user_id'] = $this->createLinkedUser($data)->id;
+                $customerData['user_id'] = $this->createLinkedUser(
+                    $data,
+                    $customer,
+                    $actor,
+                    'customers-edit',
+                    (bool) ($data['acknowledged'] ?? false),
+                )->id;
             }
 
             $customer->update($customerData);
@@ -137,8 +177,13 @@ class CustomerController extends Controller
         ];
     }
 
-    private function createLinkedUser(array $data): User
-    {
+    private function createLinkedUser(
+        array $data,
+        Customer $customer,
+        User $actor,
+        string $ordinaryPermission,
+        bool $acknowledged,
+    ): User {
         validator($data, [
             'email' => [
                 'required',
@@ -159,13 +204,17 @@ class CustomerController extends Controller
             'password' => $data['password'],
             'phone' => $data['phone_number'],
             'company_name' => $data['company_name'] ?? null,
-            'role_id' => $role->id,
             'is_active' => true,
             'is_deleted' => false,
         ]);
 
-        $user->assignRole($role);
-
-        return $user;
+        return $this->ordinaryPermissions->syncRoles(
+            $user,
+            [$role->id],
+            $actor,
+            $ordinaryPermission,
+            $acknowledged,
+            ['target_customer_id' => $customer->id],
+        );
     }
 }

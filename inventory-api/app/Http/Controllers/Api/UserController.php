@@ -62,19 +62,29 @@ class UserController extends Controller
 
     public function options(Request $request)
     {
-        $canManageSensitive = $request->user()
-            && $this->effectivePermissions->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER);
+        $canAssignSensitiveRoles = $request->user()
+            && $this->effectivePermissions->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER)
+            && $this->effectivePermissions->userHasPermission($request->user(), 'users-index');
+        $roles = Role::query()
+            ->where('is_active', true)
+            ->when(! $canAssignSensitiveRoles, fn ($query) => $query->whereDoesntHave(
+                'permissions',
+                fn ($permissionQuery) => $permissionQuery->whereIn('name', $this->catalog->all()),
+            ))
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        if ($canAssignSensitiveRoles) {
+            $roles = $roles->map(fn (Role $role): array => [
+                'id' => $role->id,
+                'name' => $role->name,
+                'sensitive_permissions' => $this->ordinaryPermissions->directSensitivePermissionNames($role),
+            ]);
+        }
 
         return response()->json([
             'data' => [
-                'roles' => Role::query()
-                    ->where('is_active', true)
-                    ->when(! $canManageSensitive, fn ($query) => $query->whereDoesntHave(
-                        'permissions',
-                        fn ($permissionQuery) => $permissionQuery->whereIn('name', $this->catalog->all()),
-                    ))
-                    ->orderBy('name')
-                    ->get(['id', 'name']),
+                'roles' => $roles,
                 'permissions' => Permission::query()
                     ->whereNotIn('name', [...$this->catalog->all(), ...$this->catalog->retiredGeneralSettingsPermissions()])
                     ->orderBy('name')
@@ -89,16 +99,32 @@ class UserController extends Controller
     {
         $user = DB::transaction(function () use ($request) {
             $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $data = $this->validatedData($request);
-            $roleIds = $data['roles'] ?? [];
-            $permissions = $data['permissions'] ?? [];
-            unset($data['roles'], $data['permissions']);
+            $roleIds = $data['roles'] ?? null;
+            $permissions = $data['permissions'] ?? null;
+            $acknowledged = (bool) ($data['acknowledged'] ?? false);
+            unset($data['roles'], $data['permissions'], $data['acknowledged']);
 
-            $this->ordinaryPermissions->assertOrdinary($permissions);
-            $this->ordinaryPermissions->assertNoSensitiveRoleAdditions([], $roleIds);
+            if ($permissions !== null) {
+                $this->ordinaryPermissions->assertOrdinary($permissions);
+            }
 
             $user = User::create($data + ['is_active' => true, 'is_deleted' => false]);
-            $this->syncAccess($user, $roleIds, $permissions);
+
+            if ($roleIds !== null) {
+                $user = $this->ordinaryPermissions->syncRoles(
+                    $user,
+                    $roleIds,
+                    $actor,
+                    'users-index',
+                    $acknowledged,
+                );
+            }
+
+            if ($permissions !== null) {
+                $this->ordinaryPermissions->sync($user, $permissions, $actor);
+            }
 
             return $user->load('roles:id,name', 'currentBiller:id,name');
         });
@@ -120,21 +146,16 @@ class UserController extends Controller
     {
         $user = DB::transaction(function () use ($request, $user) {
             $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $user = User::query()->lockForUpdate()->findOrFail($user->id);
             $data = $this->validatedData($request, $user);
             $roleIds = $data['roles'] ?? null;
             $permissions = $data['permissions'] ?? null;
-            unset($data['roles'], $data['permissions']);
+            $acknowledged = (bool) ($data['acknowledged'] ?? false);
+            unset($data['roles'], $data['permissions'], $data['acknowledged']);
 
             if ($permissions !== null) {
                 $this->ordinaryPermissions->assertOrdinary($permissions);
-            }
-
-            if ($roleIds !== null) {
-                $this->ordinaryPermissions->assertNoSensitiveRoleAdditions(
-                    $user->roles()->pluck('roles.id')->all(),
-                    $roleIds,
-                );
             }
 
             if (empty($data['password'])) {
@@ -142,11 +163,40 @@ class UserController extends Controller
             }
 
             $wasActive = $user->canAccessSystem();
+            $beforeEffectiveSensitive = $this->ordinaryPermissions->effectiveSensitivePermissionNames($user);
+            $statusChanged = array_key_exists('is_active', $data)
+                && (bool) $data['is_active'] !== (bool) $user->is_active;
+
+            if ($this->changesProtectedUserState($user, $data)) {
+                $this->ordinaryPermissions->assertSensitiveTargetMutationAuthorized($actor, $user);
+            }
 
             $user->update($data);
 
-            $this->syncAccess($user, $roleIds, $permissions);
+            if ($roleIds !== null) {
+                $user = $this->ordinaryPermissions->syncRoles(
+                    $user,
+                    $roleIds,
+                    $actor,
+                    'users-index',
+                    $acknowledged,
+                );
+            }
+
+            if ($permissions !== null) {
+                $this->ordinaryPermissions->sync($user, $permissions, $actor);
+            }
+
             $this->superUsers->assertSatisfied();
+            if ($statusChanged) {
+                $this->ordinaryPermissions->auditEffectiveTransition(
+                    $actor,
+                    $user,
+                    'status_changed',
+                    $beforeEffectiveSensitive,
+                    $this->ordinaryPermissions->effectiveSensitivePermissionNames($user->fresh()),
+                );
+            }
 
             if ($wasActive && ! $user->canAccessSystem()) {
                 $user->tokens()->delete();
@@ -166,25 +216,16 @@ class UserController extends Controller
         $data = $request->validate([
             'roles' => ['nullable', 'array'],
             'roles.*' => ['integer', 'exists:roles,id'],
+            'acknowledged' => ['nullable', 'boolean'],
         ]);
 
-        $user = DB::transaction(function () use ($data, $user): User {
-            $this->superUsers->lockState();
-            $user = User::query()->lockForUpdate()->findOrFail($user->id);
-            $this->ordinaryPermissions->assertNoSensitiveRoleAdditions(
-                $user->roles()->pluck('roles.id')->all(),
-                $data['roles'] ?? [],
-            );
-            $roles = Role::query()
-                ->whereIn('id', $data['roles'] ?? [])
-                ->get(['id', 'name']);
-
-            $user->syncRoles($roles->pluck('name')->all());
-            $user->forceFill(['role_id' => $roles->first()?->id])->save();
-            $this->superUsers->assertSatisfied();
-
-            return $user;
-        });
+        $user = $this->ordinaryPermissions->syncRoles(
+            $user,
+            $data['roles'] ?? [],
+            $request->user(),
+            'users-index',
+            (bool) ($data['acknowledged'] ?? false),
+        );
 
         return response()->json([
             'message' => 'User roles updated successfully.',
@@ -199,7 +240,7 @@ class UserController extends Controller
             'permissions.*' => ['string', 'exists:permissions,name'],
         ]);
 
-        $this->ordinaryPermissions->sync($user, $data['permissions'] ?? []);
+        $this->ordinaryPermissions->sync($user, $data['permissions'] ?? [], $request->user());
 
         return response()->json([
             'message' => 'User permissions updated successfully.',
@@ -207,14 +248,24 @@ class UserController extends Controller
         ]);
     }
 
-    public function destroy(User $user)
+    public function destroy(Request $request, User $user)
     {
-        DB::transaction(function () use ($user): void {
+        DB::transaction(function () use ($request, $user): void {
             $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $user = User::query()->lockForUpdate()->findOrFail($user->id);
+            $this->ordinaryPermissions->assertSensitiveTargetMutationAuthorized($actor, $user);
+            $beforeEffectiveSensitive = $this->ordinaryPermissions->effectiveSensitivePermissionNames($user);
             $user->update(['is_deleted' => true, 'is_active' => false]);
             $this->superUsers->assertSatisfied();
             $user->tokens()->delete();
+            $this->ordinaryPermissions->auditEffectiveTransition(
+                $actor,
+                $user,
+                'deleted',
+                $beforeEffectiveSensitive,
+                [],
+            );
         });
 
         return response()->json([
@@ -239,6 +290,7 @@ class UserController extends Controller
             'roles.*' => ['integer', 'exists:roles,id'],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['string', 'exists:permissions,name'],
+            'acknowledged' => ['nullable', 'boolean'],
             'biller_ids' => ['required', 'array', 'min:1'],
             'biller_ids.*' => ['integer', 'distinct', 'exists:billers,id'],
         ]);
@@ -255,19 +307,10 @@ class UserController extends Controller
         return $data;
     }
 
-    private function syncAccess(User $user, ?array $roleIds, ?array $permissions): void
+    private function changesProtectedUserState(User $user, array $data): bool
     {
-        if ($roleIds !== null) {
-            $roles = Role::query()
-                ->whereIn('id', $roleIds)
-                ->get(['id', 'name']);
-
-            $user->syncRoles($roles->pluck('name')->all());
-            $user->forceFill(['role_id' => $roles->first()?->id])->save();
-        }
-
-        if ($permissions !== null) {
-            $this->ordinaryPermissions->sync($user, $permissions);
-        }
+        return array_key_exists('password', $data)
+            || (array_key_exists('email', $data) && $data['email'] !== $user->email)
+            || (array_key_exists('is_active', $data) && (bool) $data['is_active'] !== (bool) $user->is_active);
     }
 }

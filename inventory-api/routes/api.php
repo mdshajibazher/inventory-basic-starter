@@ -48,29 +48,29 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::put('/users/{user}/sensitive-permissions', [SensitivePermissionController::class, 'updateUser'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
 
     Route::get('/users/options', [UserController::class, 'options'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
-    Route::put('/users/{user}/roles', [UserController::class, 'updateRoles'])->middleware('permission:users-index');
-    Route::put('/users/{user}/permissions', [UserController::class, 'updatePermissions'])->middleware('permission:users-index');
+    Route::put('/users/{user}/roles', [UserController::class, 'updateRoles'])->middleware('effective.permission:users-index');
+    Route::put('/users/{user}/permissions', [UserController::class, 'updatePermissions'])->middleware('effective.permission:users-index');
     Route::get('/users', [UserController::class, 'index'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
     Route::get('/users/{user}', [UserController::class, 'show'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
-    Route::post('/users', [UserController::class, 'store'])->middleware('permission:users-index');
-    Route::match(['put', 'patch'], '/users/{user}', [UserController::class, 'update'])->middleware('permission:users-index');
-    Route::delete('/users/{user}', [UserController::class, 'destroy'])->middleware('permission:users-index');
+    Route::post('/users', [UserController::class, 'store'])->middleware('effective.permission:users-index');
+    Route::match(['put', 'patch'], '/users/{user}', [UserController::class, 'update'])->middleware('effective.permission:users-index');
+    Route::delete('/users/{user}', [UserController::class, 'destroy'])->middleware('effective.permission:users-index');
     Route::get('/roles/permissions', [RoleController::class, 'permissions'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
-    Route::put('/roles/permissions/{permission}', [RoleController::class, 'updatePermission'])->middleware('permission:users-index');
+    Route::put('/roles/permissions/{permission}', [RoleController::class, 'updatePermission'])->middleware('effective.permission:users-index');
     Route::get('/roles', [RoleController::class, 'index'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
     Route::get('/roles/{role}', [RoleController::class, 'show'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
-    Route::post('/roles', [RoleController::class, 'store'])->middleware('permission:users-index');
-    Route::match(['put', 'patch'], '/roles/{role}', [RoleController::class, 'update'])->middleware('permission:users-index');
-    Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->middleware('permission:users-index');
+    Route::post('/roles', [RoleController::class, 'store'])->middleware('effective.permission:users-index');
+    Route::match(['put', 'patch'], '/roles/{role}', [RoleController::class, 'update'])->middleware('effective.permission:users-index');
+    Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->middleware('effective.permission:users-index');
 
     Route::get('/customers/options', [CustomerController::class, 'options'])->middleware('permission:customers-index|customers-add|customers-edit');
     Route::get('/customers', [CustomerController::class, 'index'])->middleware('permission:customers-index');
-    Route::post('/customers', [CustomerController::class, 'store'])->middleware('permission:customers-add');
+    Route::post('/customers', [CustomerController::class, 'store'])->middleware('effective.permission:customers-add');
     Route::get('/customers/{customer}/ledger', CustomerLedgerController::class)->middleware('permission:customers-index');
     Route::get('/customers/{customer}/statement', [PaymentController::class, 'customerStatement'])->middleware('permission:customers-index');
     Route::get('/customers/{customer}', [CustomerController::class, 'show'])->middleware('permission:customers-index');
-    Route::match(['put', 'patch'], '/customers/{customer}', [CustomerController::class, 'update'])->middleware('permission:customers-edit');
-    Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->middleware('permission:customers-delete');
+    Route::match(['put', 'patch'], '/customers/{customer}', [CustomerController::class, 'update'])->middleware('effective.permission:customers-edit');
+    Route::delete('/customers/{customer}', [CustomerController::class, 'destroy'])->middleware('effective.permission:customers-delete');
 
     Route::get('/suppliers', [SupplierController::class, 'index'])->middleware('permission:suppliers-index');
     Route::post('/suppliers', [SupplierController::class, 'store'])->middleware('permission:suppliers-add');

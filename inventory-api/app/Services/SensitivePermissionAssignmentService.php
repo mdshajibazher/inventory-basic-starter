@@ -13,12 +13,15 @@ class SensitivePermissionAssignmentService
     public function __construct(
         private readonly SensitivePermissionCatalog $catalog,
         private readonly SuperUserInvariantService $superUsers,
+        private readonly EffectivePermissionService $effectivePermissions,
     ) {}
 
     public function syncRole(Role $role, array $permissions, User $actor, bool $acknowledged): array
     {
         return DB::transaction(function () use ($role, $permissions, $actor, $acknowledged): array {
             $this->superUsers->lockState();
+            $actor = User::query()->findOrFail($actor->id);
+            abort_unless($this->effectivePermissions->userHasPermission($actor, SensitivePermissionCatalog::SUPER_USER), 403);
             $role = Role::query()->lockForUpdate()->findOrFail($role->id);
             $current = $this->directPermissionNames($role);
             $desired = $this->catalog->ordered($permissions);
@@ -40,6 +43,8 @@ class SensitivePermissionAssignmentService
     {
         return DB::transaction(function () use ($user, $permissions, $actor, $acknowledged): array {
             $this->superUsers->lockState();
+            $actor = User::query()->findOrFail($actor->id);
+            abort_unless($this->effectivePermissions->userHasPermission($actor, SensitivePermissionCatalog::SUPER_USER), 403);
             $user = User::query()->lockForUpdate()->findOrFail($user->id);
             $current = $this->directPermissionNames($user);
             $desired = $this->catalog->ordered($permissions);

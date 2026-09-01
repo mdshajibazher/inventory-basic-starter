@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 import { Checkbox, Text } from 'react-native-paper';
-import type { SensitivePermissionCatalog, UserSensitivePermissions } from '@/src/types';
+import type { Role, SensitivePermissionCatalog, UserSensitivePermissions } from '@/src/types';
 
 type Props = {
   catalog: SensitivePermissionCatalog;
@@ -57,6 +57,10 @@ export function sensitiveAdditionMessage(catalog: SensitivePermissionCatalog, ad
   const labels = additions.map((name) => catalog.data.find((permission) => permission.name === name)?.label ?? name);
 
   return `You are about to grant the following sensitive access:\n\n${labels.map((label) => `• ${label}`).join('\n')}\n\nThis confirmation records that you acknowledge each added permission.`;
+}
+
+export function sensitiveRoleAdditionMessage(roles: Array<Pick<Role, 'name'>>) {
+  return `You are about to assign the following sensitive-bearing roles:\n\n${roles.map((role) => `• ${role.name}`).join('\n')}\n\nThis confirmation records that you acknowledge each added role and its sensitive access.`;
 }
 
 const styles = StyleSheet.create({

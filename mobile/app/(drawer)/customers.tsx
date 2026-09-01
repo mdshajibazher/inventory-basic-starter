@@ -4,9 +4,10 @@ import { useRoute } from '@react-navigation/native';
 import { Redirect } from 'expo-router';
 import { Button, Checkbox, DataTable, Menu, Modal, Portal, Searchbar, Switch, Text, TextInput } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
+import { sensitiveRoleAdditionMessage } from '@/src/components/SensitiveAccessPanel';
 import { useAuth } from '@/src/context/AuthContext';
 import { api, type CustomerPayload } from '@/src/lib/api';
-import type { Customer, CustomerGroup, PaginationMeta } from '@/src/types';
+import type { Customer, CustomerGroup, PaginationMeta, Role } from '@/src/types';
 
 type CustomerForm = {
   customerGroupId: string;
@@ -80,6 +81,7 @@ export default function CustomersScreen() {
   const route = useRoute();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<CustomerGroup[]>([]);
+  const [customerUserRole, setCustomerUserRole] = useState<Role | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -125,8 +127,9 @@ export default function CustomersScreen() {
   useEffect(() => {
     api.customerOptions()
       .then((response) => {
-        const data = response.data as { customer_groups?: CustomerGroup[] };
+        const data = response.data as { customer_groups?: CustomerGroup[]; customer_user_role?: Role | null };
         setGroups(data.customer_groups ?? []);
+        setCustomerUserRole(data.customer_user_role ?? null);
       })
       .catch((error) => Alert.alert('Options failed', error instanceof Error ? error.message : 'Try again.'));
   }, []);
@@ -197,17 +200,33 @@ export default function CustomersScreen() {
     };
   }
 
-  async function saveCustomer() {
+  function saveCustomer() {
     const validation = validate();
     if (validation) {
       Alert.alert('Invalid customer', validation);
       return;
     }
 
+    const createsLinkedUser = form.createUser && !editingCustomer?.user_id;
+    if (createsLinkedUser && customerUserRole?.sensitive_permissions?.length) {
+      Alert.alert('Confirm sensitive role', sensitiveRoleAdditionMessage([customerUserRole]), [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Assign role', style: 'destructive', onPress: () => { void persistCustomer(true); } },
+      ]);
+      return;
+    }
+
+    void persistCustomer(false);
+  }
+
+  async function persistCustomer(acknowledged: boolean) {
+    const requestPayload = payload();
+    if (acknowledged) requestPayload.acknowledged = true;
+
     setSaving(true);
     try {
-      if (editingCustomer) await api.updateCustomer(editingCustomer.id, payload());
-      else await api.createCustomer(payload());
+      if (editingCustomer) await api.updateCustomer(editingCustomer.id, requestPayload);
+      else await api.createCustomer(requestPayload);
 
       closeModal();
       if (editingCustomer) await load(page);

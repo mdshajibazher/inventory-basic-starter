@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { FileText, Pencil, Trash2 } from 'lucide-react';
 import { api, type CustomerPayload } from '@/lib/api';
-import type { Customer, CustomerGroup, PaginationMeta } from '@/lib/types';
+import type { Customer, CustomerGroup, PaginationMeta, Role } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActionButton, Button, Checkbox, Field, Input, Modal, Select, StatusBadge, Switch, Textarea } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
+import { sensitiveRoleAdditionMessage } from './sensitive-access-panel';
 
 const defaultPerPage = 15;
 
@@ -54,6 +55,7 @@ export function CustomersPage() {
   const { hasPermission } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<CustomerGroup[]>([]);
+  const [customerUserRole, setCustomerUserRole] = useState<Role | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -99,8 +101,9 @@ export function CustomersPage() {
   useEffect(() => {
     void api.customerOptions()
       .then((response) => {
-        const data = response.data as { customer_groups?: CustomerGroup[] };
+        const data = response.data as { customer_groups?: CustomerGroup[]; customer_user_role?: Role | null };
         setGroups(data.customer_groups ?? []);
+        setCustomerUserRole(data.customer_user_role ?? null);
       })
       .catch((error) => toast.error('Options failed', { description: errorMessage(error) }));
   }, []);
@@ -143,12 +146,19 @@ export function CustomersPage() {
       return;
     }
 
+    const requestPayload = payload(form);
+    const createsLinkedUser = form.createUser && !editing?.user_id;
+    if (createsLinkedUser && customerUserRole?.sensitive_permissions?.length) {
+      if (!window.confirm(sensitiveRoleAdditionMessage([customerUserRole]))) return;
+      requestPayload.acknowledged = true;
+    }
+
     setSaving(true);
     try {
       if (editing) {
-        await api.updateCustomer(editing.id, payload(form));
+        await api.updateCustomer(editing.id, requestPayload);
       } else {
-        await api.createCustomer(payload(form));
+        await api.createCustomer(requestPayload);
       }
       closeModal();
       toast.success(`Customer ${editing ? 'updated' : 'created'}`);

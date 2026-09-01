@@ -76,6 +76,7 @@ class RoleController extends Controller
 
     public function updatePermission(Request $request, Permission $permission)
     {
+        $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
         abort_if(! $this->catalog->isOrdinary($permission->name), 403);
         abort_if(is_string($request->input('name')) && ! $this->catalog->isOrdinary($request->input('name')), 403);
 
@@ -103,6 +104,8 @@ class RoleController extends Controller
     public function store(Request $request)
     {
         $role = DB::transaction(function () use ($request) {
+            $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $data = $this->validatedData($request);
             $permissions = $data['permissions'] ?? [];
             unset($data['permissions']);
@@ -110,7 +113,7 @@ class RoleController extends Controller
             $this->ordinaryPermissions->assertOrdinary($permissions);
 
             $role = Role::create($data + ['guard_name' => 'web', 'is_active' => true]);
-            $this->ordinaryPermissions->sync($role, $permissions);
+            $this->ordinaryPermissions->sync($role, $permissions, $actor);
 
             return $role->load('permissions:id,name');
         });
@@ -132,6 +135,7 @@ class RoleController extends Controller
     {
         $role = DB::transaction(function () use ($request, $role) {
             $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $role = Role::query()->lockForUpdate()->findOrFail($role->id);
             $data = $this->validatedData($request, $role);
             $permissions = $data['permissions'] ?? null;
@@ -141,13 +145,22 @@ class RoleController extends Controller
                 $this->ordinaryPermissions->assertOrdinary($permissions);
             }
 
+            $this->ordinaryPermissions->assertSensitiveTargetMutationAuthorized($actor, $role);
+            $beforeEffectiveSensitive = $this->ordinaryPermissions->effectiveSensitivePermissionNames($role);
             $role->update($data);
 
             if ($permissions !== null) {
-                $this->ordinaryPermissions->sync($role, $permissions);
+                $this->ordinaryPermissions->sync($role, $permissions, $actor);
             }
 
             $this->superUsers->assertSatisfied();
+            $this->ordinaryPermissions->auditEffectiveTransition(
+                $actor,
+                $role,
+                'status_changed',
+                $beforeEffectiveSensitive,
+                $this->ordinaryPermissions->effectiveSensitivePermissionNames($role->fresh()),
+            );
 
             return $role->load('permissions:id,name');
         });
@@ -158,11 +171,13 @@ class RoleController extends Controller
         ]);
     }
 
-    public function destroy(Role $role)
+    public function destroy(Request $request, Role $role)
     {
-        $deleted = DB::transaction(function () use ($role): bool {
+        $deleted = DB::transaction(function () use ($request, $role): bool {
             $this->superUsers->lockState();
+            $actor = $this->ordinaryPermissions->authorizeActor($request->user(), 'users-index');
             $role = Role::query()->lockForUpdate()->findOrFail($role->id);
+            $this->ordinaryPermissions->assertSensitiveTargetMutationAuthorized($actor, $role);
 
             if ($role->users()->exists()) {
                 $this->superUsers->assertSatisfiedWithoutRole($role);
@@ -170,8 +185,16 @@ class RoleController extends Controller
                 return false;
             }
 
+            $beforeEffectiveSensitive = $this->ordinaryPermissions->effectiveSensitivePermissionNames($role);
             $role->delete();
             $this->superUsers->assertSatisfied();
+            $this->ordinaryPermissions->auditEffectiveTransition(
+                $actor,
+                $role,
+                'deleted',
+                $beforeEffectiveSensitive,
+                [],
+            );
 
             return true;
         });

@@ -10,7 +10,7 @@ import { errorMessage, permissionLabel } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 import { ActionButton, Button, Checkbox, Field, Input, Modal, StatusBadge, Switch } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
-import { SensitiveAccessConfirmation, SensitiveAccessPanel } from './sensitive-access-panel';
+import { SensitiveAccessConfirmation, SensitiveAccessPanel, sensitiveRoleAdditionMessage } from './sensitive-access-panel';
 
 type UserOptions = {
   roles: Role[];
@@ -181,11 +181,26 @@ export function UsersPage() {
     }
   }
 
-  async function saveRoles() {
+  async function saveRoles(acknowledged = false) {
     if (!editing) return;
+    const currentRoleIds = userRoles(editing).map((role) => role.id);
+    const sensitiveAdditions = options.roles.filter((role) =>
+      selectedRoles.includes(role.id)
+      && !currentRoleIds.includes(role.id)
+      && Boolean(role.sensitive_permissions?.length));
+
+    if (sensitiveAdditions.length && !acknowledged) {
+      if (window.confirm(sensitiveRoleAdditionMessage(sensitiveAdditions))) {
+        void saveRoles(true);
+      }
+      return;
+    }
+
     setSaving(true);
     try {
-      await api.updateUserRoles(editing.id, { roles: selectedRoles });
+      await api.updateUserRoles(editing.id, acknowledged
+        ? { roles: selectedRoles, acknowledged: true }
+        : { roles: selectedRoles });
       const currentUser = await refreshUser();
       closeModal();
       if (currentUser?.permissions?.some((permission) => permission === 'users-index' || permission === 'super-user')) await load(page);
@@ -359,7 +374,10 @@ export function UsersPage() {
           {options.roles.map((role) => (
             <label key={role.id} className="flex items-center gap-3 rounded-md border border-neutral-200 p-3 text-sm">
               <Checkbox checked={selectedRoles.includes(role.id)} onCheckedChange={() => setSelectedRoles((current) => current.includes(role.id) ? current.filter((id) => id !== role.id) : [...current, role.id])} />
-              <span>{role.name}</span>
+              <span className="flex flex-wrap items-center gap-2">
+                <span>{role.name}</span>
+                {role.sensitive_permissions?.length ? <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Sensitive access</span> : null}
+              </span>
             </label>
           ))}
           <FormActions saving={saving} onCancel={closeModal} onSave={() => void saveRoles()} />

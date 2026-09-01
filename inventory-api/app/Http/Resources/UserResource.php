@@ -14,7 +14,6 @@ class UserResource extends JsonResource
     public function toArray(Request $request): array
     {
         $catalog = app(SensitivePermissionCatalog::class);
-        $sensitive = app(SensitivePermissionAssignmentService::class)->userPayload($this->resource);
         $canManageSensitive = $request->user()
             && app(EffectivePermissionService::class)->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER);
         $isCurrentUserPayload = $request->route()?->uri() === 'api/me';
@@ -40,11 +39,15 @@ class UserResource extends JsonResource
                 ->filter(fn ($permission): bool => $catalog->isOrdinary($permission->name))
                 ->sortBy('name')
                 ->values(),
-            'sensitive_permissions' => $this->when($canManageSensitive, [
-                'direct' => $sensitive['direct_permissions'],
-                'inherited' => $sensitive['inherited_permissions'],
-                'effective' => $sensitive['effective_permissions'],
-            ]),
+            'sensitive_permissions' => $this->when($canManageSensitive, function (): array {
+                $sensitive = app(SensitivePermissionAssignmentService::class)->userPayload($this->resource);
+
+                return [
+                    'direct' => $sensitive['direct_permissions'],
+                    'inherited' => $sensitive['inherited_permissions'],
+                    'effective' => $sensitive['effective_permissions'],
+                ];
+            }),
             'is_active' => $this->is_active,
             'is_deleted' => $this->is_deleted,
             'created_at' => $this->created_at,

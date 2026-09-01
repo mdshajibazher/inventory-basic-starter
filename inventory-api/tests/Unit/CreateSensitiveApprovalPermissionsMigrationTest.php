@@ -134,6 +134,31 @@ class CreateSensitiveApprovalPermissionsMigrationTest extends TestCase
         $this->assertSame([], $settings->payment_approver_ids);
     }
 
+    public function test_it_backfills_only_the_latest_general_settings_row(): void
+    {
+        $obsoleteApprover = $this->user('Obsolete Approver', 'obsolete@example.com');
+        $currentApprover = $this->user('Current Approver', 'current@example.com');
+
+        GeneralSetting::create([
+            'sales_invoice_approver_ids' => [$obsoleteApprover->id],
+            'return_invoice_approver_ids' => [],
+            'purchase_invoice_approver_ids' => [],
+            'payment_approver_ids' => [],
+        ]);
+        GeneralSetting::create([
+            'sales_invoice_approver_ids' => [],
+            'return_invoice_approver_ids' => [],
+            'purchase_invoice_approver_ids' => [],
+            'payment_approver_ids' => [$currentApprover->id],
+        ]);
+
+        $migration = require database_path('migrations/2026_09_01_000001_create_sensitive_approval_permissions.php');
+        $migration->up();
+
+        $this->assertSame([], $this->directPermissionNames($obsoleteApprover));
+        $this->assertSame(['approvals-payments'], $this->directPermissionNames($currentApprover));
+    }
+
     private function user(string $name, string $email): User
     {
         return User::create([
