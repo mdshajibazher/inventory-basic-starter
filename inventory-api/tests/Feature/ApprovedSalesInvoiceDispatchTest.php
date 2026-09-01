@@ -16,6 +16,7 @@ use App\Services\RecordNotificationService;
 use App\Services\SalesInvoicePdfRenderer;
 use App\Services\SalesInvoiceRevisionService;
 use App\Services\SalesInvoiceSnapshotService;
+use App\Services\SensitivePermissionCatalog;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -33,6 +34,8 @@ use LogicException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 class ApprovedSalesInvoiceDispatchTest extends TestCase
@@ -62,7 +65,22 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             $table->string('name');
             $table->string('email')->nullable();
             $table->string('password')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->boolean('is_deleted')->default(false);
             $table->timestamps();
+        });
+        Schema::create('permissions', function (Blueprint $table): void {
+            $table->increments('id');
+            $table->string('name');
+            $table->string('guard_name');
+            $table->timestamps();
+            $table->unique(['name', 'guard_name']);
+        });
+        Schema::create('model_has_permissions', function (Blueprint $table): void {
+            $table->unsignedInteger('permission_id');
+            $table->string('model_type');
+            $table->unsignedBigInteger('model_id');
+            $table->primary(['permission_id', 'model_id', 'model_type']);
         });
         Schema::create('units', function (Blueprint $table): void {
             $table->id();
@@ -171,6 +189,8 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'updated_at' => now(),
         ]);
 
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $this->revisions = new SalesInvoiceRevisionService(new SalesInvoiceSnapshotService);
         $this->notifications = new RecordNotificationService($this->revisions);
     }
@@ -185,6 +205,8 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         Schema::dropIfExists('sales');
         Schema::dropIfExists('products');
         Schema::dropIfExists('units');
+        Schema::dropIfExists('model_has_permissions');
+        Schema::dropIfExists('permissions');
         Schema::dropIfExists('users');
         Schema::dropIfExists('customers');
 
@@ -440,7 +462,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
     public function test_approval_service_finalizes_the_exact_revision_inside_the_sale_lock_transaction(): void
     {
         [$sale] = $this->pendingRevision('customer@example.test', 125);
-        $this->setting(emailEnabled: true, approverIds: [$sale->user_id]);
+        $this->setting(emailEnabled: true);
         $snapshots = new class extends SalesInvoiceSnapshotService
         {
             /** @var list<int> */
@@ -464,6 +486,7 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
         };
         $approvals = new ApprovalService(new SalesInvoiceRevisionService($snapshots));
         $user = User::query()->findOrFail($sale->user_id);
+        $this->grantSalesApproval($user);
 
         $approved = $approvals->approveSale($sale, $user);
 
@@ -490,6 +513,8 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'name' => 'Legacy Creator',
             'email' => 'legacy-creator@example.test',
             'password' => 'unused',
+            'is_active' => true,
+            'is_deleted' => false,
         ]);
         $sale = Sale::query()->create([
             'reference_no' => 'SI-2026-LEGACY',
@@ -500,7 +525,8 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'sale_date' => '2026-08-30',
             'approval_status' => 'pending',
         ]);
-        $this->setting(emailEnabled: true, approverIds: [$user->id]);
+        $this->setting(emailEnabled: true);
+        $this->grantSalesApproval($user);
 
         $approved = (new ApprovalService($this->revisions))->approveSale($sale, $user);
 
@@ -928,6 +954,19 @@ class ApprovedSalesInvoiceDispatchTest extends TestCase
             'approval_status' => 'approved',
             'approved_at' => now()->startOfSecond(),
         ]);
+    }
+
+    private function grantSalesApproval(User $user): void
+    {
+        $permissions = collect([
+            'sales-index',
+            SensitivePermissionCatalog::APPROVAL_SALES_INVOICE,
+        ])->map(fn (string $name): Permission => Permission::query()->firstOrCreate([
+            'name' => $name,
+            'guard_name' => 'web',
+        ]));
+
+        $user->givePermissionTo($permissions);
     }
 
     private function notifyApproved(Sale $sale): SalesInvoiceRevision

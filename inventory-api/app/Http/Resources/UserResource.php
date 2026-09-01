@@ -3,6 +3,9 @@
 namespace App\Http\Resources;
 
 use App\Models\Biller;
+use App\Services\EffectivePermissionService;
+use App\Services\SensitivePermissionAssignmentService;
+use App\Services\SensitivePermissionCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -10,6 +13,12 @@ class UserResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $catalog = app(SensitivePermissionCatalog::class);
+        $sensitive = app(SensitivePermissionAssignmentService::class)->userPayload($this->resource);
+        $canManageSensitive = $request->user()
+            && app(EffectivePermissionService::class)->userHasPermission($request->user(), SensitivePermissionCatalog::SUPER_USER);
+        $isCurrentUserPayload = $request->route()?->uri() === 'api/me';
+
         return [
             'id' => $this->id,
             'name' => $this->name,
@@ -24,8 +33,18 @@ class UserResource extends JsonResource
                 ->orderBy('name')
                 ->get(['id', 'name', 'company_name']),
             'roles' => $this->whenLoaded('roles'),
-            'permissions' => $this->permissionNames(),
-            'direct_permissions' => $this->getDirectPermissions()->sortBy('name')->values(),
+            'permissions' => $isCurrentUserPayload
+                ? $this->permissionNames()
+                : $catalog->filterOrdinaryPermissions($this->permissionNames()),
+            'direct_permissions' => $this->getDirectPermissions()
+                ->filter(fn ($permission): bool => $catalog->isOrdinary($permission->name))
+                ->sortBy('name')
+                ->values(),
+            'sensitive_permissions' => $this->when($canManageSensitive, [
+                'direct' => $sensitive['direct_permissions'],
+                'inherited' => $sensitive['inherited_permissions'],
+                'effective' => $sensitive['effective_permissions'],
+            ]),
             'is_active' => $this->is_active,
             'is_deleted' => $this->is_deleted,
             'created_at' => $this->created_at,

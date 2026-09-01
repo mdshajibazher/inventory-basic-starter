@@ -3,8 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\RoleResource;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Services\OrdinaryPermissionService;
+use App\Services\SensitivePermissionCatalog;
+use App\Services\SuperUserInvariantService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -12,6 +17,12 @@ use Spatie\Permission\PermissionRegistrar;
 
 class RoleController extends Controller
 {
+    public function __construct(
+        private readonly SensitivePermissionCatalog $catalog,
+        private readonly OrdinaryPermissionService $ordinaryPermissions,
+        private readonly SuperUserInvariantService $superUsers,
+    ) {}
+
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
@@ -35,7 +46,7 @@ class RoleController extends Controller
             ->withQueryString();
 
         return response()->json([
-            'data' => $roles->items(),
+            'data' => RoleResource::collection(collect($roles->items()))->resolve($request),
             'links' => [
                 'first' => $roles->url(1),
                 'last' => $roles->url($roles->lastPage()),
@@ -56,12 +67,18 @@ class RoleController extends Controller
     public function permissions()
     {
         return response()->json([
-            'data' => Permission::query()->orderBy('name')->get(),
+            'data' => Permission::query()
+                ->whereNotIn('name', [...$this->catalog->all(), ...$this->catalog->retiredGeneralSettingsPermissions()])
+                ->orderBy('name')
+                ->get(),
         ]);
     }
 
     public function updatePermission(Request $request, Permission $permission)
     {
+        abort_if(! $this->catalog->isOrdinary($permission->name), 403);
+        abort_if(is_string($request->input('name')) && ! $this->catalog->isOrdinary($request->input('name')), 403);
+
         $data = $request->validate([
             'name' => [
                 'required',
@@ -90,56 +107,80 @@ class RoleController extends Controller
             $permissions = $data['permissions'] ?? [];
             unset($data['permissions']);
 
+            $this->ordinaryPermissions->assertOrdinary($permissions);
+
             $role = Role::create($data + ['guard_name' => 'web', 'is_active' => true]);
-            $role->syncPermissions($permissions);
+            $this->ordinaryPermissions->sync($role, $permissions);
 
             return $role->load('permissions:id,name');
         });
 
         return response()->json([
             'message' => 'Role created successfully.',
-            'data' => $role,
+            'data' => new RoleResource($role),
         ], 201);
     }
 
-    public function show(Role $role)
+    public function show(Role $role): JsonResponse
     {
         return response()->json([
-            'data' => $role->load('permissions:id,name'),
+            'data' => new RoleResource($role->load('permissions:id,name')),
         ]);
     }
 
     public function update(Request $request, Role $role)
     {
         $role = DB::transaction(function () use ($request, $role) {
+            $this->superUsers->lockState();
+            $role = Role::query()->lockForUpdate()->findOrFail($role->id);
             $data = $this->validatedData($request, $role);
             $permissions = $data['permissions'] ?? null;
             unset($data['permissions']);
 
+            if ($permissions !== null) {
+                $this->ordinaryPermissions->assertOrdinary($permissions);
+            }
+
             $role->update($data);
 
             if ($permissions !== null) {
-                $role->syncPermissions($permissions);
+                $this->ordinaryPermissions->sync($role, $permissions);
             }
+
+            $this->superUsers->assertSatisfied();
 
             return $role->load('permissions:id,name');
         });
 
         return response()->json([
             'message' => 'Role updated successfully.',
-            'data' => $role,
+            'data' => new RoleResource($role),
         ]);
     }
 
     public function destroy(Role $role)
     {
-        if ($role->users()->exists()) {
+        $deleted = DB::transaction(function () use ($role): bool {
+            $this->superUsers->lockState();
+            $role = Role::query()->lockForUpdate()->findOrFail($role->id);
+
+            if ($role->users()->exists()) {
+                $this->superUsers->assertSatisfiedWithoutRole($role);
+
+                return false;
+            }
+
+            $role->delete();
+            $this->superUsers->assertSatisfied();
+
+            return true;
+        });
+
+        if (! $deleted) {
             return response()->json([
                 'message' => 'This role is assigned to users and cannot be deleted.',
             ], 422);
         }
-
-        $role->delete();
 
         return response()->json([
             'message' => 'Role deleted successfully.',

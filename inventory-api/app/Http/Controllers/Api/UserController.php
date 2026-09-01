@@ -8,12 +8,21 @@ use App\Models\Biller;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\OrdinaryPermissionService;
+use App\Services\SensitivePermissionCatalog;
+use App\Services\SuperUserInvariantService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
+    public function __construct(
+        private readonly SensitivePermissionCatalog $catalog,
+        private readonly OrdinaryPermissionService $ordinaryPermissions,
+        private readonly SuperUserInvariantService $superUsers,
+    ) {}
+
     public function index(Request $request)
     {
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
@@ -47,7 +56,10 @@ class UserController extends Controller
         return response()->json([
             'data' => [
                 'roles' => Role::query()->where('is_active', true)->orderBy('name')->get(['id', 'name']),
-                'permissions' => Permission::query()->orderBy('name')->get(['id', 'name']),
+                'permissions' => Permission::query()
+                    ->whereNotIn('name', [...$this->catalog->all(), ...$this->catalog->retiredGeneralSettingsPermissions()])
+                    ->orderBy('name')
+                    ->get(['id', 'name']),
                 'branches' => Biller::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'company_name']),
                 'users' => User::query()->where('is_deleted', false)->where('is_active', true)->orderBy('name')->get(['id', 'name', 'email']),
             ],
@@ -61,6 +73,8 @@ class UserController extends Controller
             $roleIds = $data['roles'] ?? [];
             $permissions = $data['permissions'] ?? [];
             unset($data['roles'], $data['permissions']);
+
+            $this->ordinaryPermissions->assertOrdinary($permissions);
 
             $user = User::create($data + ['is_active' => true, 'is_deleted' => false]);
             $this->syncAccess($user, $roleIds, $permissions);
@@ -84,10 +98,16 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
         $user = DB::transaction(function () use ($request, $user) {
+            $this->superUsers->lockState();
+            $user = User::query()->lockForUpdate()->findOrFail($user->id);
             $data = $this->validatedData($request, $user);
-            $roleIds = $data['roles'] ?? [];
-            $permissions = $data['permissions'] ?? [];
+            $roleIds = $data['roles'] ?? null;
+            $permissions = $data['permissions'] ?? null;
             unset($data['roles'], $data['permissions']);
+
+            if ($permissions !== null) {
+                $this->ordinaryPermissions->assertOrdinary($permissions);
+            }
 
             if (empty($data['password'])) {
                 unset($data['password']);
@@ -97,11 +117,12 @@ class UserController extends Controller
 
             $user->update($data);
 
+            $this->syncAccess($user, $roleIds, $permissions);
+            $this->superUsers->assertSatisfied();
+
             if ($wasActive && ! $user->canAccessSystem()) {
                 $user->tokens()->delete();
             }
-
-            $this->syncAccess($user, $roleIds, $permissions);
 
             return $user->load('roles:id,name', 'currentBiller:id,name');
         });
@@ -119,12 +140,19 @@ class UserController extends Controller
             'roles.*' => ['integer', 'exists:roles,id'],
         ]);
 
-        $roles = Role::query()
-            ->whereIn('id', $data['roles'] ?? [])
-            ->get(['id', 'name']);
+        $user = DB::transaction(function () use ($data, $user): User {
+            $this->superUsers->lockState();
+            $user = User::query()->lockForUpdate()->findOrFail($user->id);
+            $roles = Role::query()
+                ->whereIn('id', $data['roles'] ?? [])
+                ->get(['id', 'name']);
 
-        $user->syncRoles($roles->pluck('name')->all());
-        $user->forceFill(['role_id' => $roles->first()?->id])->save();
+            $user->syncRoles($roles->pluck('name')->all());
+            $user->forceFill(['role_id' => $roles->first()?->id])->save();
+            $this->superUsers->assertSatisfied();
+
+            return $user;
+        });
 
         return response()->json([
             'message' => 'User roles updated successfully.',
@@ -139,7 +167,7 @@ class UserController extends Controller
             'permissions.*' => ['string', 'exists:permissions,name'],
         ]);
 
-        $user->syncPermissions($data['permissions'] ?? []);
+        $this->ordinaryPermissions->sync($user, $data['permissions'] ?? []);
 
         return response()->json([
             'message' => 'User permissions updated successfully.',
@@ -149,8 +177,13 @@ class UserController extends Controller
 
     public function destroy(User $user)
     {
-        $user->update(['is_deleted' => true, 'is_active' => false]);
-        $user->tokens()->delete();
+        DB::transaction(function () use ($user): void {
+            $this->superUsers->lockState();
+            $user = User::query()->lockForUpdate()->findOrFail($user->id);
+            $user->update(['is_deleted' => true, 'is_active' => false]);
+            $this->superUsers->assertSatisfied();
+            $user->tokens()->delete();
+        });
 
         return response()->json([
             'message' => 'User deleted successfully.',
@@ -190,14 +223,19 @@ class UserController extends Controller
         return $data;
     }
 
-    private function syncAccess(User $user, array $roleIds, array $permissions): void
+    private function syncAccess(User $user, ?array $roleIds, ?array $permissions): void
     {
-        $roles = Role::query()
-            ->whereIn('id', $roleIds)
-            ->get(['id', 'name']);
+        if ($roleIds !== null) {
+            $roles = Role::query()
+                ->whereIn('id', $roleIds)
+                ->get(['id', 'name']);
 
-        $user->syncRoles($roles->pluck('name')->all());
-        $user->syncPermissions($permissions);
-        $user->forceFill(['role_id' => $roles->first()?->id])->save();
+            $user->syncRoles($roles->pluck('name')->all());
+            $user->forceFill(['role_id' => $roles->first()?->id])->save();
+        }
+
+        if ($permissions !== null) {
+            $this->ordinaryPermissions->sync($user, $permissions);
+        }
     }
 }

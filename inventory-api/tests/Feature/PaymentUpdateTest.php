@@ -27,7 +27,7 @@ class PaymentUpdateTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['model_has_permissions', 'role_has_permissions', 'roles', 'permissions', 'general_settings', 'payments', 'accounts', 'suppliers', 'customers', 'billers', 'users'] as $table) {
+        foreach (['model_has_roles', 'model_has_permissions', 'role_has_permissions', 'roles', 'permissions', 'general_settings', 'payments', 'accounts', 'suppliers', 'customers', 'billers', 'users'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -414,6 +414,7 @@ class PaymentUpdateTest extends TestCase
             $table->increments('id');
             $table->string('name');
             $table->string('guard_name');
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
             $table->unique(['name', 'guard_name']);
         });
@@ -429,6 +430,13 @@ class PaymentUpdateTest extends TestCase
             $table->string('model_type');
             $table->unsignedBigInteger('model_id');
             $table->primary(['permission_id', 'model_id', 'model_type']);
+        });
+
+        Schema::create('model_has_roles', function (Blueprint $table) {
+            $table->unsignedInteger('role_id');
+            $table->string('model_type');
+            $table->unsignedBigInteger('model_id');
+            $table->primary(['role_id', 'model_id', 'model_type']);
         });
     }
 }

@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\PurchaseStatusController;
 use App\Http\Controllers\Api\ReturnInvoiceController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SalesInvoiceController;
+use App\Http\Controllers\Api\SensitivePermissionController;
 use App\Http\Controllers\Api\SmsLogController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\SupplierController;
@@ -32,6 +33,7 @@ use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\UnitGroupController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\WarehouseController;
+use App\Services\SensitivePermissionCatalog;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -41,13 +43,25 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/branding', [GeneralSettingController::class, 'branding']);
 
-    Route::get('/users/options', [UserController::class, 'options'])->middleware('permission:users-index|general-settings-index|general-settings-edit');
+    Route::get('/sensitive-permissions', [SensitivePermissionController::class, 'index'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::put('/roles/{role}/sensitive-permissions', [SensitivePermissionController::class, 'updateRole'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::put('/users/{user}/sensitive-permissions', [SensitivePermissionController::class, 'updateUser'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+
+    Route::get('/users/options', [UserController::class, 'options'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
     Route::put('/users/{user}/roles', [UserController::class, 'updateRoles'])->middleware('permission:users-index');
     Route::put('/users/{user}/permissions', [UserController::class, 'updatePermissions'])->middleware('permission:users-index');
-    Route::apiResource('users', UserController::class)->middleware('permission:users-index');
-    Route::get('/roles/permissions', [RoleController::class, 'permissions'])->middleware('permission:users-index');
+    Route::get('/users', [UserController::class, 'index'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
+    Route::get('/users/{user}', [UserController::class, 'show'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
+    Route::post('/users', [UserController::class, 'store'])->middleware('permission:users-index');
+    Route::match(['put', 'patch'], '/users/{user}', [UserController::class, 'update'])->middleware('permission:users-index');
+    Route::delete('/users/{user}', [UserController::class, 'destroy'])->middleware('permission:users-index');
+    Route::get('/roles/permissions', [RoleController::class, 'permissions'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
     Route::put('/roles/permissions/{permission}', [RoleController::class, 'updatePermission'])->middleware('permission:users-index');
-    Route::apiResource('roles', RoleController::class)->middleware('permission:users-index');
+    Route::get('/roles', [RoleController::class, 'index'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
+    Route::get('/roles/{role}', [RoleController::class, 'show'])->middleware('effective.permission:users-index|'.SensitivePermissionCatalog::SUPER_USER);
+    Route::post('/roles', [RoleController::class, 'store'])->middleware('permission:users-index');
+    Route::match(['put', 'patch'], '/roles/{role}', [RoleController::class, 'update'])->middleware('permission:users-index');
+    Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->middleware('permission:users-index');
 
     Route::get('/customers/options', [CustomerController::class, 'options'])->middleware('permission:customers-index|customers-add|customers-edit');
     Route::get('/customers', [CustomerController::class, 'index'])->middleware('permission:customers-index');
@@ -125,12 +139,12 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::match(['put', 'patch'], '/expenses/{expense}', [ExpenseController::class, 'update'])->middleware('permission:expenses-edit');
     Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->middleware('permission:expenses-delete');
 
-    Route::get('/general-settings', [GeneralSettingController::class, 'index'])->middleware('permission:general-settings-index');
-    Route::post('/general-settings', [GeneralSettingController::class, 'store'])->middleware('permission:general-settings-add');
-    Route::get('/general-settings/{generalSetting}', [GeneralSettingController::class, 'show'])->middleware('permission:general-settings-index');
-    Route::match(['put', 'patch'], '/general-settings/{generalSetting}', [GeneralSettingController::class, 'update'])->middleware('permission:general-settings-edit');
-    Route::get('/email-logs', [EmailLogController::class, 'index'])->middleware('permission:general-settings-index');
-    Route::get('/sms-logs', [SmsLogController::class, 'index'])->middleware('permission:general-settings-index');
+    Route::get('/general-settings', [GeneralSettingController::class, 'index'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::post('/general-settings', [GeneralSettingController::class, 'store'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::get('/general-settings/{generalSetting}', [GeneralSettingController::class, 'show'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::match(['put', 'patch'], '/general-settings/{generalSetting}', [GeneralSettingController::class, 'update'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::get('/email-logs', [EmailLogController::class, 'index'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::get('/sms-logs', [SmsLogController::class, 'index'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
 
     Route::get('/products/options', [ProductController::class, 'options'])->middleware('permission:products-index|products-add|products-edit');
     Route::get('/check-batch-availability/{product_id}/{batch_no}/{warehouse_id}', [ProductController::class, 'checkBatchAvailability'])
@@ -163,30 +177,45 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/sales-invoices/{sale}', [SalesInvoiceController::class, 'show'])->middleware('permission:sales-index|sales-add|sales-edit');
     Route::match(['put', 'patch'], '/sales-invoices/{sale}', [SalesInvoiceController::class, 'update'])->middleware('permission:sales-edit');
     Route::patch('/sales-invoices/{sale}/lines/{productSale}/cost', [SalesInvoiceController::class, 'updateLineCost'])->middleware('permission:sales-edit');
-    Route::post('/sales-invoices/{sale}/approve', [SalesInvoiceController::class, 'approve'])->middleware('permission:sales-index|sales-edit');
+    Route::post('/sales-invoices/{sale}/approve', [SalesInvoiceController::class, 'approve'])->middleware([
+        'effective.permission:sales-index|sales-edit',
+        'effective.permission:'.SensitivePermissionCatalog::APPROVAL_SALES_INVOICE,
+    ]);
     Route::get('/return-invoices', [ReturnInvoiceController::class, 'index'])->middleware('permission:returns-index|returns-add|returns-edit');
     Route::post('/return-invoices', [ReturnInvoiceController::class, 'store'])->middleware('permission:returns-add');
     Route::get('/return-invoices/{returnInvoice}', [ReturnInvoiceController::class, 'show'])->middleware('permission:returns-index|returns-add|returns-edit|returns-show');
     Route::match(['put', 'patch'], '/return-invoices/{returnInvoice}', [ReturnInvoiceController::class, 'update'])->middleware('permission:returns-edit');
-    Route::post('/return-invoices/{returnInvoice}/approve', [ReturnInvoiceController::class, 'approve'])->middleware('permission:returns-index|returns-edit|returns-show');
+    Route::post('/return-invoices/{returnInvoice}/approve', [ReturnInvoiceController::class, 'approve'])->middleware([
+        'effective.permission:returns-index|returns-edit|returns-show',
+        'effective.permission:'.SensitivePermissionCatalog::APPROVAL_SALES_RETURN_INVOICE,
+    ]);
     Route::get('/purchase-statuses', [PurchaseStatusController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::get('/purchase-invoices', [PurchaseInvoiceController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::post('/purchase-invoices', [PurchaseInvoiceController::class, 'store'])->middleware('permission:purchases-add');
     Route::get('/purchase-invoices/{purchase}/pdf', [PurchaseInvoiceController::class, 'pdf'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::get('/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::match(['put', 'patch'], '/purchase-invoices/{purchase}', [PurchaseInvoiceController::class, 'update'])->middleware('permission:purchases-edit');
-    Route::post('/purchase-invoices/{purchase}/approve', [PurchaseInvoiceController::class, 'approve'])->middleware('permission:purchases-index|purchases-edit');
+    Route::post('/purchase-invoices/{purchase}/approve', [PurchaseInvoiceController::class, 'approve'])->middleware([
+        'effective.permission:purchases-index|purchases-edit',
+        'effective.permission:'.SensitivePermissionCatalog::APPROVAL_PURCHASE_INVOICE,
+    ]);
     Route::get('/purchase-return-invoices', [PurchaseReturnController::class, 'index'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::post('/purchase-return-invoices', [PurchaseReturnController::class, 'store'])->middleware('permission:purchases-add');
     Route::get('/purchase-return-invoices/{returnPurchase}', [PurchaseReturnController::class, 'show'])->middleware('permission:purchases-index|purchases-add|purchases-edit');
     Route::match(['put', 'patch'], '/purchase-return-invoices/{returnPurchase}', [PurchaseReturnController::class, 'update'])->middleware('permission:purchases-edit');
-    Route::post('/purchase-return-invoices/{returnPurchase}/approve', [PurchaseReturnController::class, 'approve'])->middleware('permission:purchases-index|purchases-edit');
+    Route::post('/purchase-return-invoices/{returnPurchase}/approve', [PurchaseReturnController::class, 'approve'])->middleware([
+        'effective.permission:purchases-index|purchases-edit',
+        'effective.permission:'.SensitivePermissionCatalog::APPROVAL_PURCHASE_RETURN_INVOICE,
+    ]);
 
     Route::get('/payments', [PaymentController::class, 'index'])->middleware('permission:sales-index|purchases-index|accounts-index');
     Route::post('/payments', [PaymentController::class, 'store'])->middleware('permission:sales-add|purchases-add|accounts-index');
     Route::get('/payments/{payment}', [PaymentController::class, 'show'])->middleware('permission:sales-index|purchases-index|accounts-index');
     Route::match(['put', 'patch'], '/payments/{payment}', [PaymentController::class, 'update'])->middleware('permission:sales-edit|purchases-edit|accounts-edit');
-    Route::post('/payments/{payment}/approve', [PaymentController::class, 'approve'])->middleware('permission:sales-index|purchases-index|accounts-index');
+    Route::post('/payments/{payment}/approve', [PaymentController::class, 'approve'])->middleware([
+        'effective.permission:sales-index|purchases-index|accounts-index',
+        'effective.permission:'.SensitivePermissionCatalog::APPROVAL_PAYMENTS,
+    ]);
 
     Route::get('/reports/profit', ProfitReportController::class)->middleware('permission:reports-profit');
     Route::get('/reports/profit/details', [ProfitReportController::class, 'details'])->middleware('permission:reports-profit');
@@ -194,5 +223,5 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/reports/datewise-products', DatewiseProductReportController::class)->middleware('permission:reports-profit');
     Route::get('/reports/datewise-products/pdf', [DatewiseProductReportController::class, 'pdf'])->middleware('permission:reports-profit');
     Route::get('/dashboard', [DashboardController::class, 'index']);
-    Route::post('/dashboard/clear-transactions', [DashboardController::class, 'clearTransactions'])->middleware('permission:general-settings-edit');
+    Route::post('/dashboard/clear-transactions', [DashboardController::class, 'clearTransactions'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
 });

@@ -153,14 +153,6 @@ class GeneralSettingController extends Controller
             'bulksmsbd_api_url' => ['nullable', 'url', 'max:255'],
             'bulksmsbd_api_key' => ['nullable', 'string', 'max:255'],
             'bulksmsbd_sender_id' => ['nullable', 'string', 'max:255'],
-            'sales_invoice_approver_ids' => ['nullable', 'array'],
-            'sales_invoice_approver_ids.*' => ['integer', 'exists:users,id'],
-            'return_invoice_approver_ids' => ['nullable', 'array'],
-            'return_invoice_approver_ids.*' => ['integer', 'exists:users,id'],
-            'purchase_invoice_approver_ids' => ['nullable', 'array'],
-            'purchase_invoice_approver_ids.*' => ['integer', 'exists:users,id'],
-            'payment_approver_ids' => ['nullable', 'array'],
-            'payment_approver_ids.*' => ['integer', 'exists:users,id'],
             'sales_invoice_mail_notification_enabled' => ['nullable', 'boolean'],
             'sales_invoice_mail_notification_user_ids' => ['nullable', 'array'],
             'sales_invoice_mail_notification_user_ids.*' => ['integer', 'exists:users,id'],
@@ -192,10 +184,6 @@ class GeneralSettingController extends Controller
         ]);
 
         $arrayFields = [
-            'sales_invoice_approver_ids',
-            'return_invoice_approver_ids',
-            'purchase_invoice_approver_ids',
-            'payment_approver_ids',
             'sales_invoice_mail_notification_user_ids',
             'sales_invoice_sms_notification_user_ids',
             'return_invoice_mail_notification_user_ids',

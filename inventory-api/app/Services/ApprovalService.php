@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\GeneralSetting;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductBatch;
@@ -31,16 +30,28 @@ class ApprovalService
 
     public function canApprove(User $user, string $type): bool
     {
-        return in_array($user->id, $this->approverIds($type), true);
+        $approvalPermission = app(SensitivePermissionCatalog::class)->approvalPermissionFor($type);
+        $ordinaryPermissions = match ($type) {
+            'sales' => ['sales-index', 'sales-edit'],
+            'returns' => ['returns-index', 'returns-edit', 'returns-show'],
+            'purchases', 'purchase_returns' => ['purchases-index', 'purchases-edit'],
+            'payments' => ['sales-index', 'purchases-index', 'accounts-index'],
+            default => [],
+        };
+
+        if (! $approvalPermission || $ordinaryPermissions === []) {
+            return false;
+        }
+
+        $permissions = app(EffectivePermissionService::class);
+
+        return $permissions->userHasPermission($user, $approvalPermission)
+            && $permissions->userHasAnyPermission($user, $ordinaryPermissions);
     }
 
     public function assertCanApprove(User $user, string $type): void
     {
-        if (! $this->canApprove($user, $type)) {
-            throw ValidationException::withMessages([
-                'approval' => ['You are not allowed to approve this record.'],
-            ]);
-        }
+        abort_unless($this->canApprove($user, $type), 403, 'You are not allowed to approve this record.');
     }
 
     public function approveSale(Sale $sale, User $user): Sale
@@ -330,25 +341,6 @@ class ApprovalService
                 'approval_status' => ['Only pending records can be approved.'],
             ]);
         }
-    }
-
-    private function approverIds(string $type): array
-    {
-        $setting = GeneralSetting::query()->latest('id')->first();
-        $field = match ($type) {
-            'sales' => 'sales_invoice_approver_ids',
-            'returns' => 'return_invoice_approver_ids',
-            'purchases' => 'purchase_invoice_approver_ids',
-            'purchase_returns' => 'purchase_invoice_approver_ids',
-            'payments' => 'payment_approver_ids',
-            default => null,
-        };
-
-        if (! $setting || ! $field) {
-            return [];
-        }
-
-        return array_values(array_map('intval', $setting->{$field} ?? []));
     }
 
     private function applyStockDelta(Product $product, int $warehouseId, ?int $variantId, ?int $batchId, float $delta): void
