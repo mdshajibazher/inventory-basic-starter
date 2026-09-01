@@ -12,6 +12,7 @@ export type User = {
   roles?: Role[] | string[];
   permissions?: string[];
   direct_permissions?: Permission[];
+  sensitive_permissions?: UserSensitivePermissions;
   is_active?: boolean | number | null;
 };
 
@@ -28,6 +29,39 @@ export type Role = {
   guard_name?: string | null;
   is_active?: boolean | number | null;
   permissions?: Permission[];
+  sensitive_permissions?: string[];
+};
+
+export type SensitivePermission = {
+  name: string;
+  label: string;
+  category: 'super-user' | 'approval';
+  warning: string;
+};
+
+export type SensitivePermissionWarnings = {
+  super_user: string;
+  approval: string;
+};
+
+export type SensitivePermissionCatalog = {
+  data: SensitivePermission[];
+  warnings: SensitivePermissionWarnings;
+};
+
+export type SensitivePermissionRoleSource = {
+  id: number;
+  name: string;
+  is_active: boolean;
+};
+
+export type UserSensitivePermissions = {
+  direct: string[];
+  inherited: Array<{
+    name: string;
+    roles: SensitivePermissionRoleSource[];
+  }>;
+  effective: string[];
 };
 
 export type Category = {
@@ -60,10 +94,6 @@ export type GeneralSetting = {
   bulksmsbd_api_url?: string | null;
   bulksmsbd_api_key?: string | null;
   bulksmsbd_sender_id?: string | null;
-  sales_invoice_approver_ids?: number[];
-  return_invoice_approver_ids?: number[];
-  purchase_invoice_approver_ids?: number[];
-  payment_approver_ids?: number[];
   sales_invoice_mail_notification_enabled?: boolean;
   sales_invoice_mail_notification_user_ids?: number[];
   sales_invoice_sms_notification_enabled?: boolean;

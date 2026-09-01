@@ -58,7 +58,7 @@ export default function EmailLogsScreen() {
     return () => clearTimeout(timeout);
   }, [search]);
 
-  if (!hasPermission('general-settings-index')) {
+  if (!hasPermission('super-user')) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 

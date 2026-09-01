@@ -122,7 +122,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="cog-outline" size={size} color={color} />
           ),
-          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+          drawerItemStyle: hasPermission('super-user') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -133,7 +133,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="email-outline" size={size} color={color} />
           ),
-          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+          drawerItemStyle: hasPermission('super-user') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -144,7 +144,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="message-text-outline" size={size} color={color} />
           ),
-          drawerItemStyle: hasPermission('general-settings-index') ? undefined : styles.hiddenDrawerItem,
+          drawerItemStyle: hasPermission('super-user') ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -457,7 +457,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="account-multiple-outline" size={size} color={color} />
           ),
-          drawerItemStyle: hasPermission('users-index') ? undefined : styles.hiddenDrawerItem,
+          drawerItemStyle: hasPermission(['users-index', 'super-user']) ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -468,7 +468,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="account-key-outline" size={size} color={color} />
           ),
-          drawerItemStyle: hasPermission('users-index') ? undefined : styles.hiddenDrawerItem,
+          drawerItemStyle: hasPermission(['users-index', 'super-user']) ? undefined : styles.hiddenDrawerItem,
         }}
       />
       <Drawer.Screen
@@ -522,10 +522,10 @@ function AppDrawerContent({
   }
 
   const settingsItems = [
-    item('general-settings', 'General Settings', 'cog-outline', hasPermission('general-settings-index')),
-    item('email-logs', 'Email Logs', 'email-outline', hasPermission('general-settings-index')),
-    item('sms-logs', 'SMS Logs', 'message-text-outline', hasPermission('general-settings-index')),
-    item('roles', 'Roles', 'account-key-outline', hasPermission('users-index')),
+    item('general-settings', 'General Settings', 'cog-outline', hasPermission('super-user')),
+    item('email-logs', 'Email Logs', 'email-outline', hasPermission('super-user')),
+    item('sms-logs', 'SMS Logs', 'message-text-outline', hasPermission('super-user')),
+    item('roles', 'Roles', 'account-key-outline', hasPermission(['users-index', 'super-user'])),
     item('brands', 'Brands', 'tag-multiple-outline', hasPermission('brands-index')),
     item('branches', 'Branches', 'source-branch', hasPermission('branches-index')),
     item('units', 'Units', 'scale-balance', hasPermission('units-index')),
@@ -543,7 +543,7 @@ function AppDrawerContent({
   const peopleItems = [
     item('customers', 'Customers', 'account-box-outline', hasPermission('customers-index')),
     item('suppliers', 'Suppliers', 'truck-outline', hasPermission('suppliers-index')),
-    item('users', 'Users', 'account-multiple-outline', hasPermission('users-index')),
+    item('users', 'Users', 'account-multiple-outline', hasPermission(['users-index', 'super-user'])),
   ].filter(Boolean);
 
   const salesItems = [

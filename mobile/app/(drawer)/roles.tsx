@@ -14,9 +14,10 @@ import {
 } from 'react-native-paper';
 import { Redirect } from 'expo-router';
 import { Screen } from '@/src/components/Screen';
+import { SensitiveAccessPanel, sensitiveAdditionMessage } from '@/src/components/SensitiveAccessPanel';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
-import type { PaginationMeta, Permission, Role } from '@/src/types';
+import type { PaginationMeta, Permission, Role, SensitivePermissionCatalog } from '@/src/types';
 
 type RoleForm = {
   name: string;
@@ -69,6 +70,12 @@ function sectionStatus(permissions: Permission[], selectedPermissions: string[])
   return 'indeterminate';
 }
 
+function isOrdinaryPermission(permission: Permission) {
+  return permission.name !== 'super-user'
+    && !permission.name.startsWith('approvals-')
+    && !permission.name.startsWith('general-settings-');
+}
+
 export default function RolesScreen() {
   const { hasPermission, refreshUser } = useAuth();
   const route = useRoute();
@@ -85,14 +92,19 @@ export default function RolesScreen() {
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [form, setForm] = useState<RoleForm>(emptyForm);
   const [selectedRolePermissions, setSelectedRolePermissions] = useState<string[]>([]);
+  const [selectedSensitivePermissions, setSelectedSensitivePermissions] = useState<string[]>([]);
+  const [sensitiveCatalog, setSensitiveCatalog] = useState<SensitivePermissionCatalog | null>(null);
+  const [sensitivePermissionModalVisible, setSensitivePermissionModalVisible] = useState(false);
   const requestIdRef = useRef(0);
   const refreshKey = (route.params as RouteParams | undefined)?.refreshKey;
   const canAdd = hasPermission('users-add');
   const canEdit = hasPermission('users-edit');
   const canDelete = hasPermission('users-delete');
+  const canManageSensitive = hasPermission('super-user');
+  const canView = hasPermission(['users-index', 'super-user']);
 
   const groupedPermissions = useMemo(() => {
-    return permissions.reduce<Record<string, Permission[]>>((groups, permission) => {
+    return permissions.filter(isOrdinaryPermission).reduce<Record<string, Permission[]>>((groups, permission) => {
       const group = permission.name.includes('-') ? permission.name.split('-')[0] : 'general';
       groups[group] = [...(groups[group] ?? []), permission];
       return groups;
@@ -104,9 +116,10 @@ export default function RolesScreen() {
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const [rolesResponse, permissionsResponse] = await Promise.all([
+      const [rolesResponse, permissionsResponse, catalogResponse] = await Promise.all([
         api.roles({ page: nextPage, perPage, search: debouncedSearch }),
         api.permissions(),
+        canManageSensitive ? api.sensitivePermissions() : Promise.resolve(null),
       ]);
 
       if (requestId !== requestIdRef.current) return;
@@ -114,6 +127,7 @@ export default function RolesScreen() {
       setRoles(rolesResponse.data as Role[]);
       setPagination(rolesResponse.meta ?? null);
       setPermissions(permissionsResponse.data as Permission[]);
+      setSensitiveCatalog(catalogResponse);
     } catch (error) {
       if (requestId !== requestIdRef.current) return;
 
@@ -123,7 +137,7 @@ export default function RolesScreen() {
         setLoading(false);
       }
     }
-  }, [debouncedSearch, page]);
+  }, [canManageSensitive, debouncedSearch, page]);
 
   useEffect(() => {
     load(page);
@@ -138,7 +152,7 @@ export default function RolesScreen() {
     return () => clearTimeout(timeout);
   }, [search]);
 
-  if (!hasPermission('users-index')) {
+  if (!canView) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -182,8 +196,14 @@ export default function RolesScreen() {
 
   function openRolePermissionModal(role: Role) {
     setEditingRole(role);
-    setSelectedRolePermissions(role.permissions?.map((permission) => permission.name) ?? []);
+    setSelectedRolePermissions(role.permissions?.filter(isOrdinaryPermission).map((permission) => permission.name) ?? []);
     setRolePermissionModalVisible(true);
+  }
+
+  function openSensitivePermissionModal(role: Role) {
+    setEditingRole(role);
+    setSelectedSensitivePermissions(role.sensitive_permissions ?? []);
+    setSensitivePermissionModalVisible(true);
   }
 
   function closeModal() {
@@ -196,6 +216,12 @@ export default function RolesScreen() {
     setRolePermissionModalVisible(false);
     setEditingRole(null);
     setSelectedRolePermissions([]);
+  }
+
+  function closeSensitivePermissionModal() {
+    setSensitivePermissionModalVisible(false);
+    setEditingRole(null);
+    setSelectedSensitivePermissions([]);
   }
 
   async function saveRole() {
@@ -241,7 +267,7 @@ export default function RolesScreen() {
       });
       const currentUser = await refreshUser();
       closeRolePermissionModal();
-      if (currentUser?.permissions?.includes('users-index')) {
+      if (currentUser?.permissions?.some((permission) => permission === 'users-index' || permission === 'super-user')) {
         await load(page);
       }
     } catch (error) {
@@ -249,6 +275,47 @@ export default function RolesScreen() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function persistSensitivePermissions(permissionsToSave: string[], acknowledged = false) {
+    if (!editingRole) return;
+
+    setSaving(true);
+    try {
+      await api.updateRoleSensitivePermissions(
+        editingRole.id,
+        acknowledged ? { permissions: permissionsToSave, acknowledged: true } : { permissions: permissionsToSave }
+      );
+      const currentUser = await refreshUser();
+      closeSensitivePermissionModal();
+      if (currentUser?.permissions?.some((permission) => permission === 'users-index' || permission === 'super-user')) {
+        await load(page);
+      }
+    } catch (error) {
+      Alert.alert('Sensitive access update failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function requestSensitiveSave() {
+    if (!editingRole || !sensitiveCatalog) return;
+
+    const current = editingRole.sensitive_permissions ?? [];
+    const additions = selectedSensitivePermissions.filter((permission) => !current.includes(permission));
+    if (!additions.length) {
+      void persistSensitivePermissions(selectedSensitivePermissions);
+      return;
+    }
+
+    Alert.alert('Confirm sensitive access', sensitiveAdditionMessage(sensitiveCatalog, additions), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Grant access',
+        style: 'destructive',
+        onPress: () => { void persistSensitivePermissions(selectedSensitivePermissions, true); },
+      },
+    ]);
   }
 
   function confirmDelete(role: Role) {
@@ -330,6 +397,16 @@ export default function RolesScreen() {
                         Update Permission
                       </Button>
                     </>
+                  ) : null}
+                  {canManageSensitive ? (
+                    <Button
+                      compact
+                      mode="text"
+                      disabled={!sensitiveCatalog}
+                      onPress={() => openSensitivePermissionModal(role)}
+                    >
+                      Sensitive Access
+                    </Button>
                   ) : null}
                   {canDelete ? (
                     <Button compact mode="text" textColor="#000000" onPress={() => confirmDelete(role)}>
@@ -448,6 +525,40 @@ export default function RolesScreen() {
             </View>
           </ScrollView>
         </Modal>
+        <Modal
+          visible={sensitivePermissionModalVisible}
+          onDismiss={closeSensitivePermissionModal}
+          contentContainerStyle={styles.modal}
+        >
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <Text variant="titleLarge">Sensitive Access</Text>
+            <Text variant="bodyMedium" style={styles.muted}>
+              {editingRole?.name}
+            </Text>
+
+            {sensitiveCatalog ? (
+              <SensitiveAccessPanel
+                catalog={sensitiveCatalog}
+                selected={selectedSensitivePermissions}
+                onToggle={(permission) => setSelectedSensitivePermissions((current) =>
+                  current.includes(permission)
+                    ? current.filter((item) => item !== permission)
+                    : [...current, permission]
+                )}
+                disabled={saving}
+              />
+            ) : null}
+
+            <View style={styles.modalActions}>
+              <Button mode="outlined" onPress={closeSensitivePermissionModal} disabled={saving}>
+                Cancel
+              </Button>
+              <Button mode="contained" onPress={requestSensitiveSave} loading={saving} disabled={saving || !sensitiveCatalog}>
+                Save
+              </Button>
+            </View>
+          </ScrollView>
+        </Modal>
       </Portal>
     </Screen>
   );
@@ -493,7 +604,7 @@ const styles = StyleSheet.create({
     minWidth: 120,
   },
   actionColumn: {
-    minWidth: 300,
+    minWidth: 410,
   },
   actions: {
     flexDirection: 'row',

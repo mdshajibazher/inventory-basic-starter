@@ -23,10 +23,6 @@ type FormState = {
   bulksmsbdApiUrl: string;
   bulksmsbdApiKey: string;
   bulksmsbdSenderId: string;
-  salesInvoiceApproverIds: number[];
-  returnInvoiceApproverIds: number[];
-  purchaseInvoiceApproverIds: number[];
-  paymentApproverIds: number[];
   salesInvoiceMailNotificationEnabled: boolean;
   salesInvoiceMailNotificationUserIds: number[];
   salesInvoiceSmsNotificationEnabled: boolean;
@@ -64,10 +60,6 @@ const emptyForm: FormState = {
   bulksmsbdApiUrl: 'http://bulksmsbd.net/api/smsapi',
   bulksmsbdApiKey: '',
   bulksmsbdSenderId: '',
-  salesInvoiceApproverIds: [],
-  returnInvoiceApproverIds: [],
-  purchaseInvoiceApproverIds: [],
-  paymentApproverIds: [],
   salesInvoiceMailNotificationEnabled: false,
   salesInvoiceMailNotificationUserIds: [],
   salesInvoiceSmsNotificationEnabled: false,
@@ -98,9 +90,7 @@ export default function GeneralSettingsScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const canAdd = hasPermission('general-settings-add');
-  const canEdit = hasPermission('general-settings-edit');
-  const canSave = setting ? canEdit : canAdd;
+  const canManageSettings = hasPermission('super-user');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,7 +139,7 @@ export default function GeneralSettingsScreen() {
     }
   }
 
-  if (!hasPermission('general-settings-index')) {
+  if (!canManageSettings) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 
@@ -203,14 +193,6 @@ export default function GeneralSettingsScreen() {
           value={form.companyAddress}
           onChangeText={(value) => updateForm('companyAddress', value)}
         />
-
-        <View style={styles.approvals}>
-          <Text variant="titleMedium">Approvals</Text>
-          <ApproverPicker label="Who can approve sales invoice" users={users} selectedIds={form.salesInvoiceApproverIds} onChange={(ids) => updateForm('salesInvoiceApproverIds', ids)} />
-          <ApproverPicker label="Who can approve return invoice" users={users} selectedIds={form.returnInvoiceApproverIds} onChange={(ids) => updateForm('returnInvoiceApproverIds', ids)} />
-          <ApproverPicker label="Who can approve purchase invoice" users={users} selectedIds={form.purchaseInvoiceApproverIds} onChange={(ids) => updateForm('purchaseInvoiceApproverIds', ids)} />
-          <ApproverPicker label="Who can approve payments" users={users} selectedIds={form.paymentApproverIds} onChange={(ids) => updateForm('paymentApproverIds', ids)} />
-        </View>
 
         <View style={styles.approvals}>
           <Text variant="titleMedium">Notifications</Text>
@@ -278,7 +260,7 @@ export default function GeneralSettingsScreen() {
         </View>
 
         <View style={styles.actions}>
-          <Button mode="contained" disabled={!canSave || saving} loading={saving} onPress={saveSettings}>
+          <Button mode="contained" disabled={!canManageSettings || saving} loading={saving} onPress={saveSettings}>
             Save
           </Button>
         </View>
@@ -303,10 +285,6 @@ function toForm(setting: GeneralSetting): FormState {
     bulksmsbdApiUrl: setting.bulksmsbd_api_url ?? 'http://bulksmsbd.net/api/smsapi',
     bulksmsbdApiKey: setting.bulksmsbd_api_key ?? '',
     bulksmsbdSenderId: setting.bulksmsbd_sender_id ?? '',
-    salesInvoiceApproverIds: setting.sales_invoice_approver_ids ?? [],
-    returnInvoiceApproverIds: setting.return_invoice_approver_ids ?? [],
-    purchaseInvoiceApproverIds: setting.purchase_invoice_approver_ids ?? [],
-    paymentApproverIds: setting.payment_approver_ids ?? [],
     salesInvoiceMailNotificationEnabled: Boolean(setting.sales_invoice_mail_notification_enabled),
     salesInvoiceMailNotificationUserIds: setting.sales_invoice_mail_notification_user_ids ?? [],
     salesInvoiceSmsNotificationEnabled: Boolean(setting.sales_invoice_sms_notification_enabled),
@@ -344,10 +322,6 @@ function payload(form: FormState): GeneralSettingPayload {
     bulksmsbd_api_url: nullableText(form.bulksmsbdApiUrl),
     bulksmsbd_api_key: nullableText(form.bulksmsbdApiKey),
     bulksmsbd_sender_id: nullableText(form.bulksmsbdSenderId),
-    sales_invoice_approver_ids: form.salesInvoiceApproverIds,
-    return_invoice_approver_ids: form.returnInvoiceApproverIds,
-    purchase_invoice_approver_ids: form.purchaseInvoiceApproverIds,
-    payment_approver_ids: form.paymentApproverIds,
     sales_invoice_mail_notification_enabled: form.salesInvoiceMailNotificationEnabled,
     sales_invoice_mail_notification_user_ids: form.salesInvoiceMailNotificationUserIds,
     sales_invoice_sms_notification_enabled: form.salesInvoiceSmsNotificationEnabled,
@@ -451,12 +425,12 @@ function NotificationChannel({
         <Text style={styles.switchLabel}>{label}</Text>
         <Switch value={enabled} onValueChange={onEnabled} />
       </View>
-      {enabled ? <ApproverPicker label={pickerLabel} users={users} selectedIds={selectedIds} onChange={onUsers} /> : null}
+      {enabled ? <NotificationRecipientPicker label={pickerLabel} users={users} selectedIds={selectedIds} onChange={onUsers} /> : null}
     </View>
   );
 }
 
-function ApproverPicker({
+function NotificationRecipientPicker({
   label,
   users,
   selectedIds,
@@ -478,13 +452,13 @@ function ApproverPicker({
   }
 
   return (
-    <View style={styles.approverBox}>
+    <View style={styles.recipientBox}>
       <Text variant="labelLarge">{label}</Text>
       <Button mode="outlined" contentStyle={styles.multiSelectButton} onPress={() => setOpen(true)}>
-        {selectedUsers.length ? `${selectedUsers.length} selected` : 'Select approvers'}
+        {selectedUsers.length ? `${selectedUsers.length} selected` : 'Select recipients'}
       </Button>
       <Text style={styles.muted}>
-        {selectedUsers.length ? selectedUsers.map((user) => user.name).join(', ') : users.length ? 'No approvers selected' : 'No active users found.'}
+        {selectedUsers.length ? selectedUsers.map((user) => user.name).join(', ') : users.length ? 'No recipients selected' : 'No active users found.'}
       </Text>
       <Portal>
         <Modal visible={open} onDismiss={() => setOpen(false)} contentContainerStyle={styles.multiSelectModal}>
@@ -543,7 +517,7 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
-  approverBox: {
+  recipientBox: {
     borderWidth: 1,
     borderColor: '#e5e7eb',
     borderRadius: 8,
