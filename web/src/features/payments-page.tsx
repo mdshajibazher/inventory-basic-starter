@@ -10,6 +10,8 @@ import { useAuth } from '@/context/auth-context';
 import { api, type PaymentPayload } from '@/lib/api';
 import type { Account, Customer, InvoiceOption, PaginatedResponse, PaginationMeta, Payment, PaymentDirection, PaymentType, Supplier } from '@/lib/types';
 import { clsx } from '@/lib/utils';
+import { canChoosePaymentType, canEditPaymentType, initialPaymentType, selectablePaymentTypes } from './payment-entry-policy';
+import { defaultPaymentListFilters, filterPayments } from './payment-list-display';
 
 type PartyKind = 'customer' | 'supplier';
 type PaymentPageMode = 'customer-payments' | 'supplier-payments';
@@ -50,7 +52,7 @@ function initialFormFor(mode: PaymentPageMode): PaymentForm {
     customer: null,
     supplier: null,
     account: null,
-    paymentType: supplierMode ? 'purchase_payment' : 'sale_payment',
+    paymentType: initialPaymentType(supplierMode ? 'supplier' : 'customer'),
     invoice: null,
     amount: '',
     discountAmount: '0',
@@ -77,9 +79,9 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
   const [ledgerAccount, setLedgerAccount] = useState<Account | null>(null);
   const [ledgerType, setLedgerType] = useState<PaymentType | 'all'>('all');
   const [ledgerDirection, setLedgerDirection] = useState<PaymentDirection | 'all'>('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState('2026-07-01');
-  const [dateTo, setDateTo] = useState('2026-07-31');
+  const [searchTerm, setSearchTerm] = useState(defaultPaymentListFilters.searchTerm);
+  const [dateFrom, setDateFrom] = useState(defaultPaymentListFilters.dateFrom);
+  const [dateTo, setDateTo] = useState(defaultPaymentListFilters.dateTo);
   const [form, setForm] = useState<PaymentForm>(() => initialFormFor(mode));
 
   const canCreate = hasPermission(['sales-add', 'purchases-add', 'accounts-index']);
@@ -331,27 +333,14 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
     }));
   }
 
-  const typeOptions = useMemo(() => pagePaymentTypes.map((type) => ({ value: type, label: paymentTypeLabels[type] })), [pagePaymentTypes]);
-  const displayedPayments = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return payments.filter((payment) => {
-      if (query) {
-        const haystack = [
-          payment.payment_reference,
-          payment.customer?.name,
-          payment.supplier?.name,
-          payment.account?.name,
-          documentLabel(payment),
-        ].filter(Boolean).join(' ').toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-
-      const paymentDate = paymentDateValue(payment);
-      if (dateFrom && paymentDate && paymentDate < dateFrom) return false;
-      if (dateTo && paymentDate && paymentDate > dateTo) return false;
-      return true;
-    });
-  }, [dateFrom, dateTo, payments, searchTerm]);
+  const typeOptions = useMemo(
+    () => selectablePaymentTypes(supplierMode ? 'supplier' : 'customer').map((type) => ({ value: type, label: paymentTypeLabels[type] })),
+    [supplierMode]
+  );
+  const displayedPayments = useMemo(
+    () => filterPayments(payments, { searchTerm, dateFrom, dateTo }),
+    [dateFrom, dateTo, payments, searchTerm]
+  );
   const totals = useMemo(() => paymentTotals(displayedPayments), [displayedPayments]);
   const branchLabel = user?.current_biller?.name ?? 'Head Office';
 
@@ -409,14 +398,14 @@ export function PaymentsPage({ mode }: { mode: PaymentPageMode }) {
         searchAccounts={searchAccounts}
       />
 
-      {displayedPayments.length ? <PaymentTable payments={displayedPayments} loading={loading} saving={saving} onApprove={(id) => void approvePayment(id)} onEdit={openEditPayment} /> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
+      {displayedPayments.length ? <PaymentTable payments={displayedPayments} loading={loading} saving={saving} canEdit={(payment) => Boolean(payment.can_edit) && canEditPaymentType(supplierMode ? 'supplier' : 'customer', payment.payment_type)} onApprove={(id) => void approvePayment(id)} onEdit={openEditPayment} /> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{loading ? 'Loading payments...' : 'No payments found.'}</div>}
       <Pagination meta={pagination} loading={loading} onPage={(nextPage) => void loadPayments(nextPage)} onPerPageChange={(nextPerPage) => { setPerPage(nextPerPage); setPage(1); }} />
       <PaymentTotals totals={totals} mode={mode} />
 
       <Modal title={editingPayment ? 'Edit Payment' : 'Record Payment'} description={modalDescription(form.paymentType)} open={modalOpen} onOpenChange={changeModalOpen} contentClassName="max-w-5xl p-0">
         <form onSubmit={submitPayment} className="grid gap-5 p-5 pt-0">
           <p className="-mt-3 text-sm text-neutral-500">{modalDescription(form.paymentType)}</p>
-          <PaymentTypeTabs value={form.paymentType} options={typeOptions} onChange={(type) => updatePaymentType(type)} />
+          {canChoosePaymentType(form.partyKind) ? <PaymentTypeTabs value={form.paymentType} options={typeOptions} onChange={(type) => updatePaymentType(type)} /> : null}
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
             <div className="grid gap-4">
               <div className="grid gap-4 md:grid-cols-2">
@@ -543,7 +532,7 @@ function PaymentTypeTabs({ value, options, onChange }: { value: PaymentType; opt
   };
 
   return (
-    <div className="grid gap-2 sm:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-2">
       {options.map((option) => {
         const selected = value === option.value;
         return (
@@ -795,7 +784,7 @@ function Filters(props: {
   );
 }
 
-function PaymentTable({ payments, loading, saving, onApprove, onEdit }: { payments: Payment[]; loading: boolean; saving: boolean; onApprove: (id: number) => void; onEdit: (payment: Payment) => void }) {
+function PaymentTable({ payments, loading, saving, canEdit, onApprove, onEdit }: { payments: Payment[]; loading: boolean; saving: boolean; canEdit: (payment: Payment) => boolean; onApprove: (id: number) => void; onEdit: (payment: Payment) => void }) {
   return (
     <div className="relative overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
       <table className="min-w-full text-sm">
@@ -836,7 +825,7 @@ function PaymentTable({ payments, loading, saving, onApprove, onEdit }: { paymen
               <td className="whitespace-nowrap px-5 py-4"><ApprovalBadge status={payment.approval_status} /></td>
               <td className="whitespace-nowrap px-5 py-4 text-right">
                 <Link className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100" href={`/payments/${payment.id}`} aria-label="View payment" title="View payment"><Eye className="h-4 w-4" /></Link>
-                {payment.can_edit ? <Button type="button" variant="secondary" className="mr-2 h-9 w-9 px-0 text-amber-600" disabled={saving} onClick={() => onEdit(payment)} aria-label="Edit payment" title="Edit payment"><Pencil className="h-4 w-4" /></Button> : null}
+                {canEdit(payment) ? <Button type="button" variant="secondary" className="mr-2 h-9 w-9 px-0 text-amber-600" disabled={saving} onClick={() => onEdit(payment)} aria-label="Edit payment" title="Edit payment"><Pencil className="h-4 w-4" /></Button> : null}
                 {payment.can_approve ? <Button type="button" variant="secondary" className="h-9" disabled={saving} onClick={() => onApprove(payment.id)}>Approve</Button> : null}
               </td>
             </tr>

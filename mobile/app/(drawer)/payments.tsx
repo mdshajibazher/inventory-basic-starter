@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { ActivityIndicator, Button, Card, Modal, Portal, Searchbar, SegmentedButtons, Text, TextInput } from 'react-native-paper';
 import { api, type PaymentPayload } from '@/src/lib/api';
 import { useAuth } from '@/src/context/AuthContext';
+import { canChoosePaymentType, canEditPaymentType, initialPaymentType, selectablePaymentTypes } from '@/src/payment-entry-policy';
 import type { Account, Customer, InvoiceOption, PaginatedResponse, PaginationMeta, Payment, PaymentDirection, PaymentType, Supplier } from '@/src/types';
 
 type PartyKind = 'customer' | 'supplier';
@@ -33,8 +34,6 @@ const paymentTypeLabels: Record<PaymentType, string> = {
   purchase_return_refund: 'Purchase return refund',
 };
 
-const customerTypes: PaymentType[] = ['sale_payment', 'customer_advance', 'sale_return_refund'];
-const supplierTypes: PaymentType[] = ['purchase_payment', 'supplier_advance', 'purchase_return_refund'];
 const methods = ['Cash', 'Cheque', 'Credit Card', 'Gift Card', 'Paypal', 'Bank Transfer', 'Deposit'];
 
 const initialForm: PaymentForm = {
@@ -42,7 +41,7 @@ const initialForm: PaymentForm = {
   customer: null,
   supplier: null,
   account: null,
-  paymentType: 'customer_advance',
+  paymentType: initialPaymentType('customer'),
   invoice: null,
   amount: '',
   discountAmount: '0',
@@ -162,7 +161,7 @@ export default function PaymentsScreen() {
   }, [form.customer?.id, form.paymentType, form.supplier?.id]);
 
   const typeOptions = useMemo(
-    () => (form.partyKind === 'customer' ? customerTypes : supplierTypes).map((type) => ({ value: type, label: paymentTypeLabels[type] })),
+    () => selectablePaymentTypes(form.partyKind).map((type) => ({ value: type, label: paymentTypeLabels[type] })),
     [form.partyKind]
   );
 
@@ -282,7 +281,7 @@ export default function PaymentsScreen() {
       partyKind: kind,
       customer: kind === 'customer' ? current.customer : null,
       supplier: kind === 'supplier' ? current.supplier : null,
-      paymentType: kind === 'customer' ? 'customer_advance' : 'supplier_advance',
+      paymentType: initialPaymentType(kind),
       invoice: null,
       discountAmount: '0',
       change: '0',
@@ -314,72 +313,79 @@ export default function PaymentsScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <View>
-          <Text variant="headlineSmall">Payments</Text>
-          <Text variant="bodyMedium" style={styles.muted}>{pagination?.total ?? payments.length} payment records</Text>
-          {discountTotal > 0 ? <Text variant="bodySmall" style={styles.muted}>Discounts: {money(discountTotal)}</Text> : null}
-        </View>
-        {canCreate ? <Button mode="contained" onPress={openCreatePayment}>Record</Button> : null}
-      </View>
-
-      <SegmentedButtons
-        value={view}
-        onValueChange={(value) => {
-          setView(value as ViewMode);
-          setPage(1);
-        }}
-        buttons={[
-          { value: 'ledger', label: 'All' },
-          { value: 'customer', label: 'Customer' },
-          { value: 'supplier', label: 'Supplier' },
-          { value: 'account', label: 'Account' },
-        ]}
-        style={styles.segment}
-      />
-
-      <FilterPanel
-        view={view}
-        ledgerPartyKind={ledgerPartyKind}
-        setLedgerPartyKind={(value) => {
-          setLedgerPartyKind(value);
-          setLedgerCustomer(null);
-          setLedgerSupplier(null);
-        }}
-        ledgerCustomer={ledgerCustomer}
-        setLedgerCustomer={setLedgerCustomer}
-        ledgerSupplier={ledgerSupplier}
-        setLedgerSupplier={setLedgerSupplier}
-        ledgerAccount={ledgerAccount}
-        setLedgerAccount={setLedgerAccount}
-        ledgerType={ledgerType}
-        setLedgerType={setLedgerType}
-        ledgerDirection={ledgerDirection}
-        setLedgerDirection={setLedgerDirection}
-        statementCustomer={statementCustomer}
-        setStatementCustomer={setStatementCustomer}
-        statementSupplier={statementSupplier}
-        setStatementSupplier={setStatementSupplier}
-        statementAccount={statementAccount}
-        setStatementAccount={setStatementAccount}
-        searchCustomers={searchCustomers}
-        searchSuppliers={searchSuppliers}
-        searchAccounts={searchAccounts}
-      />
-
-      {loading ? <ActivityIndicator style={styles.loading} /> : null}
       <FlatList
         data={payments}
         keyExtractor={(item) => String(item.id)}
+        style={styles.paymentList}
         contentContainerStyle={styles.list}
+        ListHeaderComponent={(
+          <>
+            <View style={styles.header}>
+              <View>
+                <Text variant="headlineSmall">Payments</Text>
+                <Text variant="bodyMedium" style={styles.muted}>{pagination?.total ?? payments.length} payment records</Text>
+                {discountTotal > 0 ? <Text variant="bodySmall" style={styles.muted}>Discounts: {money(discountTotal)}</Text> : null}
+              </View>
+              {canCreate ? <Button mode="contained" onPress={openCreatePayment}>Record</Button> : null}
+            </View>
+
+            <SegmentedButtons
+              value={view}
+              onValueChange={(value) => {
+                setView(value as ViewMode);
+                setPage(1);
+              }}
+              buttons={[
+                { value: 'ledger', label: 'All' },
+                { value: 'customer', label: 'Customer' },
+                { value: 'supplier', label: 'Supplier' },
+                { value: 'account', label: 'Account' },
+              ]}
+              style={styles.segment}
+            />
+
+            <FilterPanel
+              view={view}
+              ledgerPartyKind={ledgerPartyKind}
+              setLedgerPartyKind={(value) => {
+                setLedgerPartyKind(value);
+                setLedgerCustomer(null);
+                setLedgerSupplier(null);
+              }}
+              ledgerCustomer={ledgerCustomer}
+              setLedgerCustomer={setLedgerCustomer}
+              ledgerSupplier={ledgerSupplier}
+              setLedgerSupplier={setLedgerSupplier}
+              ledgerAccount={ledgerAccount}
+              setLedgerAccount={setLedgerAccount}
+              ledgerType={ledgerType}
+              setLedgerType={setLedgerType}
+              ledgerDirection={ledgerDirection}
+              setLedgerDirection={setLedgerDirection}
+              statementCustomer={statementCustomer}
+              setStatementCustomer={setStatementCustomer}
+              statementSupplier={statementSupplier}
+              setStatementSupplier={setStatementSupplier}
+              statementAccount={statementAccount}
+              setStatementAccount={setStatementAccount}
+              searchCustomers={searchCustomers}
+              searchSuppliers={searchSuppliers}
+              searchAccounts={searchAccounts}
+            />
+
+            {loading ? <ActivityIndicator style={styles.loading} /> : null}
+          </>
+        )}
         ListEmptyComponent={!loading ? <Text style={styles.empty}>No payments found.</Text> : null}
+        ListFooterComponent={(
+          <View style={styles.pagination}>
+            <Button mode="outlined" disabled={loading || page <= 1} onPress={() => void loadPayments(Math.max(1, page - 1))}>Previous</Button>
+            <Text style={styles.muted}>Page {pagination?.current_page ?? page} of {pagination?.last_page ?? 1}</Text>
+            <Button mode="outlined" disabled={loading || !pagination || page >= pagination.last_page} onPress={() => void loadPayments(page + 1)}>Next</Button>
+          </View>
+        )}
         renderItem={({ item }) => <PaymentCard payment={item} saving={saving} onApprove={approvePayment} onEdit={openEditPayment} />}
       />
-      <View style={styles.pagination}>
-        <Button mode="outlined" disabled={loading || page <= 1} onPress={() => void loadPayments(Math.max(1, page - 1))}>Previous</Button>
-        <Text style={styles.muted}>Page {pagination?.current_page ?? page} of {pagination?.last_page ?? 1}</Text>
-        <Button mode="outlined" disabled={loading || !pagination || page >= pagination.last_page} onPress={() => void loadPayments(page + 1)}>Next</Button>
-      </View>
 
       <Portal>
         <Modal visible={modalOpen} onDismiss={closePaymentModal} contentContainerStyle={styles.modal}>
@@ -398,7 +404,7 @@ export default function PaymentsScreen() {
                 onSelect={(value) => updatePartyKind(value as PartyKind)}
               />
             )}
-            <SelectButtons label="Payment Type" value={form.paymentType} options={typeOptions} onSelect={(value) => updatePaymentType(value as PaymentType)} />
+            {canChoosePaymentType(form.partyKind) ? <SelectButtons label="Payment Type" value={form.paymentType} options={typeOptions} onSelect={(value) => updatePaymentType(value as PaymentType)} /> : null}
             {form.partyKind === 'customer' ? (
               <SearchableSelectField label="Customer" valueLabel={form.customer?.name ?? 'Select customer'} placeholder="Search customers" search={searchCustomers} keyFor={(item) => item.id} labelFor={(item) => item.name} detailFor={(item) => item.phone_number} onSelect={(customer) => setForm((current) => ({ ...current, customer, invoice: null }))} />
             ) : (
@@ -493,6 +499,7 @@ function FilterPanel(props: {
 
 function PaymentCard({ payment, saving, onApprove, onEdit }: { payment: Payment; saving: boolean; onApprove: (id: number) => void; onEdit: (payment: Payment) => void }) {
   const incoming = payment.direction === 'in';
+  const partyKind: PartyKind = payment.customer_id ? 'customer' : 'supplier';
   return (
     <Card style={styles.card}>
       <Card.Content style={styles.cardContent}>
@@ -514,7 +521,7 @@ function PaymentCard({ payment, saving, onApprove, onEdit }: { payment: Payment;
         <Button mode="text" onPress={() => router.push({ pathname: '/(drawer)/payments-detail', params: { id: String(payment.id) } })}>
           Details
         </Button>
-        {payment.can_edit ? (
+        {payment.can_edit && canEditPaymentType(partyKind, payment.payment_type) ? (
           <Button mode="text" disabled={saving} onPress={() => onEdit(payment)}>
             Edit
           </Button>
@@ -709,6 +716,7 @@ const styles = StyleSheet.create({
   filterCard: { marginBottom: 12, backgroundColor: '#ffffff' },
   filterContent: { gap: 10 },
   loading: { marginVertical: 12 },
+  paymentList: { flex: 1 },
   list: { gap: 10, paddingBottom: 16 },
   empty: { textAlign: 'center', color: '#666666', padding: 24 },
   card: { backgroundColor: '#ffffff' },
