@@ -187,19 +187,7 @@ class ProfitReportApprovalTest extends TestCase
             PermissionMiddleware::class,
         ]);
 
-        $user = User::query()->create([
-            'name' => 'Reporter',
-            'email' => 'reporter@example.com',
-            'password' => 'password',
-            'biller_id' => 1,
-            'current_biller_id' => 1,
-            'biller_ids' => [1],
-            'is_active' => true,
-            'is_deleted' => false,
-        ]);
-
-        DB::table('warehouses')->insert(['id' => 1, 'name' => 'Main']);
-        DB::table('products')->insert(['id' => 1, 'name' => 'Widget', 'code' => 'W-1']);
+        $user = $this->reporter();
 
         $approvedSaleId = $this->sale(1, ApprovalService::APPROVED, 5);
         $pendingSaleId = $this->sale(2, ApprovalService::PENDING, 50);
@@ -235,6 +223,104 @@ class ProfitReportApprovalTest extends TestCase
             ->assertJsonPath('summary.cash_in', 78)
             ->assertJsonPath('summary.cash_out', 40)
             ->assertJsonPath('summary.net_cash_movement', 38);
+    }
+
+    public function test_net_cogs_detail_shows_each_return_reduction_before_the_final_total(): void
+    {
+        $this->withoutMiddleware([
+            Authenticate::class,
+            PermissionMiddleware::class,
+        ]);
+
+        $user = $this->reporter();
+
+        $this->sale(1, ApprovalService::APPROVED, 0);
+        $this->saleReturn(1, ApprovalService::APPROVED);
+        $this->purchaseReturn(1, ApprovalService::APPROVED);
+
+        $response = $this
+            ->actingAs($user)
+            ->getJson('/api/reports/profit/details?metric=net_cost_of_goods_sold&start_date=2026-01-01&end_date=2026-01-31');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('metric.key', 'net_cost_of_goods_sold')
+            ->assertJsonPath('metric.label', 'Net COGS')
+            ->assertJsonPath('summary.total', 26)
+            ->assertJsonPath('summary.row_count', 3)
+            ->assertJsonPath('summary.components.0.label', 'Cost of goods sold')
+            ->assertJsonPath('summary.components.0.amount', 40)
+            ->assertJsonPath('summary.components.1.label', 'Sales return cost')
+            ->assertJsonPath('summary.components.1.amount', -8)
+            ->assertJsonPath('summary.components.2.label', 'Purchase return cost')
+            ->assertJsonPath('summary.components.2.amount', -6)
+            ->assertJsonPath('rows.0.amount', 40)
+            ->assertJsonPath('rows.1.amount', -8)
+            ->assertJsonPath('rows.2.amount', -6);
+    }
+
+    public function test_net_cogs_detail_keeps_zero_return_reductions_visible(): void
+    {
+        $this->withoutMiddleware([
+            Authenticate::class,
+            PermissionMiddleware::class,
+        ]);
+
+        $user = $this->reporter();
+        $this->sale(1, ApprovalService::APPROVED, 0);
+
+        $response = $this
+            ->actingAs($user)
+            ->getJson('/api/reports/profit/details?metric=net_cost_of_goods_sold&start_date=2026-01-01&end_date=2026-01-31');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('summary.total', 40)
+            ->assertJsonPath('summary.components.1.amount', 0)
+            ->assertJsonPath('summary.components.2.amount', 0);
+
+        $this->assertStringNotContainsString(':-0', (string) $response->getContent());
+    }
+
+    public function test_net_cogs_detail_handles_an_empty_report(): void
+    {
+        $this->withoutMiddleware([
+            Authenticate::class,
+            PermissionMiddleware::class,
+        ]);
+
+        $user = $this->reporter();
+
+        $response = $this
+            ->actingAs($user)
+            ->getJson('/api/reports/profit/details?metric=net_cost_of_goods_sold&start_date=2026-01-01&end_date=2026-01-31');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('summary.total', 0)
+            ->assertJsonPath('summary.row_count', 0)
+            ->assertJsonPath('summary.components.0.amount', 0)
+            ->assertJsonPath('summary.components.1.amount', 0)
+            ->assertJsonPath('summary.components.2.amount', 0);
+    }
+
+    private function reporter(): User
+    {
+        $user = User::query()->create([
+            'name' => 'Reporter',
+            'email' => 'reporter@example.com',
+            'password' => 'password',
+            'biller_id' => 1,
+            'current_biller_id' => 1,
+            'biller_ids' => [1],
+            'is_active' => true,
+            'is_deleted' => false,
+        ]);
+
+        DB::table('warehouses')->insert(['id' => 1, 'name' => 'Main']);
+        DB::table('products')->insert(['id' => 1, 'name' => 'Widget', 'code' => 'W-1']);
+
+        return $user;
     }
 
     private function sale(int $id, string $status, float $orderDiscount): int

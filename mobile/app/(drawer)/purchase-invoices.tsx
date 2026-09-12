@@ -412,7 +412,7 @@ export function PurchaseInvoicesScreen({ mode = 'index', invoiceId, kind = 'purc
     setLines(nextLines.length ? nextLines : [emptyLine()]);
   }
 
-  if (!hasPermission('purchases-add')) {
+  if (!hasPermission('purchases-add') && !(mode === 'details' && hasPermission(['purchases-index', 'purchases-edit']))) {
     return <Redirect href="/(drawer)/dashboard" />;
   }
 

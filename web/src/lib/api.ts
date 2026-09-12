@@ -1,3 +1,6 @@
+import type { ApprovalType, PendingApprovalRecord } from './dashboard-approvals';
+import type { User, Branch } from './types';
+import type { Impersonation } from './session-controller';
 import { tokenStorage } from './storage';
 import type { Branding, CustomerLedgerReport, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, Product, ProductSummary, ProfitReport, ProfitReportDetail, SensitivePermissionCatalog, SmsLog, StockTransfer } from './types';
 
@@ -5,6 +8,7 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api')
 
 type RequestOptions = RequestInit & {
   auth?: boolean;
+  token?: string;
 };
 
 export type UploadImage = File;
@@ -396,14 +400,16 @@ type UserPayload = {
   password?: string;
   is_active?: boolean;
   biller_ids: number[];
+  roles?: number[];
+  acknowledged?: true;
 };
 
 export type LoginResponse = {
   data: {
     token?: string;
-    user?: unknown;
+    user?: User;
     requires_branch?: boolean;
-    branches?: unknown[];
+    branches?: Branch[];
   };
   message?: string;
 };
@@ -733,7 +739,7 @@ function batchStockAdjustmentFormData(payload: BatchStockAdjustmentPayload) {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const token = options.auth === false ? null : tokenStorage.get();
+  const token = options.auth === false ? null : options.token ?? tokenStorage.get();
   const multipart = isFormData(options.body);
 
   let response: Response;
@@ -759,7 +765,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       body?.errors && typeof body.errors === 'object'
         ? Object.values(body.errors).flat().join('\n')
         : null;
-    throw new Error(validationMessage || body?.message || `Request failed: ${response.status}`);
+    throw Object.assign(new Error(validationMessage || body?.message || `Request failed: ${response.status}`), { status: response.status });
   }
 
   return body as T;
@@ -800,14 +806,20 @@ const putForm = (formData: FormData) => {
 };
 
 export const api = {
+  pendingApprovals: (type: ApprovalType, params: { page?: number; perPage?: number } = {}) =>
+    request<PaginatedResponse<PendingApprovalRecord>>(`/dashboard/pending-approvals/${type}${queryString({ page: params.page, per_page: params.perPage ?? 10 })}`),
   login: (email: string, password: string, billerId?: number) =>
     request<LoginResponse>('/login', {
       method: 'POST',
       auth: false,
       body: JSON.stringify({ email, password, biller_id: billerId }),
     }),
-  me: () => request<{ data: unknown }>('/me'),
-  logout: () => request<{ message: string }>('/logout', { method: 'POST' }),
+  me: (token?: string) => request<{ data: User }>('/me', { token }),
+  logout: (token?: string) => request<{ message: string }>('/logout', { method: 'POST', token }),
+  startImpersonation: (id: number, billerId: number | undefined, token: string) =>
+    request<{ data: { token?: string; user?: User; requires_branch?: boolean; branches?: Branch[]; impersonation?: Impersonation } }>(`/users/${id}/impersonate`, { method: 'POST', token, body: JSON.stringify({ biller_id: billerId }) }),
+  stopImpersonation: (id: number, token: string) =>
+    request<{ message: string }>(`/impersonations/${id}/stop`, { method: 'POST', token }),
   branding: () => request<{ data: Branding }>('/branding'),
   dashboard: () => request<{ data: unknown }>('/dashboard'),
   users: (params: { page?: number; perPage?: number; search?: string } = {}) =>
@@ -1043,10 +1055,11 @@ export const api = {
   updatePurchaseReturnInvoice: (id: number, payload: PurchaseReturnPayload) =>
     request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}`, { method: 'POST', body: putForm(purchaseReturnFormData(payload)) }),
   approvePurchaseReturnInvoice: (id: number) => request<{ data: unknown; message: string }>(`/purchase-return-invoices/${id}/approve`, { method: 'POST' }),
-  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; paymentTypes?: PaymentType[]; direction?: PaymentDirection | 'all' } = {}) =>
+  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; paymentTypes?: PaymentType[]; direction?: PaymentDirection | 'all'; approvalStatus?: 'pending' | 'approved' } = {}) =>
     request<PaginatedResponse<Payment>>(`/payments${queryString({
       page: params.page,
       per_page: params.perPage,
+      approval_status: params.approvalStatus,
       customer_id: params.customerId,
       supplier_id: params.supplierId,
       account_id: params.accountId,

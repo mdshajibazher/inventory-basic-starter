@@ -19,10 +19,14 @@ class PaymentController extends Controller
 {
     public function index(Request $request, PaymentService $payments)
     {
+        $request->validate([
+            'approval_status' => ['sometimes', 'nullable', 'in:pending,approved'],
+        ]);
         $perPage = min(max((int) $request->integer('per_page', 15), 1), 100);
 
         return PaymentResource::collection(
             $this->baseQuery($payments)
+                ->when($request->filled('approval_status'), fn ($query) => $query->where('approval_status', $request->query('approval_status')))
                 ->when($request->filled('customer_id'), fn ($query) => $query->where('customer_id', $request->integer('customer_id')))
                 ->when($request->filled('supplier_id'), fn ($query) => $query->where('supplier_id', $request->integer('supplier_id')))
                 ->when($request->filled('account_id'), fn ($query) => $query->where('account_id', $request->integer('account_id')))
@@ -30,6 +34,7 @@ class PaymentController extends Controller
                 ->when($request->filled('payment_types'), fn ($query) => $query->whereIn('payment_type', collect(explode(',', (string) $request->string('payment_types')))->map(fn ($type) => trim($type))->filter()->values()))
                 ->when($request->filled('direction'), fn ($query) => $query->where('direction', (string) $request->string('direction')))
                 ->latest()
+                ->orderByDesc('id')
                 ->paginate($perPage)
                 ->withQueryString()
         );

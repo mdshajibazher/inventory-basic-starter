@@ -1,3 +1,6 @@
+import type { ApprovalType, PendingApprovalRecord } from './dashboard-approvals';
+import type { User, Branch } from '../types';
+import type { Impersonation } from './session-controller';
 import Constants from 'expo-constants';
 import { tokenStorage } from './storage';
 import type { Branding, DatewiseProductReport, EmailLog, Expense, InvoiceOption, PaginatedResponse, Payment, PaymentDirection, PaymentType, ProfitReport, ProfitReportDetail, SensitivePermissionCatalog, SmsLog, Transfer } from '../types';
@@ -28,6 +31,7 @@ const API_URL = configuredApiUrl();
 
 type RequestOptions = RequestInit & {
   auth?: boolean;
+  token?: string;
 };
 
 export type UploadImage = {
@@ -264,14 +268,16 @@ type UserPayload = {
   password?: string;
   is_active?: boolean;
   biller_ids: number[];
+  roles?: number[];
+  acknowledged?: true;
 };
 
 export type LoginResponse = {
   data: {
     token?: string;
-    user?: unknown;
+    user?: User;
     requires_branch?: boolean;
-    branches?: unknown[];
+    branches?: Branch[];
   };
   message?: string;
 };
@@ -750,7 +756,7 @@ function batchStockAdjustmentFormData(payload: BatchStockAdjustmentPayload) {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const token = options.auth === false ? null : await tokenStorage.get();
+  const token = options.auth === false ? null : options.token ?? await tokenStorage.get();
   const multipart = isFormData(options.body);
 
   let response: Response;
@@ -780,7 +786,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         ? Object.values(body.errors).flat().join('\n')
         : null;
 
-    throw new Error(validationMessage || body?.message || `Request failed: ${response.status}`);
+    throw Object.assign(new Error(validationMessage || body?.message || `Request failed: ${response.status}`), { status: response.status });
   }
 
   return body as T;
@@ -815,6 +821,8 @@ function queryString(params: Record<string, string | number | boolean | null | u
 }
 
 export const api = {
+  pendingApprovals: (type: ApprovalType, params: { page?: number; perPage?: number } = {}) =>
+    request<PaginatedResponse<PendingApprovalRecord>>(`/dashboard/pending-approvals/${type}${queryString({ page: params.page, per_page: params.perPage ?? 10 })}`),
   login: (email: string, password: string, billerId?: number) =>
     request<LoginResponse>('/login', {
       method: 'POST',
@@ -822,9 +830,13 @@ export const api = {
       body: JSON.stringify({ email, password, biller_id: billerId }),
     }),
 
-  me: () => request<{ data: unknown }>('/me'),
+  me: (token?: string) => request<{ data: User }>('/me', { token }),
 
-  logout: () => request<{ message: string }>('/logout', { method: 'POST' }),
+  logout: (token?: string) => request<{ message: string }>('/logout', { method: 'POST', token }),
+  startImpersonation: (id: number, billerId: number | undefined, token: string) =>
+    request<{ data: { token?: string; user?: User; requires_branch?: boolean; branches?: Branch[]; impersonation?: Impersonation } }>(`/users/${id}/impersonate`, { method: 'POST', token, body: JSON.stringify({ biller_id: billerId }) }),
+  stopImpersonation: (id: number, token: string) =>
+    request<{ message: string }>(`/impersonations/${id}/stop`, { method: 'POST', token }),
 
   branding: () => request<{ data: Branding }>('/branding'),
 
@@ -1490,11 +1502,12 @@ export const api = {
 
   purchaseStatuses: () => request<{ data: unknown[] }>('/purchase-statuses'),
 
-  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; direction?: PaymentDirection | 'all' } = {}) =>
+  payments: (params: { page?: number; perPage?: number; customerId?: number | null; supplierId?: number | null; accountId?: number | null; paymentType?: PaymentType | 'all'; direction?: PaymentDirection | 'all'; approvalStatus?: 'pending' | 'approved' } = {}) =>
     request<PaginatedResponse<Payment>>(
       `/payments${queryString({
         page: params.page,
         per_page: params.perPage,
+      approval_status: params.approvalStatus,
         customer_id: params.customerId,
         supplier_id: params.supplierId,
         account_id: params.accountId,

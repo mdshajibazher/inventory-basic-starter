@@ -28,7 +28,7 @@ import { EmptyState } from '@/components/resource-shell';
 import { api } from '@/lib/api';
 import type { ProfitReport, Warehouse } from '@/lib/types';
 import { errorMessage } from '@/lib/utils';
-import { lossAmount } from './profit-loss-summary';
+import { cogsReduction, lossAmount } from './profit-loss-summary';
 
 function monthRange() {
   const now = new Date();
@@ -208,6 +208,7 @@ export function ProfitReportPage({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard href={detailHref('net_revenue')} icon={Banknote} tone="emerald" label="Net revenue" value={money(summary?.net_revenue)} />
+        <SummaryCard href={detailHref('net_cost_of_goods_sold')} icon={Package} tone="orange" label="Net COGS" value={money(summary?.net_cost_of_goods_sold)} subValue={`Gross ${money(summary?.cost_of_goods_sold)} · Reductions ${money(cogsReduction(summary))}`} />
         <SummaryCard href={detailHref('gross_profit')} icon={BarChart3} tone="blue" label="Gross profit" value={money(summary?.gross_profit)} subValue={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
         <SummaryCard href={detailHref('expenses')} icon={ReceiptText} tone="violet" label="Expenses" value={money(summary?.expenses)} />
         <SummaryCard href={detailHref('net_profit')} icon={Wallet} tone="green" label="Net profit" value={money(summary?.net_profit)} />

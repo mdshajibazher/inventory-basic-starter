@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { KeyRound, Pencil, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import type { Branch, PaginationMeta, Permission, Role, SensitivePermissionCatalog, User } from '@/lib/types';
 import { errorMessage, permissionLabel } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
+import { ImpersonationAction } from '@/components/impersonation-action';
 import { ActionButton, Button, Checkbox, Field, Input, Modal, StatusBadge, Switch } from '@/components/ui';
 import { EmptyState, PageHeader, Pagination, SearchBox, TableWrap } from '@/components/resource-shell';
 import { SensitiveAccessConfirmation, SensitiveAccessPanel, sensitiveRoleAdditionMessage } from './sensitive-access-panel';
@@ -25,9 +26,10 @@ type UserForm = {
   password: string;
   isActive: boolean;
   billerIds: number[];
+  roleIds: number[];
 };
 
-const emptyForm: UserForm = { name: '', email: '', phone: '', password: '', isActive: true, billerIds: [] };
+const emptyForm: UserForm = { name: '', email: '', phone: '', password: '', isActive: true, billerIds: [], roleIds: [] };
 const defaultPerPage = 15;
 
 export function UsersPage() {
@@ -42,6 +44,7 @@ export function UsersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const userSaveInFlight = useRef(false);
   const [modal, setModal] = useState<'user' | 'roles' | 'permissions' | 'sensitive-permissions' | null>(null);
   const [editing, setEditing] = useState<User | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -112,6 +115,7 @@ export function UsersPage() {
       password: '',
       isActive: Boolean(user.is_active),
       billerIds: user.biller_ids ?? user.billers?.map((branch) => branch.id) ?? [],
+      roleIds: [],
     });
     setModal('user');
   }
@@ -146,6 +150,7 @@ export function UsersPage() {
 
   async function saveUser(event: FormEvent) {
     event.preventDefault();
+    if (userSaveInFlight.current) return;
     if (!form.name.trim() || !form.email.trim() || !form.phone.trim()) {
       toast.error('Missing fields', { description: 'Name, email, and phone are required.' });
       return;
@@ -158,8 +163,14 @@ export function UsersPage() {
       toast.error('Missing branch', { description: 'Select at least one branch.' });
       return;
     }
-    setSaving(true);
+    userSaveInFlight.current = true;
     try {
+      const sensitiveRoles = editing ? [] : options.roles.filter((role) =>
+        form.roleIds.includes(role.id) && Boolean(role.sensitive_permissions?.length));
+      const acknowledged = sensitiveRoles.length > 0;
+      if (acknowledged && !window.confirm(sensitiveRoleAdditionMessage(sensitiveRoles))) return;
+
+      setSaving(true);
       const payload = {
         name: form.name.trim(),
         email: form.email.trim(),
@@ -169,7 +180,11 @@ export function UsersPage() {
         biller_ids: form.billerIds,
       };
       if (editing) await api.updateUser(editing.id, payload);
-      else await api.createUser(payload);
+      else await api.createUser({
+        ...payload,
+        roles: form.roleIds,
+        ...(acknowledged ? { acknowledged: true as const } : {}),
+      });
       closeModal();
       toast.success('User saved');
       await load(editing ? page : 1);
@@ -177,6 +192,7 @@ export function UsersPage() {
     } catch (error) {
       toast.error('Save failed', { description: errorMessage(error) });
     } finally {
+      userSaveInFlight.current = false;
       setSaving(false);
     }
   }
@@ -292,6 +308,7 @@ export function UsersPage() {
                   <td className="px-4 py-3"><StatusBadge active={user.is_active} /></td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
+                      <ImpersonationAction target={user} />
                       {canEdit ? (
                         <ActionButton
                           icon={Pencil}
@@ -364,6 +381,31 @@ export function UsersPage() {
             selected={form.billerIds}
             onChange={(billerIds) => setValue('billerIds', billerIds)}
           />
+          {!editing ? (
+            <fieldset disabled={saving} className="min-w-0 rounded-md border border-neutral-200">
+              <div className="border-b border-neutral-100 p-3 text-sm font-medium">Roles</div>
+              <div className="grid max-h-56 gap-2 overflow-y-auto p-3 sm:grid-cols-2">
+                {options.roles.map((role) => (
+                  <label key={role.id} className="flex items-center gap-3 text-sm">
+                    <Checkbox
+                      checked={form.roleIds.includes(role.id)}
+                      onCheckedChange={() => setForm((current) => ({
+                        ...current,
+                        roleIds: current.roleIds.includes(role.id)
+                          ? current.roleIds.filter((id) => id !== role.id)
+                          : [...current.roleIds, role.id],
+                      }))}
+                    />
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span>{role.name}</span>
+                      {role.sensitive_permissions?.length ? <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Sensitive access</span> : null}
+                    </span>
+                  </label>
+                ))}
+                {!options.roles.length ? <div className="text-sm text-neutral-500">No assignable roles available.</div> : null}
+              </div>
+            </fieldset>
+          ) : null}
           <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2"><span className="text-sm font-medium">Active</span><Switch checked={form.isActive} onCheckedChange={(checked) => setValue('isActive', checked)} /></div>
           <FormActions saving={saving} onCancel={closeModal} />
         </form>

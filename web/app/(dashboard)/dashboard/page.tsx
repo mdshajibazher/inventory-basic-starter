@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { DashboardPendingApprovals } from '@/features/dashboard-pending-approvals';
 import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AlertTriangle, Trash2 } from 'lucide-react';
@@ -11,27 +12,44 @@ import { Button, Modal } from '@/components/ui';
 import { useAuth } from '@/context/auth-context';
 
 export default function DashboardPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, refreshUser, user } = useAuth();
+  const summaryRequest = useRef(0);
+  const [approvalRefreshKey, setApprovalRefreshKey] = useState(0);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
+    const request = ++summaryRequest.current;
     setLoading(true);
     try {
       const response = await api.dashboard();
-      setSummary(response.data as DashboardSummary);
+      if (request === summaryRequest.current) setSummary(response.data as DashboardSummary);
     } catch (error) {
-      toast.error('Load failed', { description: errorMessage(error) });
+      if (request === summaryRequest.current) toast.error('Load failed', { description: errorMessage(error) });
     } finally {
-      setLoading(false);
+      if (request === summaryRequest.current) setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
+    setSummary(null);
     void load();
-  }, []);
+    setApprovalRefreshKey(value => value + 1);
+    return () => { summaryRequest.current++; };
+  }, [load, user?.id, user?.current_biller_id]);
+
+  const refreshApprovals = useCallback(() => {
+    setApprovalRefreshKey(value => value + 1);
+    void load();
+    void refreshUser().catch(() => undefined);
+  }, [load, refreshUser]);
+
+  useEffect(() => {
+    window.addEventListener('focus', refreshApprovals);
+    return () => window.removeEventListener('focus', refreshApprovals);
+  }, [refreshApprovals]);
 
   async function clearTransactions() {
     setClearing(true);
@@ -39,6 +57,7 @@ export default function DashboardPage() {
       const response = await api.clearDashboardTransactions();
       toast.success(response.message || 'Transactional data cleared');
       setClearOpen(false);
+      setApprovalRefreshKey(value => value + 1);
       await load();
     } catch (error) {
       toast.error('Clear failed', { description: errorMessage(error) });
@@ -76,6 +95,8 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+
+      <DashboardPendingApprovals refreshKey={approvalRefreshKey} onSettled={refreshApprovals} />
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_420px]">
         <section className="rounded-lg border border-neutral-200 bg-white p-5">

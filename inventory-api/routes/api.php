@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\EmailLogController;
 use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\GeneralSettingController;
+use App\Http\Controllers\Api\ImpersonationController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\ProfitReportController;
@@ -38,7 +39,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
 
-Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
+Route::middleware(['auth:sanctum', 'valid.impersonation', 'active.user'])->group(function () {
+    Route::post('/users/{user}/impersonate', [ImpersonationController::class, 'store'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
+    Route::post('/impersonations/{impersonation}/stop', [ImpersonationController::class, 'stop']);
+
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/branding', [GeneralSettingController::class, 'branding']);
@@ -223,5 +227,6 @@ Route::middleware(['auth:sanctum', 'active.user'])->group(function () {
     Route::get('/reports/datewise-products', DatewiseProductReportController::class)->middleware('permission:reports-profit');
     Route::get('/reports/datewise-products/pdf', [DatewiseProductReportController::class, 'pdf'])->middleware('permission:reports-profit');
     Route::get('/dashboard', [DashboardController::class, 'index']);
+    Route::get('/dashboard/pending-approvals/{type}', [DashboardController::class, 'pendingApprovals']);
     Route::post('/dashboard/clear-transactions', [DashboardController::class, 'clearTransactions'])->middleware('effective.permission:'.SensitivePermissionCatalog::SUPER_USER);
 });

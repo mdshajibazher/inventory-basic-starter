@@ -14,6 +14,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
+import { ImpersonationAction } from '@/src/components/ImpersonationAction';
 import { SensitiveAccessPanel, sensitiveAdditionMessage, sensitiveRoleAdditionMessage } from '@/src/components/SensitiveAccessPanel';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
@@ -38,6 +39,7 @@ type UserForm = {
   password: string;
   isActive: boolean;
   billerIds: number[];
+  roleIds: number[];
 };
 
 const emptyForm: UserForm = {
@@ -47,6 +49,7 @@ const emptyForm: UserForm = {
   password: '',
   isActive: true,
   billerIds: [],
+  roleIds: [],
 };
 
 const perPage = 15;
@@ -65,6 +68,7 @@ function userToForm(user: User): UserForm {
     password: '',
     isActive: Boolean(user.is_active),
     billerIds: user.biller_ids ?? user.billers?.map((branch) => branch.id) ?? [],
+    roleIds: [],
   };
 }
 
@@ -105,6 +109,7 @@ export default function UsersScreen() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const userSaveInFlight = useRef(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [roleModalVisible, setRoleModalVisible] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
@@ -269,6 +274,7 @@ export default function UsersScreen() {
   }
 
   async function saveUser() {
+    if (userSaveInFlight.current) return;
     if (!form.name.trim() || !form.email.trim() || !form.phone.trim()) {
       Alert.alert('Missing fields', 'Name, email, and phone are required.');
       return;
@@ -284,8 +290,22 @@ export default function UsersScreen() {
       return;
     }
 
-    setSaving(true);
+    userSaveInFlight.current = true;
     try {
+      const sensitiveRoles = editingUser ? [] : options.roles.filter((role) =>
+        form.roleIds.includes(role.id) && Boolean(role.sensitive_permissions?.length));
+      const acknowledged = sensitiveRoles.length > 0;
+      if (acknowledged) {
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Alert.alert('Confirm sensitive roles', sensitiveRoleAdditionMessage(sensitiveRoles), [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Assign roles', style: 'destructive', onPress: () => resolve(true) },
+          ], { cancelable: true, onDismiss: () => resolve(false) });
+        });
+        if (!confirmed) return;
+      }
+
+      setSaving(true);
       const payload = {
         name: form.name.trim(),
         email: form.email.trim(),
@@ -298,7 +318,11 @@ export default function UsersScreen() {
       if (editingUser) {
         await api.updateUser(editingUser.id, payload);
       } else {
-        await api.createUser(payload);
+        await api.createUser({
+          ...payload,
+          roles: form.roleIds,
+          ...(acknowledged ? { acknowledged: true as const } : {}),
+        });
       }
 
       closeModal();
@@ -307,6 +331,7 @@ export default function UsersScreen() {
     } catch (error) {
       Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     } finally {
+      userSaveInFlight.current = false;
       setSaving(false);
     }
   }
@@ -487,6 +512,7 @@ export default function UsersScreen() {
               </DataTable.Cell>
               <DataTable.Cell style={styles.actionColumn}>
                 <View style={styles.actions}>
+                  <ImpersonationAction target={user} />
                   {canEdit ? (
                     <>
                       <Button compact mode="text" onPress={() => openEditModal(user)}>
@@ -547,7 +573,7 @@ export default function UsersScreen() {
 
       <Portal>
         <Modal visible={modalVisible} onDismiss={closeModal} contentContainerStyle={styles.modal}>
-          <ScrollView contentContainerStyle={styles.modalContent}>
+          <ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
             <Text variant="titleLarge">{editingUser ? 'Edit User' : 'Add User'}</Text>
 
             <TextInput
@@ -598,6 +624,29 @@ export default function UsersScreen() {
                 </Text>
               ) : null}
             </View>
+
+            {!editingUser ? (
+              <View style={styles.permissionGroup}>
+                <Text variant="titleMedium" style={styles.groupTitle}>Roles</Text>
+                {options.roles.map((role) => (
+                  <Checkbox.Item
+                    key={role.id}
+                    label={`${role.name}${role.sensitive_permissions?.length ? ' • Sensitive access' : ''}`}
+                    status={form.roleIds.includes(role.id) ? 'checked' : 'unchecked'}
+                    onPress={() => setForm((current) => ({
+                      ...current,
+                      roleIds: current.roleIds.includes(role.id)
+                        ? current.roleIds.filter((id) => id !== role.id)
+                        : [...current.roleIds, role.id],
+                    }))}
+                    disabled={saving}
+                  />
+                ))}
+                {!options.roles.length ? (
+                  <Text variant="bodyMedium" style={styles.muted}>No assignable roles available.</Text>
+                ) : null}
+              </View>
+            ) : null}
 
             <View style={styles.switchRow}>
               <Text>Active</Text>

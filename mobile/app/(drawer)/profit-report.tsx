@@ -10,7 +10,7 @@ import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
 import { api } from '@/src/lib/api';
 import type { ProfitReport, Warehouse } from '@/src/types';
-import { lossAmount } from '@/src/profit-loss-summary';
+import { cogsReduction, lossAmount } from '@/src/profit-loss-summary';
 
 type Tone = 'green' | 'blue' | 'purple' | 'amber' | 'red' | 'orange';
 
@@ -189,6 +189,7 @@ export default function ProfitReportScreen() {
 
       <View style={styles.kpiGrid}>
         <SummaryCard onPress={() => openDetail('net_revenue')} icon="sack-percent" tone="green" label="Net Revenue" value={money(summary?.net_revenue)} />
+        <SummaryCard onPress={() => openDetail('net_cost_of_goods_sold')} icon="cube-outline" tone="orange" label="Net COGS" value={money(summary?.net_cost_of_goods_sold)} detail={`Gross ${money(summary?.cost_of_goods_sold)} · Reductions ${money(cogsReduction(summary))}`} />
         <SummaryCard onPress={() => openDetail('gross_profit')} icon="chart-bar" tone="blue" label="Gross Profit" value={money(summary?.gross_profit)} detail={`COGS ${money(summary?.net_cost_of_goods_sold)}`} />
         <SummaryCard onPress={() => openDetail('expenses')} icon="receipt-text-outline" tone="purple" label="Expenses" value={money(summary?.expenses)} />
         <SummaryCard onPress={() => openDetail('net_profit')} icon="wallet-outline" tone="green" label="Net Profit" value={money(summary?.net_profit)} />

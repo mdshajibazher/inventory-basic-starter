@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureEffectivePermission;
+use App\Http\Middleware\EnsureImpersonationIsValid;
 use App\Http\Middleware\EnsureUserIsActive;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -19,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'active.user' => EnsureUserIsActive::class,
+            'valid.impersonation' => EnsureImpersonationIsValid::class,
             'effective.permission' => EnsureEffectivePermission::class,
             'role' => RoleMiddleware::class,
             'permission' => PermissionMiddleware::class,

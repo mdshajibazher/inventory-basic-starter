@@ -1,4 +1,7 @@
+import type { Impersonation } from './session-controller';
+
 export type User = {
+  impersonation?: Impersonation;
   id: number;
   name: string;
   email: string;

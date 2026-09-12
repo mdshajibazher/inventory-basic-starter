@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Biller;
 use App\Models\User;
-use App\Services\EffectivePermissionService;
+use App\Services\ImpersonationService;
+use App\Services\LoginContextService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -36,36 +36,11 @@ class AuthController extends Controller
             ]);
         }
 
-        $allowedBranches = Biller::query()
-            ->whereIn('id', $user->allowedBillerIds())
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'company_name', 'email', 'phone_number', 'address', 'city']);
-
-        if ($allowedBranches->isEmpty()) {
-            throw ValidationException::withMessages([
-                'biller_id' => ['No active branch is assigned to this user.'],
-            ]);
+        $selection = app(LoginContextService::class)->selectBranch($user, $validated['biller_id'] ?? null);
+        if ($selection['requires_branch'] ?? false) {
+            return response()->json(['message' => 'Select a branch to continue.', 'data' => $selection]);
         }
-
-        if (empty($validated['biller_id']) && $allowedBranches->count() > 1) {
-            return response()->json([
-                'message' => 'Select a branch to continue.',
-                'data' => [
-                    'requires_branch' => true,
-                    'branches' => $allowedBranches,
-                ],
-            ]);
-        }
-
-        $selectedBillerId = empty($validated['biller_id'])
-            ? (int) $allowedBranches->first()->id
-            : (int) $validated['biller_id'];
-        if (! $allowedBranches->contains('id', $selectedBillerId)) {
-            throw ValidationException::withMessages([
-                'biller_id' => ['The selected branch is not assigned to this user.'],
-            ]);
-        }
+        $selectedBillerId = $selection['biller_id'];
 
         $user->forceFill(['current_biller_id' => $selectedBillerId])->save();
         $token = $user->createToken('inventory-mobile')->plainTextToken;
@@ -74,44 +49,27 @@ class AuthController extends Controller
             'message' => 'Login successful.',
             'data' => [
                 'token' => $token,
-                'user' => $this->userPayload($user),
+                'user' => app(LoginContextService::class)->userPayload($user),
             ],
         ]);
     }
 
     public function me(Request $request)
     {
-        return response()->json([
-            'data' => $this->userPayload($request->user()),
-        ]);
+        $data = app(LoginContextService::class)->userPayload($request->user());
+        if ($session = $request->attributes->get('impersonation')) {
+            $data['impersonation'] = $session->metadata();
+        }
+
+        return response()->json(['data' => $data]);
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        app(ImpersonationService::class)->logout($request->user()->currentAccessToken());
 
         return response()->json([
             'message' => 'Logout successful.',
         ]);
-    }
-
-    private function userPayload(User $user): array
-    {
-        $user->loadMissing('roles:id,name', 'currentBiller:id,name,company_name,email,phone_number,address,city');
-        $role = $user->roles->first();
-
-        return [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'phone' => $user->phone,
-            'role_id' => $role?->id ?? $user->role_id,
-            'role' => $role,
-            'current_biller_id' => $user->current_biller_id,
-            'current_biller' => $user->currentBiller,
-            'biller_ids' => $user->biller_ids ?? [],
-            'roles' => $user->getRoleNames()->values()->all(),
-            'permissions' => app(EffectivePermissionService::class)->permissionNames($user),
-        ];
     }
 }

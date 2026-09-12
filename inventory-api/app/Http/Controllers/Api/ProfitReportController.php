@@ -17,6 +17,7 @@ class ProfitReportController extends Controller
 {
     private const DETAIL_METRICS = [
         'net_revenue' => 'Net Revenue',
+        'net_cost_of_goods_sold' => 'Net COGS',
         'gross_profit' => 'Gross Profit',
         'expenses' => 'Expenses',
         'net_profit' => 'Net Profit',
@@ -82,7 +83,12 @@ class ProfitReportController extends Controller
                 'total' => $this->round($total),
                 'total_type' => $metric === 'margin' ? 'percent' : 'money',
                 'row_count' => $rows->count(),
-                'components' => $this->detailComponents($metric, $summary, $products),
+                'components' => collect($this->detailComponents($metric, $summary, $products))
+                    ->map(fn (array $component) => [
+                        ...$component,
+                        'amount' => $this->round((float) $component['amount']),
+                    ])
+                    ->values(),
             ],
             'filters' => $report['filters'],
         ]);
@@ -686,6 +692,11 @@ class ProfitReportController extends Controller
                     ['Shipping', (float) $summary['shipping']],
                 ]),
             ]),
+            'net_cost_of_goods_sold' => collect($this->componentRows([
+                ['Cost of goods sold', (float) $summary['cost_of_goods_sold']],
+                ['Sales return cost', -1 * (float) $summary['return_cost']],
+                ['Purchase return cost', -1 * (float) $summary['purchase_return_cost']],
+            ])),
             'gross_profit' => collect($this->componentRows([
                 ['Net revenue', (float) $summary['net_revenue']],
                 ['Cost of goods sold', -1 * (float) $summary['cost_of_goods_sold']],
@@ -737,6 +748,11 @@ class ProfitReportController extends Controller
                 ['label' => 'Coupon discounts', 'amount' => -1 * (float) $summary['coupon_discounts']],
                 ['label' => 'Payment discounts', 'amount' => -1 * (float) $summary['payment_discounts']],
                 ['label' => 'Shipping', 'amount' => (float) $summary['shipping']],
+            ],
+            'net_cost_of_goods_sold' => [
+                ['label' => 'Cost of goods sold', 'amount' => (float) $summary['cost_of_goods_sold']],
+                ['label' => 'Sales return cost', 'amount' => -1 * (float) $summary['return_cost']],
+                ['label' => 'Purchase return cost', 'amount' => -1 * (float) $summary['purchase_return_cost']],
             ],
             'gross_profit' => [
                 ['label' => 'Net revenue', 'amount' => (float) $summary['net_revenue']],
@@ -965,6 +981,8 @@ class ProfitReportController extends Controller
 
     private function round(float $value): float
     {
-        return round($value, 2);
+        $rounded = round($value, 2);
+
+        return $rounded === 0.0 ? 0.0 : $rounded;
     }
 }

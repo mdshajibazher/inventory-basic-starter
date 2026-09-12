@@ -3,15 +3,20 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { PaperProvider } from 'react-native-paper';
 import { AuthProvider } from '@/src/context/AuthContext';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ImpersonationBanner } from '@/src/components/ImpersonationBanner';
 import { blackWhiteTheme } from '@/src/theme';
 
 export default function RootLayout() {
   return (
-    <PaperProvider theme={blackWhiteTheme}>
-      <AuthProvider>
-        <StatusBar style="dark" backgroundColor="#ffffff" />
-        <Stack screenOptions={{ headerShown: false }} />
-      </AuthProvider>
-    </PaperProvider>
+    <SafeAreaProvider>
+      <PaperProvider theme={blackWhiteTheme}>
+        <AuthProvider>
+          <StatusBar style="dark" backgroundColor="#ffffff" />
+          <ImpersonationBanner />
+          <Stack screenOptions={{ headerShown: false }} />
+        </AuthProvider>
+      </PaperProvider>
+    </SafeAreaProvider>
   );
 }

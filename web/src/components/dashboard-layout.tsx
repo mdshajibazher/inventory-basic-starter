@@ -209,16 +209,16 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-950">
-      <div className="fixed inset-y-0 left-0 hidden w-64 lg:block">{sidebar}</div>
+    <div className="bg-neutral-50 text-neutral-950" style={{ minHeight: 'calc(100vh - var(--impersonation-banner-height, 0px))' }}>
+      <div className="fixed bottom-0 left-0 hidden w-64 lg:block" style={{ top: 'var(--impersonation-banner-height, 0px)' }}>{sidebar}</div>
       {mobileOpen ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-x-0 bottom-0 z-50 lg:hidden" style={{ top: 'var(--impersonation-banner-height, 0px)' }}>
           <div className="absolute inset-0 bg-black/30" onClick={() => setMobileOpen(false)} />
           <div className="absolute inset-y-0 left-0 w-72">{sidebar}</div>
         </div>
       ) : null}
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-4 lg:px-8">
+        <header className="sticky z-30 flex h-16 items-center justify-between border-b border-neutral-200 bg-white px-4 lg:px-8" style={{ top: 'var(--impersonation-banner-height, 0px)' }}>
           <Button variant="ghost" className="h-9 w-9 px-0 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <Menu className="h-5 w-5" />
           </Button>

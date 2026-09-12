@@ -400,7 +400,7 @@ export function SalesInvoicesScreen({ mode = 'index', invoiceId, kind = 'sales' 
     ? (mode === 'create' && hasPermission('returns-add')) ||
       (mode === 'edit' && hasPermission('returns-edit')) ||
       ((mode === 'index' || mode === 'details') && (hasPermission('returns-index') || hasPermission('returns-add') || hasPermission('returns-edit') || hasPermission('returns-show')))
-    : hasPermission('sales-add');
+    : hasPermission('sales-add') || (mode === 'details' && hasPermission(['sales-index', 'sales-edit']));
 
   if (!allowed) {
     return <Redirect href="/(drawer)/dashboard" />;

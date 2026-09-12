@@ -12,3 +12,12 @@ test('reports zero loss when the result is profitable or missing', () => {
   assert.equal(summary.lossAmount?.(0), 0);
   assert.equal(summary.lossAmount?.(undefined), 0);
 });
+
+test('combines sales and purchase return costs into the COGS reduction', () => {
+  assert.equal(summary.cogsReduction?.({ return_cost: 8, purchase_return_cost: 6 }), 14);
+});
+
+test('treats missing COGS return costs as zero', () => {
+  assert.equal(summary.cogsReduction?.(undefined), 0);
+  assert.equal(summary.cogsReduction?.({ return_cost: 8 }), 8);
+});
