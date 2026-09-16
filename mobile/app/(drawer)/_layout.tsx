@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Redirect } from 'expo-router';
-import { Drawer } from 'expo-router/drawer';
-import { DrawerActions } from '@react-navigation/native';
+import { DrawerActions } from 'expo-router/react-navigation';
 import {
+  Drawer,
   DrawerContentComponentProps,
   DrawerContentScrollView,
   DrawerItem,
-} from '@react-navigation/drawer';
+} from 'expo-router/drawer';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
 import { useAuth } from '@/src/context/AuthContext';

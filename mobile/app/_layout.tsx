@@ -12,7 +12,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <PaperProvider theme={blackWhiteTheme}>
         <AuthProvider>
-          <StatusBar style="dark" backgroundColor="#ffffff" />
+          <StatusBar style="dark" />
           <ImpersonationBanner />
           <Stack screenOptions={{ headerShown: false }} />
         </AuthProvider>

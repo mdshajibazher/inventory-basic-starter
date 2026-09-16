@@ -22,7 +22,7 @@ Laravel API + Expo React Native starter kit.
 
 - PHP 8.2+
 - Composer
-- Node.js 20+
+- Node.js 22.13+ or 24.3+
 - npm
 - SQLite, MySQL, or PostgreSQL
 
@@ -133,15 +133,16 @@ GET    /api/dashboard
 
 - The backend is already merged into `inventory-api`; there is no separate overlay setup step.
 - Laravel 12 supports PHP 8.2+, including PHP 8.2.30.
-- The mobile app is pinned to Expo SDK 54, React Native 0.81, and React 19.1.
+- The mobile app uses Expo SDK 57, React Native 0.86, and React 19.2. Use Expo Go for SDK 57 on your phone.
 - If dependency folders are missing or stale, rerun `composer install` in `inventory-api` and `npm install` in `mobile`.
 
 To refresh mobile dependencies:
 
 ```bash
 cd mobile
-rm -rf node_modules package-lock.json
-npm install
-npx expo install --fix
-npx expo start --clear
+npm ci
+npx expo install --check
+npm start -- --clear
 ```
+
+If Expo Go reports an SDK mismatch, stop the running Expo server, refresh dependencies with the commands above, and scan the new QR code. The app and Expo Go must use the same SDK version. See the [Expo SDK upgrade guide](https://docs.expo.dev/workflow/upgrading-expo-sdk-walkthrough/).

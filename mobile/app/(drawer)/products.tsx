@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Alert, FlatList, Image, Pressable, ScrollView, StyleProp, StyleSheet, useWindowDimensions, View, ViewStyle } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { useRoute } from 'expo-router/react-navigation';
 import { Redirect, useRouter } from 'expo-router';
 import {
   Button,

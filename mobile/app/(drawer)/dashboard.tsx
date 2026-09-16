@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { useFocusEffect, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from 'expo-router/react-navigation';
 import { DashboardScreenContainer } from '@/src/components/DashboardScreenContainer';
 import { DashboardApprovalSection } from '@/src/components/DashboardApprovalSection';
 import { Button, Muted, Stat, Title } from '@/src/components/UI';

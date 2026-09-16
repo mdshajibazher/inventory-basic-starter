@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { useRoute } from 'expo-router/react-navigation';
 import { Redirect } from 'expo-router';
 import { Button, DataTable, Searchbar, Text } from 'react-native-paper';
 import { Screen } from '@/src/components/Screen';
