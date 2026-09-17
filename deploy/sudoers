@@ -1,0 +1,2 @@
+# Installed root-owned mode 0440. No shells, editors, arbitrary units or commands.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl reload php8.3-fpm.service, /usr/bin/systemctl restart inventory-web.service, /usr/bin/systemctl stop inventory-web.service, /usr/bin/systemctl restart inventory-queue.service, /usr/bin/systemctl stop inventory-queue.service, /usr/bin/systemctl start inventory-scheduler.timer, /usr/bin/systemctl stop inventory-scheduler.timer

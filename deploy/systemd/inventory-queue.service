@@ -1,0 +1,23 @@
+[Unit]
+Description=Inventory Laravel queue worker
+After=network.target mysql.service
+ConditionPathExists=/var/www/inventory-deploy/api/current/artisan
+
+[Service]
+Type=simple
+User=deploy
+Group=www-data
+WorkingDirectory=/var/www/inventory-deploy/api/current
+ExecStart=/usr/bin/php artisan queue:work --sleep=3 --tries=3 --timeout=60 --max-time=3600
+Restart=always
+RestartSec=5
+TimeoutStopSec=90
+KillSignal=SIGTERM
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

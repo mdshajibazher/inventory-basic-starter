@@ -1,0 +1,232 @@
+name: Deploy inventory
+
+on:
+  push:
+    branches: [deploy]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inventory-production
+  cancel-in-progress: false
+
+env:
+  RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  validate-api:
+    if: github.ref == 'refs/heads/deploy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: inventory_ci
+          MYSQL_USER: inventory_ci
+          MYSQL_PASSWORD: ci-only-password
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: bcmath, ctype, curl, dom, fileinfo, gd, intl, mbstring, pdo_mysql, pdo_sqlite, sqlite3, tokenizer, xml, zip
+          tools: composer:v2
+          coverage: none
+      - name: Test deployment scripts
+        run: python3 -m unittest discover -s deploy/tests
+      - name: Install API test dependencies
+        working-directory: inventory-api
+        run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Test API
+        working-directory: inventory-api
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+          php artisan test
+      - name: Check MySQL migrations
+        working-directory: inventory-api
+        env:
+          APP_ENV: testing
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_DATABASE: inventory_ci
+          DB_USERNAME: inventory_ci
+          DB_PASSWORD: ci-only-password
+          DB_URL: ''
+          CACHE_STORE: array
+          SESSION_DRIVER: array
+          QUEUE_CONNECTION: sync
+        run: |
+          php artisan migrate --force
+          php artisan migrate:status
+      - name: Install production API dependencies
+        working-directory: inventory-api
+        run: composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+      - name: Package API
+        run: bash deploy/package.sh api "$RELEASE_ID" "$RUNNER_TEMP/packages"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-${{ env.RELEASE_ID }}
+          path: |
+            ${{ runner.temp }}/packages/api-${{ env.RELEASE_ID }}.tar.gz
+            ${{ runner.temp }}/packages/api-${{ env.RELEASE_ID }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-web:
+    if: github.ref == 'refs/heads/deploy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Check web types
+        working-directory: web
+        run: npm run typecheck
+      - name: Test web
+        working-directory: web
+        run: |
+          shopt -s globstar
+          node --test src/**/*.test.mjs
+      - name: Build web
+        working-directory: web
+        env:
+          NEXT_PUBLIC_API_URL: /api
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build
+      - name: Package web
+        run: bash deploy/package.sh web "$RELEASE_ID" "$RUNNER_TEMP/packages"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ env.RELEASE_ID }}
+          path: |
+            ${{ runner.temp }}/packages/web-${{ env.RELEASE_ID }}.tar.gz
+            ${{ runner.temp }}/packages/web-${{ env.RELEASE_ID }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-api:
+    if: github.ref == 'refs/heads/deploy'
+    needs: [validate-api, validate-web]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-${{ env.RELEASE_ID }}
+          path: ${{ runner.temp }}/packages
+      - name: Deploy api as deploy user
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "Invalid DEPLOY_HOST"; exit 1; }
+          [[ "$port" =~ ^[0-9]{1,5}$ ]] || { echo "Invalid DEPLOY_PORT"; exit 1; }
+          (( 10#$port >= 1 && 10#$port <= 65535 )) || { echo "Invalid DEPLOY_PORT"; exit 1; }
+          [[ -n "$DEPLOY_SSH_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]] || { echo "Missing SSH configuration"; exit 1; }
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/inventory-ssh.XXXXXX")"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          unset DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS
+          ssh_options=(
+            -i "$ssh_dir/key"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
+            -o ConnectTimeout=15
+          )
+          cd "$RUNNER_TEMP/packages"
+          sha256sum --check "api-$RELEASE_ID.tar.gz.sha256"
+          scp "${ssh_options[@]}" -P "$port" \
+            "api-$RELEASE_ID.tar.gz" "api-$RELEASE_ID.tar.gz.sha256" \
+            "deploy@$DEPLOY_HOST:/var/www/inventory-deploy/incoming/"
+          ssh "${ssh_options[@]}" -p "$port" "deploy@$DEPLOY_HOST" \
+            "bash -s -- api $RELEASE_ID" < "$GITHUB_WORKSPACE/deploy/release.sh"
+
+  deploy-web:
+    if: github.ref == 'refs/heads/deploy'
+    needs: [deploy-api, validate-web]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-${{ env.RELEASE_ID }}
+          path: ${{ runner.temp }}/packages
+      - name: Deploy web as deploy user
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "Invalid DEPLOY_HOST"; exit 1; }
+          [[ "$port" =~ ^[0-9]{1,5}$ ]] || { echo "Invalid DEPLOY_PORT"; exit 1; }
+          (( 10#$port >= 1 && 10#$port <= 65535 )) || { echo "Invalid DEPLOY_PORT"; exit 1; }
+          [[ -n "$DEPLOY_SSH_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]] || { echo "Missing SSH configuration"; exit 1; }
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/inventory-ssh.XXXXXX")"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          unset DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS
+          ssh_options=(
+            -i "$ssh_dir/key"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
+            -o ConnectTimeout=15
+          )
+          cd "$RUNNER_TEMP/packages"
+          sha256sum --check "web-$RELEASE_ID.tar.gz.sha256"
+          scp "${ssh_options[@]}" -P "$port" \
+            "web-$RELEASE_ID.tar.gz" "web-$RELEASE_ID.tar.gz.sha256" \
+            "deploy@$DEPLOY_HOST:/var/www/inventory-deploy/incoming/"
+          ssh "${ssh_options[@]}" -p "$port" "deploy@$DEPLOY_HOST" \
+            "bash -s -- web $RELEASE_ID" < "$GITHUB_WORKSPACE/deploy/release.sh"
+

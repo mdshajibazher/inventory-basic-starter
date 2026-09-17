@@ -1,0 +1,16 @@
+[Unit]
+Description=Inventory Laravel scheduler
+After=network.target mysql.service
+ConditionPathExists=/var/www/inventory-deploy/api/current/artisan
+
+[Service]
+Type=oneshot
+User=deploy
+Group=www-data
+WorkingDirectory=/var/www/inventory-deploy/api/current
+ExecStart=/usr/bin/php artisan schedule:run --no-interaction
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
