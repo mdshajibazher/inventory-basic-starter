@@ -56,71 +56,50 @@ Do not force-push if Git reports that the remote branch has newer commits; fetch
 
 The server has been smoke-tested locally; the first actual GitHub run is the end-to-end check of repository secrets and runner-to-server connectivity.
 
-## Repeat server setup
+## Set up a new VPS
 
-These are reusable instructions, **not a claim that every example below was executed**. The separate [command log](deployment-command-log.md) records commands actually issued during this setup.
+Use a fresh **Ubuntu 24.04 x86_64 VPS booted with systemd**, with Internet access and the complete repository copied or cloned onto it. Allow inbound SSH (22) and HTTP (80) in your provider firewall. Domain names and HTTPS need separate configuration.
 
-Prerequisites: Ubuntu 24.04, Nginx, MySQL 8, PHP 8.3 CLI/FPM with MySQL, SQLite, XML, mbstring, curl, zip, GD, intl and bcmath extensions, Composer 2, Node.js 24, Python 3, rsync, curl, sudo, OpenSSH and ACL tools (`setfacl`). The setup script checks the installed tools; it does not silently upgrade packages.
-
-Run once as an administrator from the repository:
+Run as an administrator, replacing the example IP with the new VPS public IPv4 address:
 
 ```bash
 cd /var/www/inventory-basic-starter
 sudo bash deploy/setup-server.sh 104.251.219.254
 ```
 
-This creates the deployment directories, a fresh MySQL database/user with a random password, and a Laravel key. It installs root-owned Nginx/systemd/sudoers files and enables services for reboot. It removes only the activation symlink for Ubuntu's stock Nginx site, keeping the stock configuration file. Existing custom Nginx sites must not compete for `default_server`.
+The script installs Nginx, MySQL, PHP 8.3 and required extensions, Composer 2, Node.js 24, and deployment utilities. It creates the `deploy` user if needed, configures permissions, database credentials, Laravel environment/key, Nginx, systemd services, and restricted sudo access. It calls `setup-ssh.sh` automatically to create the Actions key and known-host file while preserving existing authorized keys.
 
-Reruns preserve the environment file and database. If the database already exists but the environment file is missing, the script refuses to guess credentials or replace data. Before the first release, the configured application URLs may return 502/404 because no `current` release exists yet.
+Composer installation, the Next.js build, release activation, migrations, and first-time seeding run as **deploy**. On a new database, setup runs the default seeder once and replaces the default admin password with a random password. The `--force` option allows Artisan to run in production without an interactive prompt; it does not reset the database. Setup checks both applications before reporting success.
 
-Then run as **deploy**:
+Read `/home/deploy/inventory-admin-credentials.txt` privately and change the account details after signing in. The file has mode `0600`. Set the four GitHub secrets listed above using the **new server's** address and generated files. Setting GitHub secrets, importing old data, DNS/TLS, and provider firewall rules remain manual.
 
-```bash
-cd /var/www/inventory-basic-starter
-bash deploy/setup-ssh.sh 104.251.219.254
-```
+### Reruns and recovery
 
-The SSH setup preserves existing authorized keys. Initial setup needs an administrator; all routine deployment commands below run as `deploy`.
+Rerunning the same command preserves the environment, passwords, SSH keys, database, uploads, and ready releases. It does not deploy source changes or reseed an existing installation. Failed initial setup can be retried after correcting the reported error; pending database credentials and initialization credentials are reused. If a database or database user already exists without the saved environment or pending provisioning state, setup refuses to overwrite it. Restore the matching environment/backup before proceeding.
 
-## Initial application data and admin
+Existing application users are preserved. If you intend to import a database, import it manually and preserve its original `APP_KEY` where encrypted data depends on it. Back up the database and shared storage before modifying an existing installation. Mail defaults to Laravel's `log` mailer; configure a mail provider in the shared environment for email delivery.
 
-On this server, initial data and the admin account were created on **2026-09-17**. The credentials are in `/home/deploy/inventory-admin-credentials.txt`, readable only by deploy and the administrator. Do not rerun the initialization below on this existing database; it is provided for future fresh installations.
-
-Deployment runs migrations but never seeds demo data or resets passwords. On a **new, empty database**, initialize application master data once. Run the following as `deploy` from the live API directory. It refuses to run if users already exist, runs the repository's default seeder in a transaction, and replaces the seed admin's default password with a random password before committing. It writes the credentials only to a private file in your home directory.
+Root installs packages and system configuration. Routine deployment and Artisan commands use `deploy`:
 
 ```bash
+sudo -iu deploy
 cd /var/www/inventory-deploy/api/current
-php <<'PHP'
-<?php
-require 'vendor/autoload.php';
-$app = require 'bootstrap/app.php';
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-if (App\Models\User::query()->exists()) {
-    throw new RuntimeException('Users already exist; initial setup refused.');
-}
-$path = getenv('HOME').'/inventory-admin-credentials.txt';
-$file = fopen($path, 'x');
-if (!$file) { throw new RuntimeException('Credential file already exists or is not writable.'); }
-chmod($path, 0600);
-$password = bin2hex(random_bytes(24));
-try {
-    Illuminate\Support\Facades\DB::transaction(function () use ($password) {
-        Illuminate\Support\Facades\Artisan::call('db:seed', ['--force' => true]);
-        App\Models\User::where('email', 'admin@example.com')->firstOrFail()
-            ->forceFill(['password' => Illuminate\Support\Facades\Hash::make($password)])->save();
-    });
-    fwrite($file, "Email: admin@example.com\nPassword: $password\n");
-    fclose($file);
-    echo "Admin credentials saved to $path\n";
-} catch (Throwable $error) {
-    fclose($file);
-    unlink($path);
-    throw $error;
-}
-PHP
+php artisan migrate:status
 ```
 
-Read `~/inventory-admin-credentials.txt` privately, log in, and update the account details. Mail initially uses Laravel's `log` mailer; set your mail provider credentials in the shared environment file before expecting actual email delivery. No legacy-data import or demo product seeder is run automatically.
+`setup-ssh.sh` can also be run separately as `deploy` to regenerate a missing SSH setup or update the known-host address. You do not need to call it separately after successful server setup.
+
+Every setup invocation writes a private command/output log under `/var/log/inventory-setup/`. The [original command log](deployment-command-log.md) and [installer implementation command log](setup-server-command-log.md) record work performed during these sessions; they are audit records, not scripts to replay.
+
+### Installer verification
+
+The `Test fresh VPS setup` workflow runs on relevant pushes to `master`. It installs into a disposable Ubuntu 24.04 systemd container, checks HTTP and deployment SSH access, then reruns setup and verifies that credentials, releases, uploaded files, and database data remain unchanged. Run it manually from Actions, or locally on a disposable Docker host:
+
+```bash
+bash deploy/tests/test-fresh-vps.sh
+```
+
+The integration test uses a privileged container and a writable cgroup mount. Use a dedicated test host. Unit tests run with `python3 -B -m unittest discover -s deploy/tests`; install the API Composer dependencies first to include the real Laravel initialization tests.
 
 ## Manual deployment and rollback
 

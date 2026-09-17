@@ -46,11 +46,11 @@ jobs:
           extensions: bcmath, ctype, curl, dom, fileinfo, gd, intl, mbstring, pdo_mysql, pdo_sqlite, sqlite3, tokenizer, xml, zip
           tools: composer:v2
           coverage: none
-      - name: Test deployment scripts
-        run: python3 -m unittest discover -s deploy/tests
       - name: Install API test dependencies
         working-directory: inventory-api
         run: composer install --prefer-dist --no-interaction --no-progress
+      - name: Test deployment scripts
+        run: python3 -m unittest discover -s deploy/tests
       - name: Test API
         working-directory: inventory-api
         run: |
@@ -229,4 +229,3 @@ jobs:
             "deploy@$DEPLOY_HOST:/var/www/inventory-deploy/incoming/"
           ssh "${ssh_options[@]}" -p "$port" "deploy@$DEPLOY_HOST" \
             "bash -s -- web $RELEASE_ID" < "$GITHUB_WORKSPACE/deploy/release.sh"
-

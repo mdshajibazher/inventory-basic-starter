@@ -8,6 +8,8 @@ mode=deploy
 if [[ ${1:-} == rollback ]]; then mode=rollback; shift; fi
 component=${1:?Usage: release.sh [rollback] api|web RELEASE_ID}
 release=${2:?Release ID required}
+initialize=${3:-}
+[[ $# -le 3 && ( -z $initialize || $initialize == --initialize ) ]] || { echo 'Unknown release option' >&2; exit 1; }
 [[ $component == api || $component == web ]] || { echo 'Invalid component' >&2; exit 1; }
 [[ $release =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$ ]] || { echo 'Invalid release ID' >&2; exit 1; }
 root=${INVENTORY_DEPLOY_ROOT:-/var/www/inventory-deploy}
@@ -17,6 +19,12 @@ flock -w 300 9
 target="$root/$component/releases/$release"
 current="$root/$component/current"
 previous=$(readlink -e "$current" || true)
+if [[ $initialize == --initialize ]]; then
+    [[ $mode == deploy && $component == api && -z $previous && -f $root/shared/.bootstrap-database ]] || {
+        echo 'Initialization is only allowed for a fresh setup database with no active API.' >&2
+        exit 1
+    }
+fi
 switched=0
 
 switch_to() {
@@ -83,6 +91,9 @@ if [[ $mode == deploy ]]; then
         cd "$target"
         composer check-platform-reqs --no-dev
         php artisan migrate --force --no-interaction
+        if [[ $initialize == --initialize ]]; then
+            php "$target/.bootstrap-initialize.php" "$target" "$root/shared" "$HOME/inventory-admin-credentials.txt"
+        fi
         php artisan storage:link --no-interaction
         php artisan config:cache --no-interaction
         php artisan route:cache --no-interaction

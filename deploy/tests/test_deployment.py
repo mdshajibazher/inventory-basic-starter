@@ -45,7 +45,7 @@ class DeploymentTests(unittest.TestCase):
         commands = {
             "id": '#!/bin/bash\nif [[ "$1" == "-un" ]]; then echo deploy; else echo 1000; fi\n',
             "composer": "#!/bin/bash\nexit 0\n",
-            "php": '#!/bin/bash\n[[ "$*" != *"migrate"* || "${FAIL_MIGRATION:-0}" != 1 ]]\n',
+            "php": '#!/bin/bash\necho "$*" >> "$INVENTORY_DEPLOY_ROOT/php.log"\n[[ "$*" != *"migrate"* || "${FAIL_MIGRATION:-0}" != 1 ]]\n',
             "sudo": '#!/bin/bash\necho "$*" >> "$INVENTORY_DEPLOY_ROOT/services.log"\n',
             "curl": '#!/bin/bash\n[[ "${FAIL_HEALTH:-0}" != 1 ]]\n',
         }
@@ -71,6 +71,35 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(current.resolve().name, "abc123-1-1")
         self.assertEqual((current / ".env").read_text(), "APP_KEY=unchanged\n")
         self.assertEqual((current / "storage/upload.txt").read_text(), "keep upload")
+        self.assertNotIn('bootstrap-initialize', (self.root/'php.log').read_text())
+
+    def test_initialization_requires_bootstrap_database_and_no_active_api(self):
+        env = self.release_environment()
+        self.artifact('api', 'fresh-1')
+        result = self.run_script('release.sh', 'api', 'fresh-1', '--initialize', env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root/'api/current').exists())
+
+    def test_initializer_runs_only_for_explicit_authorized_first_release(self):
+        env = self.release_environment()
+        (self.root/'shared/.bootstrap-database').touch()
+        (self.root/'source').mkdir()
+        (self.root/'source/.bootstrap-initialize.php').write_text('<?php // fixture')
+        self.artifact('api', 'fresh-2')
+        result = self.run_script('release.sh', 'api', 'fresh-2', '--initialize', env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = (self.root/'php.log').read_text()
+        self.assertLess(log.index('migrate'), log.index('.bootstrap-initialize.php'))
+        self.assertLess(log.index('.bootstrap-initialize.php'), log.index('config:cache'))
+
+    def test_active_api_cannot_be_reinitialized(self):
+        env = self.release_environment()
+        (self.root/'shared/.bootstrap-database').touch()
+        previous = self.previous('api')
+        self.artifact('api', 'fresh-3')
+        result = self.run_script('release.sh', 'api', 'fresh-3', '--initialize', env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root/'api/current').resolve(), previous)
 
     def test_failed_migration_keeps_previous_release(self):
         env = self.release_environment()

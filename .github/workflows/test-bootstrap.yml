@@ -1,0 +1,26 @@
+name: Test fresh VPS setup
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/test-bootstrap.yml'
+      - 'inventory-api/composer.lock'
+      - 'inventory-api/database/**'
+      - 'web/package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fresh-ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install and verify in disposable Ubuntu VPS container
+        run: bash deploy/tests/test-fresh-vps.sh
