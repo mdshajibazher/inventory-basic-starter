@@ -1,5 +1,7 @@
 # Basic Inventory App Starter
 
+For automatic deployment of the API and web app on pushes to `deploy`, see [the deployment guide](docs/deployment.md).
+
 Laravel API + Expo React Native starter kit.
 
 ## What is included

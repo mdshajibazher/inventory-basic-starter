@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Inventory scheduler every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Unit=inventory-scheduler.service
+
+[Install]
+WantedBy=timers.target
